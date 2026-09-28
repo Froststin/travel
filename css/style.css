@@ -523,3 +523,17 @@ textarea { resize: vertical; }
 .activity + .transit { border-top: 1px dashed var(--border); }
 .transit + .activity { border-top: none; }
 .form-hint { margin: -4px 0 0; font-size: .8rem; }
+
+/* ---------- 移動方式 ---------- */
+.travel-fields {
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+}
+.travel-fields legend { padding: 0 6px; font-size: .82rem; color: var(--muted); }
+.form-row-3 { grid-template-columns: 1.2fr 1fr 1fr; }
+@media (max-width: 600px) {
+  .form-row-3 { grid-template-columns: 1fr 1fr; }
+  .form-row-3 label:first-child { grid-column: 1 / -1; }
+}

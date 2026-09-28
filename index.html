@@ -55,10 +55,15 @@
     <form id="activity-form" class="form">
       <h2 id="activity-dialog-title">新增行程</h2>
       <label>標題<input name="title" required maxlength="100" placeholder="例如：清水寺"></label>
-      <div class="form-row">
-        <label>日期<select name="date" required></select></label>
-        <label>移動時間（分鐘）<input type="number" name="travelMin" min="0" max="1440" step="1" inputmode="numeric" placeholder="從上一站過來要多久"></label>
-      </div>
+      <label>日期<select name="date" required></select></label>
+      <fieldset class="travel-fields">
+        <legend>從上一站過來（選填）</legend>
+        <div class="form-row form-row-3">
+          <label>移動方式<select name="travelMode"></select></label>
+          <label>移動時間（分）<input type="number" name="travelMin" min="0" max="1440" step="1" inputmode="numeric" placeholder="15"></label>
+          <label>車資<input type="number" name="travelCost" min="0" step="any" inputmode="decimal" placeholder="0"></label>
+        </div>
+      </fieldset>
       <div class="form-row">
         <label>開始時間<input type="time" name="time"></label>
         <label>結束時間<input type="time" name="endTime"></label>

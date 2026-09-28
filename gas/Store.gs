@@ -8,12 +8,12 @@
 
 const TABLES = {
   Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode'],
-  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin'],
+  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt'],
 };
-const SCHEMA_VERSION = '3';
+const SCHEMA_VERSION = '4';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
@@ -112,6 +112,8 @@ function sanitizeActivity_(a) {
     time: /^\d{2}:\d{2}$/.test(a.time) ? a.time : '',
     endTime: /^\d{2}:\d{2}$/.test(a.time) && /^\d{2}:\d{2}$/.test(a.endTime) && a.endTime >= a.time ? a.endTime : '',
     travelMin: Math.min(1440, Math.max(0, Math.round(Number(a.travelMin) || 0))),
+    travelMode: travelModeKey_(a.travelMode),
+    travelCost: Math.max(0, Number(a.travelCost) || 0),
     title: str_(a.title, 100),
     category: catKey_(a.category),
     location: str_(a.location, 200),
@@ -209,8 +211,8 @@ function rowToTrip_(row, acts, viewerId) {
   const days = {};
   for (const a of acts) {
     (days[a.date] = days[a.date] || []).push({
-      id: a.id, time: a.time, endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0, title: a.title, category: catKey_(a.category),
-      location: a.location, mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes,
+      id: a.id, time: a.time, endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0, travelMode: travelModeKey_(a.travelMode), travelCost: Number(a.travelCost) || 0,
+      title: a.title, category: catKey_(a.category), location: a.location, mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes,
     });
   }
   Object.values(days).forEach(sortDay_);
@@ -282,7 +284,8 @@ function saveTrip_(userId, trip) {
   for (const [date, list] of Object.entries(trip.days || {})) {
     for (const a of list) {
       acts.push({
-        id: a.id, tripId: trip.id, userId: ownerId, date, time: a.time || '', endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0, title: a.title,
+        id: a.id, tripId: trip.id, userId: ownerId, date, time: a.time || '', endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0,
+        travelMode: travelModeKey_(a.travelMode), travelCost: Number(a.travelCost) || 0, title: a.title,
         category: catKey_(a.category), location: a.location || '', mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes || '',
       });
     }

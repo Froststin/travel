@@ -23,6 +23,17 @@ const PACKING_PRESET = [
   '護照／身分證', '機票／車票', '錢包、信用卡、外幣', '手機與充電器', '行動電源',
   '轉接頭', '換洗衣物', '盥洗用品', '常備藥品', '雨具',
 ];
+// 移動方式：Google 地圖導航用的 travelmode
+const TRAVEL_MODES = {
+  walk: { label: '步行', icon: '🚶', gmap: 'walking' },
+  train: { label: '電車', icon: '🚃', gmap: 'transit' },
+  bus: { label: '公車', icon: '🚌', gmap: 'transit' },
+  taxi: { label: '計程車', icon: '🚕', gmap: 'driving' },
+  car: { label: '開車', icon: '🚗', gmap: 'driving' },
+  bike: { label: '腳踏車', icon: '🚲', gmap: 'bicycling' },
+  flight: { label: '飛機', icon: '✈️', gmap: '' },
+  ship: { label: '船', icon: '⛴️', gmap: '' },
+};
 const WEEKDAYS = '日一二三四五六';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -173,13 +184,28 @@ function scheduleIssue(prev, a) {
   return late > 0 ? `預計 ${fromMin(arrive)} 才會到，晚了 ${late} 分鐘` : '';
 }
 
-function transitItem(prev, a) {
+function travelMode(a) {
+  return Object.hasOwn(TRAVEL_MODES, a.travelMode) ? TRAVEL_MODES[a.travelMode] : null;
+}
+
+// 例如「🚃 電車 15 分鐘・¥230」
+function transitLabel(a, currency) {
+  const mode = travelMode(a);
   const travel = Number(a.travelMin) || 0;
+  const cost = Number(a.travelCost) || 0;
+  if (!mode && !travel && !cost) return '';
+  const parts = [mode ? `${mode.icon} ${mode.label}` : '⏱️ 移動'];
+  if (travel) parts.push(travelText(travel));
+  return parts.join(' ') + (cost ? `・${money(cost, currency)}` : '');
+}
+
+function transitItem(prev, a, currency) {
+  const label = transitLabel(a, currency);
   const issue = scheduleIssue(prev, a);
-  if (!travel && !issue) return '';
+  if (!label && !issue) return '';
   return `
     <li class="transit${issue ? ' warn' : ''}">
-      ${travel ? `<span>🚶 移動 ${travelText(travel)}</span>` : ''}
+      ${label ? `<span>${label}</span>` : ''}
       ${issue ? `<span class="transit-warn">⚠️ ${issue}</span>` : ''}
     </li>`;
 }
@@ -197,8 +223,10 @@ function placeUrl(a) {
 
 // 導航：以目前位置為起點，直接進入 Google 地圖路線規劃
 function navUrl(a) {
-  if (a.location) return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(a.location)}`;
-  return a.mapUrl || '';
+  if (!a.location) return a.mapUrl || '';
+  const mode = travelMode(a);
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(a.location)}`
+    + (mode && mode.gmap ? `&travelmode=${mode.gmap}` : '');
 }
 
 // 當天路線：依時間順序串起有填地點的行程（Google 地圖最多 9 個中途點）
@@ -220,8 +248,9 @@ function sortDay(list) {
   return list.sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
 }
 
+// 花費＝行程本身＋前往的車資
 function sumCost(list) {
-  return list.reduce((s, a) => s + (Number(a.cost) || 0), 0);
+  return list.reduce((s, a) => s + (Number(a.cost) || 0) + (Number(a.travelCost) || 0), 0);
 }
 
 function allActivities(t) {
@@ -391,7 +420,7 @@ function planView(t, dates) {
           </div>
         </header>
         ${list.length
-          ? `<ol class="timeline">${list.map((a, idx) => transitItem(list[idx - 1], a) + activityItem(a, d, t.currency)).join('')}</ol>`
+          ? `<ol class="timeline">${list.map((a, idx) => transitItem(list[idx - 1], a, t.currency) + activityItem(a, d, t.currency)).join('')}</ol>`
           : '<p class="day-empty muted">還沒有安排，點「新增」加入第一個行程。</p>'}
       </section>`;
   }).join('');
@@ -434,7 +463,12 @@ function budgetView(t, dates) {
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
 
   const byCat = Object.entries(CATEGORIES)
-    .map(([k, c]) => ({ ...c, sum: sumCost(all.filter((a) => catKey(a) === k)), key: k }))
+    .map(([k, c]) => ({
+      ...c,
+      key: k,
+      // 車資一律算在「交通」
+      sum: all.reduce((s, a) => s + (catKey(a) === k ? Number(a.cost) || 0 : 0) + (k === 'transport' ? Number(a.travelCost) || 0 : 0), 0),
+    }))
     .filter((x) => x.sum > 0)
     .sort((a, b) => b.sum - a.sum);
   const maxCat = Math.max(1, ...byCat.map((x) => x.sum));
@@ -630,12 +664,14 @@ function openActivityDialog(date, activity) {
   activityForm.reset();
   activityForm.elements.date.innerHTML = dateRange(t.startDate, t.endDate)
     .map((d, i) => `<option value="${d}">Day ${i + 1}・${prettyDate(d)}</option>`).join('');
-  const a = activity || { title: '', time: '', endTime: '', travelMin: '', category: 'sight', location: '', mapUrl: '', cost: '', notes: '' };
+  const a = activity || { title: '', time: '', endTime: '', travelMin: '', travelMode: '', travelCost: '', category: 'sight', location: '', mapUrl: '', cost: '', notes: '' };
   activityForm.elements.date.value = date;
   activityForm.elements.title.value = a.title;
   activityForm.elements.time.value = a.time || '';
   activityForm.elements.endTime.value = a.endTime || '';
   activityForm.elements.travelMin.value = a.travelMin || '';
+  activityForm.elements.travelMode.value = travelMode(a) ? a.travelMode : '';
+  activityForm.elements.travelCost.value = a.travelCost || '';
   activityForm.dataset.autoTime = activity ? '' : '1'; // 新增時自動帶入開始時間，使用者自己改過就停止
   activityForm.elements.category.value = catKey(a);
   activityForm.elements.location.value = a.location || '';
@@ -677,6 +713,8 @@ activityForm.addEventListener('submit', (e) => {
     time: f.get('time') || '',
     endTime: f.get('endTime') || '',
     travelMin: Math.min(1440, Math.max(0, Math.round(Number(f.get('travelMin')) || 0))),
+    travelMode: Object.hasOwn(TRAVEL_MODES, f.get('travelMode')) ? f.get('travelMode') : '',
+    travelCost: Math.max(0, Number(f.get('travelCost')) || 0),
     title: f.get('title').trim(),
     category: f.get('category'),
     location: f.get('location').trim(),
@@ -719,6 +757,8 @@ function normalizeTrip(raw) {
           time: TIME_RE.test(a.time) ? a.time : '',
           endTime: TIME_RE.test(a.time) && TIME_RE.test(a.endTime) && a.endTime >= a.time ? a.endTime : '',
           travelMin: Math.min(1440, Math.max(0, Math.round(Number(a.travelMin) || 0))),
+          travelMode: Object.hasOwn(TRAVEL_MODES, a.travelMode) ? a.travelMode : '',
+          travelCost: Math.max(0, Number(a.travelCost) || 0),
           title: str(a.title, 100),
           category: catKey(a),
           location: str(a.location, 200),
@@ -978,6 +1018,8 @@ for (const dlg of [tripDialog, activityDialog]) {
 /* ---------- 初始化 ---------- */
 function fillSelects() {
   tripForm.elements.currency.innerHTML = CURRENCIES.map((c) => `<option value="${c}">${c}</option>`).join('');
+  activityForm.elements.travelMode.innerHTML = '<option value="">（未指定）</option>'
+    + Object.entries(TRAVEL_MODES).map(([k, m]) => `<option value="${k}">${m.icon} ${m.label}</option>`).join('');
   activityForm.elements.category.innerHTML = Object.entries(CATEGORIES)
     .map(([k, c]) => `<option value="${k}">${c.icon} ${c.label}</option>`).join('');
 }

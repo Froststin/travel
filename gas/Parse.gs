@@ -5,6 +5,17 @@
 
 const CN_DIGITS = { 零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
 const WEEK_CHARS = '日一二三四五六';
+// 移動方式：label、icon、Google 地圖 travelmode、文字辨識
+const TRAVEL_MODES = {
+  walk: { label: '步行', icon: '🚶', gmap: 'walking', re: /步行|走路|徒步/ },
+  train: { label: '電車', icon: '🚃', gmap: 'transit', re: /電車|火車|地鐵|捷運|JR|新幹線|高鐵|鐵路|輕軌/i },
+  bus: { label: '公車', icon: '🚌', gmap: 'transit', re: /公車|巴士|客運|接駁車/ },
+  taxi: { label: '計程車', icon: '🚕', gmap: 'driving', re: /計程車|小黃|uber|的士/i },
+  car: { label: '開車', icon: '🚗', gmap: 'driving', re: /開車|自駕|租車/ },
+  bike: { label: '腳踏車', icon: '🚲', gmap: 'bicycling', re: /腳踏車|單車|自行車|騎車/ },
+  flight: { label: '飛機', icon: '✈️', gmap: '', re: /飛機|航班|搭機/ },
+  ship: { label: '船', icon: '⛴️', gmap: '', re: /渡輪|搭船|坐船|船/ },
+};
 const CATEGORY_INFO = {
   sight: { label: '景點', icon: '🏞️', color: '#16a34a' },
   food: { label: '餐飲', icon: '🍜', color: '#ea580c' },
@@ -316,8 +327,9 @@ function placeUrl_(a) {
 
 // 導航：以目前位置為起點，直接開啟 Google 地圖路線
 function navUrl_(a) {
-  if (a.location) return navToUrl_(a.location);
-  return a.mapUrl || '';
+  if (!a.location) return a.mapUrl || '';
+  const mode = TRAVEL_MODES[travelModeKey_(a.travelMode)];
+  return navToUrl_(a.location) + (mode && mode.gmap ? `&travelmode=${mode.gmap}` : '');
 }
 
 function navToUrl_(place) {
@@ -379,10 +391,63 @@ function extractTimeRange_(text) {
   return single ? { time: single.time, endTime: '', rest: single.rest } : null;
 }
 
-/** 移動15分、車程 1 小時、步行20分鐘、交通 1小時30分 */
+function travelModeKey_(v) {
+  return Object.prototype.hasOwnProperty.call(TRAVEL_MODES, v) ? v : '';
+}
+
+function detectTravelMode_(text) {
+  const hit = Object.entries(TRAVEL_MODES).find(([, m]) => m.re.test(text));
+  return hit ? hit[0] : '';
+}
+
+/**
+ * 移動段落：移動15分、電車15分、搭公車 20 分鐘、車程 1 小時 20 分、計程車10分 車資300
+ * 車資一定要寫「車資／交通費／票價」，避免和行程本身的花費混在一起
+ * @return {{travelMin: number, travelMode: string, travelCost: number|null, hasTravel: boolean, rest: string} | null}
+ */
 function extractTravel_(text) {
-  const m = text.match(/(?:移動|交通|車程|路程|步行|走路|搭車|騎車|開車)\s*(?:時間)?\s*(?:約|大概|大約)?\s*(?:(\d{1,2})\s*(?:小時|hr|h)\s*)?(?:(\d{1,3})\s*(?:分鐘|分|min))?/i);
-  if (!m || (!m[1] && !m[2])) return null;
-  const min = (Number(m[1]) || 0) * 60 + (Number(m[2]) || 0);
-  return { travelMin: Math.min(1440, min), rest: text.replace(m[0], ' ').trim() };
+  const MODE = Object.values(TRAVEL_MODES).map((m) => m.re.source).join('|');
+  const LEG = `(?:(?:移動|交通|車程|路程)\\s*(?:時間)?\\s*)?(?:(?:搭|坐|騎|開)?\\s*(${MODE})\\s*)?(?:約|大概|大約)?\\s*(?:(\\d{1,2})\\s*(?:小時|hr|h)\\s*)?(?:(\\d{1,3})\\s*(?:分鐘|分|min))?`;
+  let rest = text;
+  let found = null;
+  for (const chunk of text.match(new RegExp(LEG, 'gi')) || []) {
+    if (!chunk) continue;
+    const parts = chunk.match(new RegExp(`^${LEG}`, 'i'));
+    const hasKeyword = /^(?:移動|交通|車程|路程)/.test(chunk) || parts[1];
+    if (!hasKeyword || (!parts[2] && !parts[3])) continue;
+    found = {
+      travelMin: Math.min(1440, (Number(parts[2]) || 0) * 60 + (Number(parts[3]) || 0)),
+      travelMode: parts[1] ? detectTravelMode_(parts[1]) : '',
+    };
+    rest = rest.replace(chunk, ' ');
+    break;
+  }
+  const fare = rest.match(/(?:車資|交通費|票價|車票)\s*(?:NT\$|\$)?\s*(\d+(?:\.\d+)?)\s*(?:元|円|日圓|日幣|塊)?/);
+  if (fare) rest = rest.replace(fare[0], ' ');
+  // 只寫「搭電車」沒寫時間
+  if (!found) {
+    const onlyMode = rest.match(new RegExp(`(?:搭|坐|騎|開)\\s*(${MODE})`, 'i'));
+    if (onlyMode) {
+      found = { travelMin: 0, travelMode: detectTravelMode_(onlyMode[1]) };
+      rest = rest.replace(onlyMode[0], ' ');
+    }
+  }
+  if (!found && !fare) return null;
+  return {
+    travelMin: found ? found.travelMin : 0,
+    travelMode: found ? found.travelMode : '',
+    travelCost: fare ? Number(fare[1]) : null,
+    hasTravel: !!found,
+    rest: rest.replace(/\s+/g, ' ').trim(),
+  };
+}
+
+function transitLabel_(a, currency) {
+  const mode = TRAVEL_MODES[travelModeKey_(a.travelMode)];
+  const travel = Number(a.travelMin) || 0;
+  const cost = Number(a.travelCost) || 0;
+  if (!mode && !travel && !cost) return '';
+  const parts = [mode ? `${mode.icon} ${mode.label}` : '⏱️ 移動'];
+  if (travel) parts.push(travelText_(travel));
+  return parts.join(' ') + (cost ? `・${cost.toLocaleString()} ${currency || ''}`.trimEnd() : '');
 }

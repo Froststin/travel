@@ -83,7 +83,8 @@ function tripShareText(t, dates) {
     if (!list.length) lines.push('（尚未安排）');
     list.forEach((a, i) => {
       const c = CATEGORIES[catKey(a)];
-      if (Number(a.travelMin)) lines.push(`　↓ 🚶 移動 ${travelText(Number(a.travelMin))}`);
+      const transit = transitLabel(a, t.currency);
+      if (transit) lines.push(`　↓ ${transit}`);
       const issue = scheduleIssue(list[i - 1], a);
       if (issue) lines.push(`　⚠️ ${issue}`);
       lines.push(`${timeLabel(a) || '--:--'} ${c.icon} ${a.title}${a.location ? `（${a.location}）` : ''}`);
@@ -101,11 +102,11 @@ function openLineShareUrl(text) {
 }
 
 /* ---------- Flex Message 版（方案 B） ---------- */
-function transitFlex(prev, a) {
-  const travel = Number(a.travelMin) || 0;
+function transitFlex(prev, a, currency) {
+  const label = transitLabel(a, currency);
   const issue = scheduleIssue(prev, a);
-  if (!travel && !issue) return [];
-  const text = [travel ? `🚶 移動 ${travelText(travel)}` : '', issue ? `⚠️ ${issue}` : ''].filter(Boolean).join('　');
+  if (!label && !issue) return [];
+  const text = [label, issue ? `⚠️ ${issue}` : ''].filter(Boolean).join('　');
   return [flexText(text, { size: 'xxs', color: issue ? '#b42318' : '#66727a', margin: 'none' })];
 }
 
@@ -115,7 +116,7 @@ function flexText(text, extra = {}) {
 
 function dayBubble(t, d, dayNo) {
   const list = t.days[d] || [];
-  const rows = list.slice(0, FLEX_MAX_ITEMS).flatMap((a, i) => [...transitFlex(list[i - 1], a), {
+  const rows = list.slice(0, FLEX_MAX_ITEMS).flatMap((a, i) => [...transitFlex(list[i - 1], a, t.currency), {
     type: 'box',
     layout: 'horizontal',
     spacing: 'md',

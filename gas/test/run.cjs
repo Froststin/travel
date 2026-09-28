@@ -185,14 +185,44 @@ check('時間衝突判斷', P('scheduleIssue_({time:"09:00",endTime:"12:00"},{ti
 r = say('新增 明天 13:00-15:00 嵐山散步 @嵐山');
 check('新增時間區間', r.text.includes('13:00–15:00 🏞️ 嵐山散步'), r.text);
 r = say('新增 明天 15:00-16:00 嵐山午茶 移動15分');
-check('新增移動時間並警告趕不上', r.text.includes('🚶 移動 15 分鐘') && r.text.includes('⚠️ 預計 15:15 才會到'), r.text);
+check('新增移動時間並警告趕不上', r.text.includes('移動 15 分鐘') && r.text.includes('⚠️ 預計 15:15 才會到'), r.text);
 r = say('改 嵐山午茶 15:15');
 check('只改開始時間，結束時間跟著平移', r.text.includes('15:15–16:15') && !r.text.includes('⚠️'), r.text);
 r = say('改 嵐山午茶 移動30分');
 check('修改移動時間後再次警告', r.text.includes('移動 30 分鐘') && r.text.includes('晚了 15 分鐘'), r.text);
 r = say('明天');
-check('行程卡片顯示區間、移動與警告', r.text.includes('~15:00') && r.text.includes('🚶 移動 30 分鐘') && r.text.includes('⚠️'), r.text.slice(0, 400));
+check('行程卡片顯示區間、移動與警告', r.text.includes('~15:00') && r.text.includes('移動 30 分鐘') && r.text.includes('⚠️'), r.text.slice(0, 400));
 check('試算表存了結束與移動時間', rows('Activities').some((a) => a.title === '嵐山午茶' && a.endTime === '16:15' && a.travelMin === '30'));
+
+/* ---------- 移動方式與車資 ---------- */
+const T = (code) => JSON.parse(P(`JSON.stringify(${code})`));
+let tv = T('extractTravel_("伏見稻荷 電車15分 車資230")');
+check('電車15分 車資230', tv.travelMode === 'train' && tv.travelMin === 15 && tv.travelCost === 230 && tv.rest === '伏見稻荷', JSON.stringify(tv));
+tv = T('extractTravel_("搭公車 20 分鐘")');
+check('搭公車 20 分鐘', tv.travelMode === 'bus' && tv.travelMin === 20, JSON.stringify(tv));
+tv = T('extractTravel_("移動 計程車 1小時 交通費 $3000")');
+check('移動 計程車 1小時 交通費 $3000', tv.travelMode === 'taxi' && tv.travelMin === 60 && tv.travelCost === 3000, JSON.stringify(tv));
+tv = T('extractTravel_("移動15分")');
+check('移動15分（未指定方式）', tv.travelMode === '' && tv.travelMin === 15 && tv.travelCost === null, JSON.stringify(tv));
+tv = T('extractTravel_("午餐 $500")');
+check('行程花費不會被當成車資', tv === null, JSON.stringify(tv));
+tv = T('extractTravel_("船岡山公園")');
+check('地名含「船」不會被誤判', tv === null, JSON.stringify(tv));
+check('導航帶入交通方式', P('navUrl_({location:"清水寺",travelMode:"train"})').endsWith('&travelmode=transit'));
+
+r = say('新增 明天 19:30 先斗町晚餐 電車15分 車資230 $3000');
+check('新增含移動方式與車資', r.text.includes('🚃 電車 15 分鐘・230 TWD') && r.text.includes('💰 3000 TWD'), r.text);
+check('試算表存了移動方式與車資', rows('Activities').some((a) => a.title === '先斗町晚餐' && a.travelMode === 'train' && a.travelCost === '230' && a.cost === '3000'));
+r = say('改 先斗町晚餐 搭計程車');
+check('只改移動方式保留分鐘數', r.text.includes('🚕 計程車 15 分鐘・230 TWD'), r.text);
+r = say('改 先斗町晚餐 車資500');
+check('只改車資', r.text.includes('🚕 計程車 15 分鐘・500 TWD'), r.text);
+r = say('明天');
+check('行程卡片顯示移動方式與車資', r.text.includes('🚕 計程車 15 分鐘・500 TWD'), r.text.slice(0, 300));
+r = say('導航 先斗町晚餐');
+check('導航使用計程車（開車）路線', r.text.includes('先斗町晚餐') && r.quick[0].action.uri.endsWith('&travelmode=driving'), JSON.stringify(r.quick[0]));
+r = say('預算');
+check('車資算進預算的交通類', r.text.includes('🚆 交通') && /預估花費：[\d,]+ TWD/.test(r.text), r.text);
 
 /* ---------- 網站 API ---------- */
 let res = api('list', {});
@@ -225,7 +255,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '3');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '4');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];

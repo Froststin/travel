@@ -8,11 +8,11 @@ function fText_(text, extra) {
   return Object.assign({ type: 'text', text: String(text || ' ').slice(0, 200) || ' ', wrap: true }, extra || {});
 }
 
-function transitRows_(prev, a) {
-  const travel = Number(a.travelMin) || 0;
+function transitRows_(prev, a, currency) {
+  const label = transitLabel_(a, currency);
   const issue = scheduleIssue_(prev, a);
-  if (!travel && !issue) return [];
-  const text = [travel ? `🚶 移動 ${travelText_(travel)}` : '', issue ? `⚠️ ${issue}` : ''].filter(Boolean).join('　');
+  if (!label && !issue) return [];
+  const text = [label, issue ? `⚠️ ${issue}` : ''].filter(Boolean).join('　');
   return [fText_(text, { size: 'xxs', color: issue ? '#b42318' : '#66727a' })];
 }
 
@@ -54,7 +54,7 @@ function dayBubble_(trip, date, filter) {
   const dayNo = daysBetween_(trip.startDate, date) + 1;
   let list = trip.days[date] || [];
   if (filter) list = list.filter((a) => catKey_(a.category) === filter);
-  const rows = list.slice(0, FLEX_MAX_ITEMS).flatMap((a, i) => [...(filter ? [] : transitRows_(list[i - 1], a)), activityRow_(a)]);
+  const rows = list.slice(0, FLEX_MAX_ITEMS).flatMap((a, i) => [...(filter ? [] : transitRows_(list[i - 1], a, trip.currency)), activityRow_(a)]);
   if (list.length > FLEX_MAX_ITEMS) rows.push(fText_(`……還有 ${list.length - FLEX_MAX_ITEMS} 項`, { size: 'xs', color: '#66727a' }));
   if (!rows.length) rows.push(fText_(filter ? `這天沒有${CATEGORY_INFO[filter].label}類的行程` : '這天還沒有安排', { size: 'sm', color: '#66727a' }));
   const route = filter ? '' : dayRouteUrl_(trip.days[date] || []);
@@ -146,7 +146,8 @@ function dayText_(trip, date, filter) {
   const lines = [`🗓️ ${trip.name}｜Day ${dayNo}・${prettyDate_(date)}`];
   if (!list.length) lines.push('（沒有安排）');
   list.forEach((a, i) => {
-    if (!filter && Number(a.travelMin)) lines.push(`　↓ 🚶 移動 ${travelText_(Number(a.travelMin))}`);
+    const transit = filter ? '' : transitLabel_(a, trip.currency);
+    if (transit) lines.push(`　↓ ${transit}`);
     const issue = filter ? '' : scheduleIssue_(list[i - 1], a);
     if (issue) lines.push(`　⚠️ ${issue}`);
     lines.push(activityLine_(a));
