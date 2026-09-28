@@ -26,7 +26,9 @@
 | `css/style.css` | 樣式（含深色模式、列印樣式） |
 | `js/app.js` | 主要邏輯：資料存取、路由、畫面渲染、匯入匯出 |
 | `js/line.js` | LINE 分享與 LIFF 整合 |
-| `js/config.js` | 網站設定（LIFF ID） |
+| `js/cloud.js` | 雲端同步（LINE 登入後讀寫 Google Apps Script） |
+| `js/config.js` | 網站設定（LIFF ID、API 網址） |
+| `gas/` | Google Apps Script 後端：LINE 官方帳號機器人＋網站 API（資料存 Google 試算表） |
 
 ## 注意
 
@@ -45,3 +47,31 @@
 3. channel 的「LIFF」分頁 → Add：Size 選 `Full`、Endpoint URL 填步驟 1 的網址、Scopes 勾 `profile`、打開 **shareTargetPicker**
 4. 把拿到的 LIFF ID 填進 `js/config.js`，重新部署
 5. 用 `https://liff.line.me/<LIFF ID>` 開啟；channel 在 Developing 狀態時只有管理員／測試者能用，要給其他人用需改成 Published
+
+## LINE 官方帳號＋雲端同步（`gas/`）
+
+用 LINE 登入後，網站與 LINE 官方帳號共用同一份資料（Google 試算表；日誌照片存 Google 雲端硬碟）。
+
+- 官方帳號可以：查詢（今天／明天吃什麼／清水寺幾點等口語問法）、新增／修改／刪除行程、建立旅程、寫旅遊日誌、傳照片記錄、查預算與行李、取得網站連結
+- 網站新增「📔 日誌」分頁；在 LINE 做的修改，切回網頁時自動重新載入；兩邊同時改同一個旅程時，網站會提示並重新載入，不會覆蓋
+
+### 檔案
+
+| 檔案 | 內容 |
+| --- | --- |
+| `gas/Main.gs` | 進入點：LINE Webhook 與網站 API |
+| `gas/Bot.gs` | 官方帳號的訊息處理 |
+| `gas/Parse.gs` | 日期、時間、花費解析與模糊比對（純函式） |
+| `gas/Flex.gs` | Flex Message 行程卡片 |
+| `gas/Store.gs` | Google 試算表讀寫 |
+| `gas/Line.gs` | LINE API 呼叫 |
+| `gas/Setup.gs` | 初始設定與圖文選單 |
+| `gas/richmenu.png` | 圖文選單圖片（2500×1686） |
+| `gas/test/run.cjs` | 本機測試：`node gas/test/run.cjs` |
+
+### 安全性
+
+- 機密（`CHANNEL_ACCESS_TOKEN`）放在 Apps Script 的指令碼屬性，不在程式碼裡
+- Apps Script 讀不到 HTTP header，無法驗證 LINE 簽章，改用 Webhook 網址上的隨機金鑰（`WEBHOOK_KEY`）
+- 網站 API 以 LINE Login ID token 驗證使用者，每個人只能存取自己的資料
+- 想限制只有自己能用：在指令碼屬性設定 `ALLOWED_USERS`（LINE userId，逗號分隔）

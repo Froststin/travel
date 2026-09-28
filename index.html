@@ -12,6 +12,8 @@
   <header class="site-header no-print">
     <a href="#/" class="logo"><span aria-hidden="true">🧭</span> 旅程手帖</a>
     <div class="header-actions">
+      <span id="sync-status" class="sync-status" hidden></span>
+      <button id="login-btn" class="btn btn-line" data-action="line-login" hidden>LINE 登入同步</button>
       <button class="btn btn-ghost" data-action="import">匯入</button>
       <button class="btn btn-ghost" data-action="export-all">匯出全部</button>
       <button class="btn btn-primary" data-action="new-trip">＋ 新增旅程</button>
@@ -20,7 +22,7 @@
 
   <main id="app" class="container"></main>
 
-  <footer class="site-footer no-print">
+  <footer id="site-footer" class="site-footer no-print">
     資料只儲存在這個瀏覽器（localStorage），換裝置前請先「匯出全部」備份。
   </footer>
 
@@ -75,6 +77,7 @@
 
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/line.js"></script>
 </body>
 </html>

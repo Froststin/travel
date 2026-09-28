@@ -38,7 +38,19 @@ async function initLiff() {
     document.body.classList.toggle('in-line', liff.isInClient());
   } catch (err) {
     console.warn('LIFF 初始化失敗，改用一般分享連結', err);
+    return;
   }
+  if (!API_URL) {
+    openTripFromQuery();
+    return;
+  }
+  if (liff.isLoggedIn()) Cloud.start();
+  else document.getElementById('login-btn').hidden = false;
+}
+
+function lineLogin() {
+  if (liffReady) liff.login({ redirectUri: location.href });
+  else toast('LINE 登入目前無法使用，請稍後再試');
 }
 
 function canUsePicker() {

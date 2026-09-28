@@ -46,20 +46,36 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const data = JSON.parse(raw);
-      if (data && Array.isArray(data.trips)) return data;
+      if (data && Array.isArray(data.trips)) return { trips: data.trips, journal: Array.isArray(data.journal) ? data.journal : [] };
     }
   } catch (err) {
     console.warn('讀取資料失敗', err);
   }
-  return { trips: [] };
+  return { trips: [], journal: [] };
 }
 
 function saveState() {
+  if (cloudOn()) return; // 雲端模式時資料以雲端為準，不覆寫這台裝置原本的本機資料
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (err) {
     toast('無法儲存到瀏覽器，請確認沒有使用無痕模式或空間已滿');
   }
+}
+
+// 雲端同步（js/cloud.js）：用 LINE 登入後啟用
+function cloudOn() {
+  return typeof Cloud !== 'undefined' && Cloud.enabled;
+}
+
+function commitTrip(trip) {
+  saveState();
+  if (cloudOn()) Cloud.saveTrip(trip);
+}
+
+function commitDeleteTrip(id) {
+  saveState();
+  if (cloudOn()) Cloud.deleteTrip(id);
 }
 
 /* ---------- 工具 ---------- */
@@ -249,6 +265,7 @@ function renderTrip(t) {
   let body;
   if (currentTab === 'budget') body = budgetView(t, dates);
   else if (currentTab === 'packing') body = packingView(t);
+  else if (currentTab === 'journal') body = journalView(t, dates);
   else body = planView(t, dates);
 
   app.innerHTML = `
@@ -268,9 +285,10 @@ function renderTrip(t) {
       </div>
     </div>
     <nav class="tabs no-print" role="tablist">
-      ${tab('plan', '🗓️ 每日行程')}${tab('budget', '💰 預算')}${tab('packing', '🧳 行李清單')}
+      ${tab('plan', '🗓️ 每日行程')}${tab('budget', '💰 預算')}${tab('packing', '🧳 行李清單')}${tab('journal', '📔 日誌')}
     </nav>
     ${body}`;
+  if (currentTab === 'journal' && cloudOn()) Cloud.loadPhotos(app);
 }
 
 function planView(t, dates) {
@@ -397,6 +415,48 @@ function packingView(t) {
     </section>`;
 }
 
+function journalView(t, dates) {
+  const entries = (state.journal || []).filter((j) => j.date >= t.startDate && j.date <= t.endDate);
+  const today = fmtDate(new Date());
+  const defaultDate = dates.includes(today) ? today : dates[0];
+  const days = dates
+    .filter((d) => entries.some((j) => j.date === d))
+    .map((d) => `
+      <section class="panel">
+        <h3>Day ${dates.indexOf(d) + 1}・${prettyDate(d)}</h3>
+        <ul class="journal-list">${entries.filter((j) => j.date === d).map(journalItem).join('')}</ul>
+      </section>`)
+    .join('');
+  return `
+    <form id="journal-form" class="panel journal-form no-print">
+      <label>日期
+        <select name="date">${dates.map((d, i) => `<option value="${d}" ${d === defaultDate ? 'selected' : ''}>Day ${i + 1}・${prettyDate(d)}</option>`).join('')}</select>
+      </label>
+      <label>內容<textarea name="text" rows="3" maxlength="2000" required placeholder="今天的心得、發現、心情……"></textarea></label>
+      <div class="form-actions"><button type="submit" class="btn btn-primary">記下來</button></div>
+      <p class="muted hint">${cloudOn()
+        ? '也可以在 LINE 官方帳號輸入「日誌 內容」，或直接傳照片，會自動記到當天。'
+        : '用 LINE 登入後，日誌會同步到雲端，也能在 LINE 官方帳號直接傳文字或照片記錄。'}</p>
+    </form>
+    ${days || '<p class="muted journal-empty">這趟旅程還沒有日誌。</p>'}`;
+}
+
+function journalItem(j) {
+  const body = j.type === 'image'
+    ? `<img class="journal-photo" data-file-id="${esc(j.fileId)}" alt="旅遊照片">`
+    : `<p>${esc(j.text)}</p>`;
+  return `
+    <li class="journal-item">
+      <span class="journal-time">${esc(j.time)}</span>
+      <div class="journal-body">${body}</div>
+      <button class="icon-btn no-print" data-action="delete-journal" data-id="${esc(j.id)}" title="刪除" aria-label="刪除">✕</button>
+    </li>`;
+}
+
+function sortJournal() {
+  state.journal.sort((a, b) => (a.date + a.time + a.createdAt).localeCompare(b.date + b.time + b.createdAt));
+}
+
 /* ---------- 表單：旅程 ---------- */
 function openTripDialog(trip) {
   editingTripId = trip ? trip.id : null;
@@ -439,14 +499,14 @@ tripForm.addEventListener('submit', (e) => {
     }
     for (const d of Object.keys(t.days)) if (!valid.has(d)) delete t.days[d];
     Object.assign(t, data);
-    saveState();
+    commitTrip(t);
     tripDialog.close();
     toast('旅程已更新');
     route();
   } else {
     const t = { id: uid(), ...data, days: {}, packing: [], createdAt: Date.now() };
     state.trips.push(t);
-    saveState();
+    commitTrip(t);
     tripDialog.close();
     toast('旅程已建立');
     location.hash = `#/trip/${t.id}`;
@@ -497,7 +557,7 @@ activityForm.addEventListener('submit', (e) => {
   }
   (t.days[date] ||= []).push(activity);
   sortDay(t.days[date]);
-  saveState();
+  commitTrip(t);
   activityDialog.close();
   toast(editingActivity ? '行程已更新' : '行程已新增');
   renderTrip(t);
@@ -555,7 +615,7 @@ importFile.addEventListener('change', async () => {
     const trips = list.map(normalizeTrip).filter(Boolean);
     if (!trips.length) return toast('檔案裡沒有可匯入的旅程');
     state.trips.push(...trips);
-    saveState();
+    trips.forEach(commitTrip);
     toast(`已匯入 ${trips.length} 個旅程`);
     location.hash = trips.length === 1 ? `#/trip/${trips[0].id}` : '#/';
     route();
@@ -618,7 +678,7 @@ document.addEventListener('click', (e) => {
     case 'load-sample': {
       const sample = buildSampleTrip();
       state.trips.push(sample);
-      saveState();
+      commitTrip(sample);
       location.hash = `#/trip/${sample.id}`;
       break;
     }
@@ -661,7 +721,7 @@ document.addEventListener('click', (e) => {
     case 'delete-trip':
       if (t && confirm(`確定要刪除「${t.name}」嗎？此動作無法復原。`)) {
         state.trips = state.trips.filter((x) => x.id !== t.id);
-        saveState();
+        commitDeleteTrip(t.id);
         toast('旅程已刪除');
         location.hash = '#/';
       }
@@ -679,7 +739,7 @@ document.addEventListener('click', (e) => {
       const a = list?.find((x) => x.id === el.dataset.id);
       if (a && confirm(`刪除「${a.title}」？`)) {
         t.days[el.dataset.date] = list.filter((x) => x.id !== a.id);
-        saveState();
+        commitTrip(t);
         renderTrip(t);
       }
       break;
@@ -688,7 +748,7 @@ document.addEventListener('click', (e) => {
       const item = t?.packing.find((x) => x.id === el.dataset.id);
       if (item) {
         item.done = el.checked;
-        saveState();
+        commitTrip(t);
         renderTrip(t);
       }
       break;
@@ -696,16 +756,29 @@ document.addEventListener('click', (e) => {
     case 'delete-pack':
       if (t) {
         t.packing = t.packing.filter((x) => x.id !== el.dataset.id);
-        saveState();
+        commitTrip(t);
         renderTrip(t);
       }
       break;
+    case 'line-login':
+      lineLogin();
+      break;
+    case 'delete-journal': {
+      const j = state.journal.find((x) => x.id === el.dataset.id);
+      if (j && confirm(j.type === 'image' ? '刪除這張照片？' : `刪除這則日誌？\n「${j.text.slice(0, 40)}」`)) {
+        state.journal = state.journal.filter((x) => x.id !== j.id);
+        saveState();
+        if (cloudOn()) Cloud.deleteJournal(j.id);
+        if (t) renderTrip(t);
+      }
+      break;
+    }
     case 'pack-preset':
       if (t) {
         const existing = new Set(t.packing.map((x) => x.text));
         const added = PACKING_PRESET.filter((text) => !existing.has(text));
         t.packing.push(...added.map((text) => ({ id: uid(), text, done: false })));
-        saveState();
+        commitTrip(t);
         renderTrip(t);
         toast(added.length ? `已加入 ${added.length} 項常用物品` : '常用物品都已經在清單裡了');
       }
@@ -714,13 +787,32 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('submit', (e) => {
+  if (e.target.id === 'journal-form') {
+    e.preventDefault();
+    const t = currentTrip();
+    const f = new FormData(e.target);
+    const text = f.get('text').trim();
+    if (!t || !text) return;
+    const now = new Date();
+    const entry = {
+      id: uid(), date: f.get('date'), time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+      type: 'text', text: text.slice(0, 2000), fileId: '', createdAt: Date.now(),
+    };
+    state.journal.push(entry);
+    sortJournal();
+    saveState();
+    if (cloudOn()) Cloud.addJournal(entry);
+    renderTrip(t);
+    toast('已記到旅遊日誌');
+    return;
+  }
   if (e.target.id !== 'packing-form') return;
   e.preventDefault();
   const t = currentTrip();
   const text = e.target.elements.namedItem('text').value.trim();
   if (!t || !text) return;
   t.packing.push({ id: uid(), text: text.slice(0, 80), done: false });
-  saveState();
+  commitTrip(t);
   renderTrip(t);
   $('#packing-form input').focus();
 });
