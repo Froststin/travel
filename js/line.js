@@ -81,10 +81,13 @@ function tripShareText(t, dates) {
     const list = t.days[d] || [];
     lines.push('', `【Day ${all.indexOf(d) + 1}・${prettyDate(d)}】`);
     if (!list.length) lines.push('（尚未安排）');
-    for (const a of list) {
+    list.forEach((a, i) => {
       const c = CATEGORIES[catKey(a)];
-      lines.push(`${a.time || '--:--'} ${c.icon} ${a.title}${a.location ? `（${a.location}）` : ''}`);
-    }
+      if (Number(a.travelMin)) lines.push(`　↓ 🚶 移動 ${travelText(Number(a.travelMin))}`);
+      const issue = scheduleIssue(list[i - 1], a);
+      if (issue) lines.push(`　⚠️ ${issue}`);
+      lines.push(`${timeLabel(a) || '--:--'} ${c.icon} ${a.title}${a.location ? `（${a.location}）` : ''}`);
+    });
   }
   let text = lines.join('\n');
   if (text.length > SHARE_TEXT_LIMIT) text = `${text.slice(0, SHARE_TEXT_LIMIT)}\n……（行程太長，只顯示前段）`;
@@ -98,18 +101,26 @@ function openLineShareUrl(text) {
 }
 
 /* ---------- Flex Message 版（方案 B） ---------- */
+function transitFlex(prev, a) {
+  const travel = Number(a.travelMin) || 0;
+  const issue = scheduleIssue(prev, a);
+  if (!travel && !issue) return [];
+  const text = [travel ? `🚶 移動 ${travelText(travel)}` : '', issue ? `⚠️ ${issue}` : ''].filter(Boolean).join('　');
+  return [flexText(text, { size: 'xxs', color: issue ? '#b42318' : '#66727a', margin: 'none' })];
+}
+
 function flexText(text, extra = {}) {
   return { type: 'text', text: String(text || ' ').slice(0, 200), wrap: true, ...extra };
 }
 
 function dayBubble(t, d, dayNo) {
   const list = t.days[d] || [];
-  const rows = list.slice(0, FLEX_MAX_ITEMS).map((a) => ({
+  const rows = list.slice(0, FLEX_MAX_ITEMS).flatMap((a, i) => [...transitFlex(list[i - 1], a), {
     type: 'box',
     layout: 'horizontal',
     spacing: 'md',
     contents: [
-      flexText(a.time || '--:--', { size: 'sm', color: '#66727a', flex: 0 }),
+      flexText(`${a.time || '--:--'}${a.time && a.endTime ? `\n~${a.endTime}` : ''}`, { size: 'sm', color: '#66727a', flex: 0 }),
       { type: 'box', layout: 'vertical', width: '4px', backgroundColor: CAT_COLORS[catKey(a)], contents: [] },
       {
         type: 'box',
@@ -120,7 +131,7 @@ function dayBubble(t, d, dayNo) {
         ],
       },
     ],
-  }));
+  }]);
   if (list.length > FLEX_MAX_ITEMS) {
     rows.push(flexText(`……還有 ${list.length - FLEX_MAX_ITEMS} 項`, { size: 'xs', color: '#66727a' }));
   }

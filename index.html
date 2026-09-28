@@ -57,8 +57,13 @@
       <label>標題<input name="title" required maxlength="100" placeholder="例如：清水寺"></label>
       <div class="form-row">
         <label>日期<select name="date" required></select></label>
-        <label>時間<input type="time" name="time"></label>
+        <label>移動時間（分鐘）<input type="number" name="travelMin" min="0" max="1440" step="1" inputmode="numeric" placeholder="從上一站過來要多久"></label>
       </div>
+      <div class="form-row">
+        <label>開始時間<input type="time" name="time"></label>
+        <label>結束時間<input type="time" name="endTime"></label>
+      </div>
+      <p class="form-hint muted">填了移動時間，開始時間會自動帶入「上一站結束＋移動時間」</p>
       <div class="form-row">
         <label>類別<select name="category"></select></label>
         <label>花費<input type="number" name="cost" min="0" step="any" placeholder="0"></label>

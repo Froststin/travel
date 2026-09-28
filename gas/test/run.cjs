@@ -170,6 +170,30 @@ r = say('改 八坂神社 https://maps.app.goo.gl/xyz');
 check('修改地圖連結', rows('Activities').some((a) => a.title === '八坂神社' && a.mapUrl === 'https://maps.app.goo.gl/xyz'), r.text);
 check('拒絕非 https 連結', P('cleanUrl_("javascript:alert(1)")') === '' && P('cleanUrl_("http://x.com")') === '');
 
+/* ---------- 時間區間與移動時間 ---------- */
+check('區間 09:00-12:00', P('JSON.stringify(extractTimeRange_("09:00-12:00 清水寺"))') === JSON.stringify({ time: '09:00', endTime: '12:00', rest: '清水寺' }));
+check('區間 9點到12點半', P('extractTimeRange_("9點到12點半").endTime') === '12:30');
+check('區間 下午2點~5點', P('JSON.stringify([extractTimeRange_("下午2點~5點").time, extractTimeRange_("下午2點~5點").endTime])') === '["14:00","17:00"]');
+check('單一時間仍可用', P('JSON.stringify(extractTimeRange_("10:00 午餐"))') === JSON.stringify({ time: '10:00', endTime: '', rest: '午餐' }));
+check('日期區間不會被當成時間', P('extractTimeRange_("10/28-10/30")') === null);
+check('移動15分', P('extractTravel_("清水寺 移動15分").travelMin') === 15);
+check('車程 1 小時 20 分', P('extractTravel_("車程 1 小時 20 分").travelMin') === 80);
+check('步行約 20 分鐘', P('extractTravel_("步行約 20 分鐘").travelMin') === 20);
+check('時間衝突判斷', P('scheduleIssue_({time:"09:00",endTime:"12:00"},{time:"12:00",travelMin:15})') === '預計 12:15 才會到，晚了 15 分鐘'
+  && P('scheduleIssue_({time:"09:00",endTime:"12:00"},{time:"12:15",travelMin:15})') === '');
+
+r = say('新增 明天 13:00-15:00 嵐山散步 @嵐山');
+check('新增時間區間', r.text.includes('13:00–15:00 🏞️ 嵐山散步'), r.text);
+r = say('新增 明天 15:00-16:00 嵐山午茶 移動15分');
+check('新增移動時間並警告趕不上', r.text.includes('🚶 移動 15 分鐘') && r.text.includes('⚠️ 預計 15:15 才會到'), r.text);
+r = say('改 嵐山午茶 15:15');
+check('只改開始時間，結束時間跟著平移', r.text.includes('15:15–16:15') && !r.text.includes('⚠️'), r.text);
+r = say('改 嵐山午茶 移動30分');
+check('修改移動時間後再次警告', r.text.includes('移動 30 分鐘') && r.text.includes('晚了 15 分鐘'), r.text);
+r = say('明天');
+check('行程卡片顯示區間、移動與警告', r.text.includes('~15:00') && r.text.includes('🚶 移動 30 分鐘') && r.text.includes('⚠️'), r.text.slice(0, 400));
+check('試算表存了結束與移動時間', rows('Activities').some((a) => a.title === '嵐山午茶' && a.endTime === '16:15' && a.travelMin === '30'));
+
 /* ---------- 網站 API ---------- */
 let res = api('list', {});
 check('API list', res.ok && res.trips.length === 1 && res.journal.length === 4, JSON.stringify(res).slice(0, 300));
@@ -201,7 +225,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '2');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '3');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];

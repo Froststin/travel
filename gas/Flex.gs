@@ -8,6 +8,14 @@ function fText_(text, extra) {
   return Object.assign({ type: 'text', text: String(text || ' ').slice(0, 200) || ' ', wrap: true }, extra || {});
 }
 
+function transitRows_(prev, a) {
+  const travel = Number(a.travelMin) || 0;
+  const issue = scheduleIssue_(prev, a);
+  if (!travel && !issue) return [];
+  const text = [travel ? `🚶 移動 ${travelText_(travel)}` : '', issue ? `⚠️ ${issue}` : ''].filter(Boolean).join('　');
+  return [fText_(text, { size: 'xxs', color: issue ? '#b42318' : '#66727a' })];
+}
+
 function activityRow_(a) {
   const info = CATEGORY_INFO[catKey_(a.category)];
   return {
@@ -15,7 +23,7 @@ function activityRow_(a) {
     layout: 'horizontal',
     spacing: 'md',
     contents: [
-      fText_(a.time || '--:--', { size: 'sm', color: '#66727a', flex: 0 }),
+      fText_(`${a.time || '--:--'}${a.time && a.endTime ? `\n~${a.endTime}` : ''}`, { size: 'sm', color: '#66727a', flex: 0 }),
       { type: 'box', layout: 'vertical', width: '4px', backgroundColor: info.color, contents: [] },
       {
         type: 'box',
@@ -46,7 +54,7 @@ function dayBubble_(trip, date, filter) {
   const dayNo = daysBetween_(trip.startDate, date) + 1;
   let list = trip.days[date] || [];
   if (filter) list = list.filter((a) => catKey_(a.category) === filter);
-  const rows = list.slice(0, FLEX_MAX_ITEMS).map(activityRow_);
+  const rows = list.slice(0, FLEX_MAX_ITEMS).flatMap((a, i) => [...(filter ? [] : transitRows_(list[i - 1], a)), activityRow_(a)]);
   if (list.length > FLEX_MAX_ITEMS) rows.push(fText_(`……還有 ${list.length - FLEX_MAX_ITEMS} 項`, { size: 'xs', color: '#66727a' }));
   if (!rows.length) rows.push(fText_(filter ? `這天沒有${CATEGORY_INFO[filter].label}類的行程` : '這天還沒有安排', { size: 'sm', color: '#66727a' }));
   const route = filter ? '' : dayRouteUrl_(trip.days[date] || []);
@@ -137,11 +145,16 @@ function dayText_(trip, date, filter) {
   if (filter) list = list.filter((a) => catKey_(a.category) === filter);
   const lines = [`🗓️ ${trip.name}｜Day ${dayNo}・${prettyDate_(date)}`];
   if (!list.length) lines.push('（沒有安排）');
-  list.forEach((a) => lines.push(activityLine_(a)));
+  list.forEach((a, i) => {
+    if (!filter && Number(a.travelMin)) lines.push(`　↓ 🚶 移動 ${travelText_(Number(a.travelMin))}`);
+    const issue = filter ? '' : scheduleIssue_(list[i - 1], a);
+    if (issue) lines.push(`　⚠️ ${issue}`);
+    lines.push(activityLine_(a));
+  });
   return lines.join('\n');
 }
 
 function activityLine_(a) {
   const info = CATEGORY_INFO[catKey_(a.category)];
-  return `${a.time || '--:--'} ${info.icon} ${a.title}${a.location ? `（${a.location}）` : ''}`;
+  return `${timeLabel_(a) || '--:--'} ${info.icon} ${a.title}${a.location ? `（${a.location}）` : ''}`;
 }

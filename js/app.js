@@ -141,6 +141,49 @@ function mapUrl(q) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
+/* ---------- 時間區間與移動時間 ---------- */
+const TIME_RE = /^\d{2}:\d{2}$/;
+
+function toMin(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function fromMin(n) {
+  const v = Math.min(Math.max(Math.round(n), 0), 23 * 60 + 59);
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+}
+
+function timeLabel(a) {
+  if (!a.time) return '';
+  return a.endTime ? `${a.time}–${a.endTime}` : a.time;
+}
+
+function travelText(min) {
+  if (min < 60) return `${min} 分鐘`;
+  return `${Math.floor(min / 60)} 小時${min % 60 ? ` ${min % 60} 分` : ''}`;
+}
+
+// 上一站結束＋移動時間，是否趕得上這一站的開始時間
+function scheduleIssue(prev, a) {
+  const prevEnd = prev && (prev.endTime || prev.time);
+  if (!a.time || !prevEnd) return '';
+  const arrive = toMin(prevEnd) + (Number(a.travelMin) || 0);
+  const late = arrive - toMin(a.time);
+  return late > 0 ? `預計 ${fromMin(arrive)} 才會到，晚了 ${late} 分鐘` : '';
+}
+
+function transitItem(prev, a) {
+  const travel = Number(a.travelMin) || 0;
+  const issue = scheduleIssue(prev, a);
+  if (!travel && !issue) return '';
+  return `
+    <li class="transit${issue ? ' warn' : ''}">
+      ${travel ? `<span>🚶 移動 ${travelText(travel)}</span>` : ''}
+      ${issue ? `<span class="transit-warn">⚠️ ${issue}</span>` : ''}
+    </li>`;
+}
+
 // 只接受 https 連結，避免 javascript: 之類的網址被放進 href
 function cleanUrl(v) {
   const s = typeof v === 'string' ? v.trim() : '';
@@ -348,7 +391,7 @@ function planView(t, dates) {
           </div>
         </header>
         ${list.length
-          ? `<ol class="timeline">${list.map((a) => activityItem(a, d, t.currency)).join('')}</ol>`
+          ? `<ol class="timeline">${list.map((a, idx) => transitItem(list[idx - 1], a) + activityItem(a, d, t.currency)).join('')}</ol>`
           : '<p class="day-empty muted">還沒有安排，點「新增」加入第一個行程。</p>'}
       </section>`;
   }).join('');
@@ -362,7 +405,7 @@ function activityItem(a, date, currency) {
   const nav = navUrl(a);
   return `
     <li class="activity cat-${key}">
-      <div class="act-time">${a.time ? esc(a.time) : '—'}</div>
+      <div class="act-time">${a.time ? esc(a.time) : '—'}${a.time && a.endTime ? `<span class="act-end">~ ${esc(a.endTime)}</span>` : ''}</div>
       <div class="act-body">
         <div class="act-title"><span aria-hidden="true">${c.icon}</span>${esc(a.title)}<span class="chip">${c.label}</span></div>
         ${place || nav ? `
@@ -587,18 +630,41 @@ function openActivityDialog(date, activity) {
   activityForm.reset();
   activityForm.elements.date.innerHTML = dateRange(t.startDate, t.endDate)
     .map((d, i) => `<option value="${d}">Day ${i + 1}・${prettyDate(d)}</option>`).join('');
-  const a = activity || { title: '', time: '', category: 'sight', location: '', mapUrl: '', cost: '', notes: '' };
+  const a = activity || { title: '', time: '', endTime: '', travelMin: '', category: 'sight', location: '', mapUrl: '', cost: '', notes: '' };
   activityForm.elements.date.value = date;
   activityForm.elements.title.value = a.title;
   activityForm.elements.time.value = a.time || '';
+  activityForm.elements.endTime.value = a.endTime || '';
+  activityForm.elements.travelMin.value = a.travelMin || '';
+  activityForm.dataset.autoTime = activity ? '' : '1'; // 新增時自動帶入開始時間，使用者自己改過就停止
   activityForm.elements.category.value = catKey(a);
   activityForm.elements.location.value = a.location || '';
   activityForm.elements.mapUrl.value = a.mapUrl || '';
   activityForm.elements.cost.value = a.cost || '';
   activityForm.elements.notes.value = a.notes || '';
+  updateAutoTime();
   activityDialog.showModal();
   activityForm.elements.title.focus();
 }
+
+// 同一天上一站的結束時間（沒有結束時間就用開始時間）
+function prevEndFor(date) {
+  const t = currentTrip();
+  const list = ((t && t.days[date]) || []).filter((x) => x.time && !(editingActivity && x.id === editingActivity.id));
+  const last = list[list.length - 1];
+  return last ? (last.endTime || last.time) : '';
+}
+
+function updateAutoTime() {
+  if (activityForm.dataset.autoTime !== '1') return;
+  const prevEnd = prevEndFor(activityForm.elements.date.value);
+  if (!prevEnd) return;
+  activityForm.elements.time.value = fromMin(toMin(prevEnd) + (Number(activityForm.elements.travelMin.value) || 0));
+}
+
+activityForm.elements.travelMin.addEventListener('input', updateAutoTime);
+activityForm.elements.date.addEventListener('change', updateAutoTime);
+activityForm.elements.time.addEventListener('input', () => { activityForm.dataset.autoTime = ''; });
 
 activityForm.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -609,6 +675,8 @@ activityForm.addEventListener('submit', (e) => {
   const activity = {
     id: editingActivity ? editingActivity.id : uid(),
     time: f.get('time') || '',
+    endTime: f.get('endTime') || '',
+    travelMin: Math.min(1440, Math.max(0, Math.round(Number(f.get('travelMin')) || 0))),
     title: f.get('title').trim(),
     category: f.get('category'),
     location: f.get('location').trim(),
@@ -617,6 +685,8 @@ activityForm.addEventListener('submit', (e) => {
     notes: f.get('notes').trim(),
   };
   if (!activity.title) return toast('請填寫標題');
+  if (activity.endTime && !activity.time) return toast('請先填開始時間');
+  if (activity.endTime && activity.endTime < activity.time) return toast('結束時間不能早於開始時間');
   if (f.get('mapUrl').trim() && !activity.mapUrl) return toast('地圖連結要是 https:// 開頭的網址');
 
   if (editingActivity) {
@@ -646,7 +716,9 @@ function normalizeTrip(raw) {
         .filter((a) => a && typeof a.title === 'string')
         .map((a) => ({
           id: uid(),
-          time: /^\d{2}:\d{2}$/.test(a.time) ? a.time : '',
+          time: TIME_RE.test(a.time) ? a.time : '',
+          endTime: TIME_RE.test(a.time) && TIME_RE.test(a.endTime) && a.endTime >= a.time ? a.endTime : '',
+          travelMin: Math.min(1440, Math.max(0, Math.round(Number(a.travelMin) || 0))),
           title: str(a.title, 100),
           category: catKey(a),
           location: str(a.location, 200),

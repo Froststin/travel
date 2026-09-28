@@ -251,7 +251,9 @@ function searchActivities_(trips, query, minScore) {
       }
     }
   }
-  return out.sort((x, y) => y.score - x.score || (x.date + x.activity.time).localeCompare(y.date + y.activity.time));
+  out.sort((x, y) => y.score - x.score || (x.date + x.activity.time).localeCompare(y.date + y.activity.time));
+  // 標題完全包含關鍵字的，優先於只是地點相近的
+  return out.length && out[0].score >= 1 ? out.filter((h) => h.score >= 1) : out;
 }
 
 function searchTrips_(trips, query) {
@@ -328,4 +330,59 @@ function dayRouteUrl_(list) {
   if (!stops.length) return '';
   const waypoints = stops.slice(0, -1).slice(-9);
   return navToUrl_(stops[stops.length - 1]) + (waypoints.length ? `&waypoints=${encodeURIComponent(waypoints.join('|'))}` : '');
+}
+
+/* ---------- 時間區間與移動時間 ---------- */
+function toMin_(t) {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function fromMin_(n) {
+  const v = Math.min(Math.max(Math.round(n), 0), 23 * 60 + 59);
+  return `${pad2_(Math.floor(v / 60))}:${pad2_(v % 60)}`;
+}
+
+function timeLabel_(a) {
+  if (!a.time) return '';
+  return a.endTime ? `${a.time}–${a.endTime}` : a.time;
+}
+
+function travelText_(min) {
+  if (min < 60) return `${min} 分鐘`;
+  return `${Math.floor(min / 60)} 小時${min % 60 ? ` ${min % 60} 分` : ''}`;
+}
+
+// 上一站結束＋移動時間，是否趕得上這一站
+function scheduleIssue_(prev, a) {
+  const prevEnd = prev && (prev.endTime || prev.time);
+  if (!a.time || !prevEnd) return '';
+  const arrive = toMin_(prevEnd) + (Number(a.travelMin) || 0);
+  const late = arrive - toMin_(a.time);
+  return late > 0 ? `預計 ${fromMin_(arrive)} 才會到，晚了 ${late} 分鐘` : '';
+}
+
+/** 09:00-12:00、9點到12點、下午2點~5點半；沒有區間時退回單一時間 */
+function extractTimeRange_(text) {
+  const T = '(?:上午|早上|中午|下午|晚上|傍晚|凌晨)?\\s*(?:\\d{1,2}\\s*[:：]\\s*\\d{2}|(?:\\d{1,2}|[一二兩三四五六七八九十]{1,3})\\s*[點点時](?:\\s*半|\\s*\\d{1,2}\\s*分?)?)';
+  const m = text.match(new RegExp(`(${T})\\s*(?:-|~|～|–|到|至)\\s*(${T})`));
+  if (m) {
+    const a = extractTime_(m[1]);
+    let b = extractTime_(m[2]);
+    if (a && b) {
+      // 「下午2點到5點」：結束沒寫上下午時，沿用開始的
+      if (b.time < a.time && toMin_(b.time) + 12 * 60 < 24 * 60) b = { time: fromMin_(toMin_(b.time) + 12 * 60) };
+      if (b.time >= a.time) return { time: a.time, endTime: b.time, rest: text.replace(m[0], ' ').trim() };
+    }
+  }
+  const single = extractTime_(text);
+  return single ? { time: single.time, endTime: '', rest: single.rest } : null;
+}
+
+/** 移動15分、車程 1 小時、步行20分鐘、交通 1小時30分 */
+function extractTravel_(text) {
+  const m = text.match(/(?:移動|交通|車程|路程|步行|走路|搭車|騎車|開車)\s*(?:時間)?\s*(?:約|大概|大約)?\s*(?:(\d{1,2})\s*(?:小時|hr|h)\s*)?(?:(\d{1,3})\s*(?:分鐘|分|min))?/i);
+  if (!m || (!m[1] && !m[2])) return null;
+  const min = (Number(m[1]) || 0) * 60 + (Number(m[2]) || 0);
+  return { travelMin: Math.min(1440, min), rest: text.replace(m[0], ' ').trim() };
 }

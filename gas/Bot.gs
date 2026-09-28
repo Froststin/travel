@@ -13,9 +13,11 @@ const HELP_TEXT = [
   '【新增】',
   '・新旅程 京都 10/28-10/30',
   '・新增 明天 10:00 清水寺 @清水寺 $400',
+  '・新增 明天 09:00-12:00 清水寺 移動15分',
   '',
   '【修改／刪除】',
-  '・改 清水寺 11:30',
+  '・改 清水寺 11:30（有結束時間會一起平移）',
+  '・改 清水寺 10:00-12:30、改 清水寺 移動20分',
   '・改 清水寺 到 後天',
   '・刪除 清水寺',
   '',
@@ -183,7 +185,7 @@ function replySearchHits_(ctx, kw, hits) {
     const info = CATEGORY_INFO[catKey_(a.category)];
     const lines = [
       `${info.icon} ${a.title}`,
-      `🗓️ ${trip.name}・Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}${a.time ? ` ${a.time}` : ''}`,
+      `🗓️ ${trip.name}・Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}${a.time ? ` ${timeLabel_(a)}` : ''}`,
     ];
     if (a.location) lines.push(`📍 ${a.location}`);
     if (placeUrl_(a)) lines.push(`🗺️ 地圖：${placeUrl_(a)}`);
@@ -291,9 +293,11 @@ function cmdAdd_(ctx, body) {
   let rest = body;
   const u = extractUrl_(rest);
   if (u) rest = u.rest;
+  const tr = extractTravel_(rest);
+  if (tr) rest = tr.rest;
   const d = extractDate_(rest, { today: ctx.today, trips: ctx.trips, trip: base });
   if (d) rest = d.rest;
-  const t = extractTime_(rest);
+  const t = extractTimeRange_(rest);
   if (t) rest = t.rest;
   const c = extractCost_(rest);
   if (c) rest = c.rest;
@@ -311,15 +315,17 @@ function cmdAdd_(ctx, body) {
   if (!trip) return say_(ctx, textMsg_(`${prettyDate_(date)} 沒有旅程喔，要先建立：新旅程 名稱 ${date.slice(5).replace('-', '/')}-…`));
 
   const activity = {
-    id: Utilities.getUuid(), time: t ? t.time : '', title: title.slice(0, 100),
+    id: Utilities.getUuid(), time: t ? t.time : '', endTime: t ? t.endTime : '', travelMin: tr ? tr.travelMin : 0, title: title.slice(0, 100),
     category: guessCategory_(`${title} ${loc ? loc.location : ''}`), location: loc ? loc.location.slice(0, 200) : '',
     mapUrl: u ? cleanUrl_(u.url) : '', cost: c ? c.cost : 0, notes: '',
   };
   (trip.days[date] = trip.days[date] || []).push(activity);
   sortDay_(trip.days[date]);
   saveTrip_(ctx.userId, trip);
+  const list = trip.days[date];
+  const issue = scheduleIssue_(list[list.indexOf(activity) - 1], activity);
   return say_(ctx, textMsg_(
-    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${activity.cost ? `\n💰 ${activity.cost} ${trip.currency}` : ''}`,
+    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${activity.travelMin ? `\n🚶 移動 ${travelText_(activity.travelMin)}` : ''}${activity.cost ? `\n💰 ${activity.cost} ${trip.currency}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`,
     [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/')), qPostback_('復原', { a: 'del', id: activity.id }, '復原剛才的新增'), ...defaultQuick_()],
   ));
 }
@@ -364,8 +370,10 @@ function cmdEdit_(ctx, body) {
   const base = activeTrip_(ctx.trips, ctx.today);
   const u = extractUrl_(rest);
   if (u) { changes.mapUrl = u.url; rest = u.rest; }
-  const t = extractTime_(rest);
-  if (t) { changes.time = t.time; rest = t.rest; }
+  const tr = extractTravel_(rest);
+  if (tr) { changes.travelMin = tr.travelMin; rest = tr.rest; }
+  const t = extractTimeRange_(rest);
+  if (t) { changes.time = t.time; if (t.endTime) changes.endTime = t.endTime; rest = t.rest; }
   const c = extractCost_(rest);
   if (c) { changes.cost = c.cost; rest = c.rest; }
   const loc = extractLocation_(rest);
@@ -375,7 +383,7 @@ function cmdEdit_(ctx, body) {
   const kw = keywordOf_(rest.replace(/改成|改到|換到|移到|到|成|為/g, ' '));
 
   if (!Object.keys(changes).length || !kw) {
-    return say_(ctx, textMsg_('要怎麼改呢？例如：\n改 清水寺 11:30\n改 清水寺 到 後天\n改 清水寺 $500\n改 清水寺 @京都東山\n改 清水寺 https://maps.app.goo.gl/…\n\n其他內容請到網站修改（輸入「網站」）。'));
+    return say_(ctx, textMsg_('要怎麼改呢？例如：\n改 清水寺 11:30\n改 清水寺 10:00-12:30\n改 清水寺 移動20分\n改 清水寺 到 後天\n改 清水寺 $500\n改 清水寺 @京都東山\n改 清水寺 https://maps.app.goo.gl/…\n\n其他內容請到網站修改（輸入「網站」）。'));
   }
   const hits = searchActivities_(ctx.trips, kw, 0.6);
   if (!hits.length) return say_(ctx, textMsg_(`找不到跟「${kw}」有關的行程。`));
@@ -389,7 +397,16 @@ function applyEdit_(ctx, id, changes) {
   if (!found) return say_(ctx, textMsg_('這個行程已經不存在了。'));
   const { trip, activity } = found;
   let date = found.date;
-  if (changes.time && /^\d{2}:\d{2}$/.test(changes.time)) activity.time = changes.time;
+  if (changes.time && /^\d{2}:\d{2}$/.test(changes.time)) {
+    if (changes.endTime && /^\d{2}:\d{2}$/.test(changes.endTime) && changes.endTime >= changes.time) {
+      activity.endTime = changes.endTime;
+    } else if (activity.time && activity.endTime) {
+      // 只改開始時間：結束時間跟著平移，保留原本的停留長度
+      activity.endTime = fromMin_(toMin_(changes.time) + toMin_(activity.endTime) - toMin_(activity.time));
+    }
+    activity.time = changes.time;
+  }
+  if (changes.travelMin != null) activity.travelMin = Math.min(1440, Math.max(0, Math.round(Number(changes.travelMin) || 0)));
   if (changes.cost != null) activity.cost = Math.max(0, Number(changes.cost) || 0);
   if (changes.location) activity.location = String(changes.location).slice(0, 200);
   if (changes.mapUrl && cleanUrl_(changes.mapUrl)) activity.mapUrl = cleanUrl_(changes.mapUrl);
@@ -403,7 +420,8 @@ function applyEdit_(ctx, id, changes) {
   }
   sortDay_(trip.days[date]);
   saveTrip_(ctx.userId, trip);
-  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${activity.cost ? `\n💰 ${activity.cost} ${trip.currency}` : ''}`));
+  const issue = scheduleIssue_(trip.days[date][trip.days[date].indexOf(activity) - 1], activity);
+  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${activity.travelMin ? `\n🚶 移動 ${travelText_(activity.travelMin)}` : ''}${activity.cost ? `\n💰 ${activity.cost} ${trip.currency}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
 }
 
 /* ---------- 旅遊日誌 ---------- */
@@ -515,7 +533,7 @@ function cmdRoute_(ctx, text) {
   if (!url) return say_(ctx, textMsg_(`${prettyDate_(date)} 的行程還沒有填地點，沒辦法規劃路線喔。`));
   const stops = list.filter((a) => a.location);
   const lines = [`🧭 ${prettyDate_(date)} 路線（從目前位置出發）`];
-  stops.forEach((a, i) => lines.push(`${i + 1}. ${a.time || '--:--'} ${a.title}（${a.location}）`));
+  stops.forEach((a, i) => lines.push(`${i + 1}. ${timeLabel_(a) || '--:--'} ${a.title}（${a.location}）${a.travelMin ? `｜移動 ${travelText_(a.travelMin)}` : ''}`));
   if (stops.length > 10) lines.push('※ Google 地圖一次最多 10 個地點，只帶入最後 10 個');
   lines.push('', url);
   return say_(ctx, textMsg_(lines.join('\n'), [qUri_('🧭 開始導航', url), ...defaultQuick_()]));

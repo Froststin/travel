@@ -506,3 +506,20 @@ textarea { resize: vertical; }
 }
 .member-remove:hover { color: var(--danger); }
 .journal-author { display: block; font-size: .8rem; font-weight: 600; color: var(--primary); margin-bottom: 2px; }
+
+/* ---------- 時間區間／移動時間 ---------- */
+.act-end { display: block; font-size: .8rem; font-weight: 500; }
+.transit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 4px 0 4px 20px;
+  border-left: 3px dotted var(--border);
+  font-size: .8rem;
+  color: var(--muted);
+}
+.transit.warn { border-left-color: var(--danger); }
+.transit-warn { color: var(--danger); font-weight: 600; }
+.activity + .transit { border-top: 1px dashed var(--border); }
+.transit + .activity { border-top: none; }
+.form-hint { margin: -4px 0 0; font-size: .8rem; }
