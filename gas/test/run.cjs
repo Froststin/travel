@@ -234,6 +234,17 @@ say('改 先斗町晚餐 車資1000円');
 r = say('預算');
 check('預算把日幣車資換算成台幣', r.text.includes('以臺灣銀行現金賣出'), r.text);
 check('API 匯率不需登入', api('rate', {}, '').rate.rate === 0.2044);
+flags.finmindBanned = true;
+run('jpyRate_.memo = undefined; fetchReferenceRate_.memo = undefined');
+let fx = api('rate', {}, '').rate;
+check('FinMind 被封鎖時改用國際參考匯率並記下原因', fx.source === '國際參考匯率' && fx.rate === 0.2019 && fx.note.includes('ip banned'), JSON.stringify(fx));
+check('網站回報離譜的匯率會被拒絕', api('reportRate', { rate: { rate: 0.5, date: '2026-10-28' } }).accepted === false);
+check('網站回報合理的臺銀匯率', api('reportRate', { rate: { rate: 0.2044, date: '2026-10-28' } }).accepted === true);
+fx = api('rate', {}, '').rate;
+check('之後改用網站回報的臺銀匯率', fx.source === '臺灣銀行現金賣出' && fx.rate === 0.2044, JSON.stringify(fx));
+check('回報匯率需要登入', api('reportRate', { rate: { rate: 0.2044, date: '2026-10-28' } }, '').status === 401);
+flags.finmindBanned = false;
+run('jpyRate_.memo = undefined');
 r = say('預算');
 check('車資算進預算的交通類', r.text.includes('🚆 交通') && /預估花費：[\d,]+ TWD/.test(r.text), r.text);
 

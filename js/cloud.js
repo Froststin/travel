@@ -119,6 +119,7 @@ const Cloud = {
       this.handleError(err);
     }
     cloudPending = false;
+    reportRate();
     openTripFromQuery();
     route();
   },
@@ -180,26 +181,57 @@ const Cloud = {
   },
 };
 
-// 日幣匯率（不需登入）；讀不到就沿用上次存下的
+/* ---------- 日幣匯率 ----------
+ * 1. 瀏覽器直接向 FinMind 查臺灣銀行現金賣出（FinMind 會封鎖 Google 伺服器，所以不經後端）
+ * 2. 查不到再問後端（國際參考匯率）
+ * 大致即可：6 小時內查過就不再查 */
+const BANK_SOURCE = '臺灣銀行現金賣出';
+
+async function fetchBankRate() {
+  const start = fmtDate(new Date(Date.now() - 14 * 86400000));
+  const res = await fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanExchangeRate&data_id=JPY&start_date=${start}`);
+  const rows = ((await res.json()).data || []).filter((r) => Number(r.cash_sell) > 0);
+  const last = rows[rows.length - 1];
+  return last ? { rate: Number(last.cash_sell), date: last.date, source: BANK_SOURCE } : null;
+}
+
+async function fetchServerRate() {
+  if (!API_URL) return null;
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'rate' }),
+  });
+  const data = await res.json();
+  return data.ok ? data.rate : null;
+}
+
 async function loadRate() {
-  if (!API_URL) return;
-  try {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'rate' }),
-    });
-    const data = await res.json();
-    if (!data.ok || !data.rate) return;
-    fxRate = data.rate;
+  if (fxRate && fxRate.source === BANK_SOURCE && Date.now() - (fxRate.fetchedAt || 0) < 6 * 3600 * 1000) return;
+  let rate = null;
+  for (const fetcher of [fetchBankRate, fetchServerRate]) {
     try {
-      localStorage.setItem(FX_KEY, JSON.stringify(fxRate));
-    } catch { /* 忽略 */ }
-    if (!document.querySelector('dialog[open]')) route();
-    else updateFareHint();
-  } catch (err) {
-    console.warn('匯率讀取失敗', err);
+      rate = await fetcher();
+      if (rate) break;
+    } catch (err) {
+      console.warn('匯率讀取失敗', err);
+    }
   }
+  if (!rate) return;
+  fxRate = { ...rate, fetchedAt: Date.now() };
+  try {
+    localStorage.setItem(FX_KEY, JSON.stringify(fxRate));
+  } catch { /* 忽略 */ }
+  reportRate();
+  if (!document.querySelector('dialog[open]')) route();
+  else updateFareHint();
+}
+
+// 把臺銀匯率分享給後端，LINE 機器人也能用（需登入）
+function reportRate() {
+  if (!Cloud.enabled || !fxRate || fxRate.source !== BANK_SOURCE || Cloud.rateReported) return;
+  Cloud.rateReported = true;
+  Cloud.call('reportRate', { rate: { rate: fxRate.rate, date: fxRate.date } }).catch(() => {});
 }
 
 loadRate();

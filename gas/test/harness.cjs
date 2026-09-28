@@ -38,7 +38,7 @@ Object.entries(sheets).forEach(([name, sh]) => sh.getRange(1, 1, 1, 1).setValues
 
 const props = { SHEET_ID: 'sheet1', PHOTO_FOLDER_ID: 'folder1', WEBHOOK_KEY: 'k', CHANNEL_ACCESS_TOKEN: 'tok', ALLOWED_USERS: '' };
 const sent = [];
-const flags = { failFlex: false, today: '2026-10-29' };
+const flags = { failFlex: false, today: '2026-10-29', finmindBanned: false };
 
 const ctx = {
   console,
@@ -53,7 +53,7 @@ const ctx = {
   },
   SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet()) }) },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
-  CacheService: { getScriptCache: () => ({ get: () => null, put() {} }) },
+  CacheService: { getScriptCache: () => ({ get: () => null, put() {}, remove() {} }) },
   DriveApp: {
     getFolderById: () => ({ createFile: () => ({ getId: () => `file-${sent.length}` }) }),
     getFileById: () => ({ setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) }),
@@ -64,6 +64,12 @@ const ctx = {
       if (url.includes('oauth2/v2.1/verify')) {
         const ok = opt.payload.id_token.startsWith('good:');
         return { getResponseCode: () => (ok ? 200 : 400), getContentText: () => JSON.stringify({ sub: opt.payload.id_token.slice(5), exp: Date.now() / 1000 + 3600 }) };
+      }
+      if (url.includes('open.er-api.com')) {
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ rates: { TWD: 0.2019 }, time_last_update_unix: 1790553600 }) };
+      }
+      if (url.includes('finmindtrade') && flags.finmindBanned) {
+        return { getResponseCode: () => 403, getContentText: () => '{"msg":"ip banned"}' };
       }
       if (url.includes('finmindtrade')) {
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: [{ date: '2026-09-23', cash_sell: 0.2045 }, { date: '2026-09-24', cash_sell: 0.2044 }] }) };

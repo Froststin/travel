@@ -46,6 +46,9 @@ function handleApi_(body) {
   checkAllowed_(userId);
 
   switch (body.action) {
+    case 'reportRate':
+      return { accepted: withLock_(() => reportRate_(body.rate)) };
+
     case 'list':
       if (body.name) withLock_(() => setUserName_(userId, body.name));
       return { trips: loadTrips_(userId), journal: loadJournal_(userId) };
