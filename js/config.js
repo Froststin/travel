@@ -3,5 +3,5 @@
 // apiUrl：Google Apps Script 網頁應用程式網址（gas/ 資料夾）。留空時資料只存在瀏覽器，不做雲端同步
 window.TRAVEL_CONFIG = {
   liffId: '2011768794-Lhly8AIw',
-  apiUrl: '',
+  apiUrl: 'https://script.google.com/macros/s/AKfycbxjPX_V7LYnM6oRp3C4uu5dVMNKoCMWKTpymuqgl_SCj04MS8_RU78dPHnpBphLUWd3/exec',
 };
