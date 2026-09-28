@@ -422,8 +422,10 @@ function extractTravel_(text) {
     rest = rest.replace(chunk, ' ');
     break;
   }
-  const fare = rest.match(/(?:車資|交通費|票價|車票)\s*(?:NT\$|\$)?\s*(\d+(?:\.\d+)?)\s*(?:元|円|日圓|日幣|塊)?/);
+  // 車資單位：円／日圓／日幣／¥ ＝日幣；元／塊／台幣／NT$ ＝台幣；沒寫單位當作日幣
+  const fare = rest.match(/(?:車資|交通費|票價|車票)\s*(NT\$|\$|¥|￥)?\s*(\d+(?:\.\d+)?)\s*(元|塊|台幣|臺幣|円|日圓|日幣|yen)?/i);
   if (fare) rest = rest.replace(fare[0], ' ');
+  const fareCurrency = fare && (/NT\$|\$|元|塊|台幣|臺幣/i.test(`${fare[1] || ''}${fare[3] || ''}`) ? 'TWD' : 'JPY');
   // 只寫「搭電車」沒寫時間
   if (!found) {
     const onlyMode = rest.match(new RegExp(`(?:搭|坐|騎|開)\\s*(${MODE})`, 'i'));
@@ -436,7 +438,8 @@ function extractTravel_(text) {
   return {
     travelMin: found ? found.travelMin : 0,
     travelMode: found ? found.travelMode : '',
-    travelCost: fare ? Number(fare[1]) : null,
+    travelCost: fare ? Number(fare[2]) : null,
+    travelCostCurrency: fareCurrency || '',
     hasTravel: !!found,
     rest: rest.replace(/\s+/g, ' ').trim(),
   };
@@ -445,9 +448,9 @@ function extractTravel_(text) {
 function transitLabel_(a, currency) {
   const mode = TRAVEL_MODES[travelModeKey_(a.travelMode)];
   const travel = Number(a.travelMin) || 0;
-  const cost = Number(a.travelCost) || 0;
-  if (!mode && !travel && !cost) return '';
+  const fare = fareText_(a, currency);
+  if (!mode && !travel && !fare) return '';
   const parts = [mode ? `${mode.icon} ${mode.label}` : '⏱️ 移動'];
   if (travel) parts.push(travelText_(travel));
-  return parts.join(' ') + (cost ? `・${cost.toLocaleString()} ${currency || ''}`.trimEnd() : '');
+  return parts.join(' ') + (fare ? `・${fare}` : '');
 }

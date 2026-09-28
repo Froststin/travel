@@ -46,6 +46,15 @@ const activityForm = $('#activity-form');
 const importFile = $('#import-file');
 
 let state = loadState();
+// 日幣匯率（臺灣銀行現金賣出，1 JPY = rate TWD）；由 cloud.js 的 loadRate() 更新
+const FX_KEY = 'travel-planner:fx-jpy';
+let fxRate = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(FX_KEY)) || null;
+  } catch {
+    return null;
+  }
+})();
 let currentTripId = null;
 let currentTab = 'plan';
 let editingTripId = null;       // null = 新增旅程
@@ -188,15 +197,51 @@ function travelMode(a) {
   return Object.hasOwn(TRAVEL_MODES, a.travelMode) ? TRAVEL_MODES[a.travelMode] : null;
 }
 
-// 例如「🚃 電車 15 分鐘・¥230」
+/* ---------- 車資幣別與換算 ---------- */
+function fmtFare(n, cur) {
+  const v = Math.round(Number(n) * 100) / 100;
+  if (cur === 'JPY') return `¥${Math.round(v).toLocaleString()}`;
+  if (cur === 'TWD') return `NT$${Math.round(v).toLocaleString()}`;
+  return money(v, cur);
+}
+
+// 在日幣與台幣之間換算；無法換算時回傳 null
+function convertAmount(amount, from, to) {
+  const n = Number(amount) || 0;
+  if (!from || from === to) return n;
+  if (!fxRate || !fxRate.rate) return null;
+  if (from === 'JPY' && to === 'TWD') return n * fxRate.rate;
+  if (from === 'TWD' && to === 'JPY') return n / fxRate.rate;
+  return null;
+}
+
+// 車資換算成旅程幣別（換算不了就用原數字）
+function fareIn(a, currency) {
+  const v = convertAmount(a.travelCost, a.travelCostCurrency || currency, currency);
+  return v == null ? Number(a.travelCost) || 0 : v;
+}
+
+function fareText(a, currency) {
+  const cost = Number(a.travelCost) || 0;
+  if (!cost) return '';
+  const cur = a.travelCostCurrency || currency;
+  const conv = cur === currency ? null : convertAmount(cost, cur, currency);
+  return fmtFare(cost, cur) + (conv == null ? '' : `（≈${fmtFare(conv, currency)}）`);
+}
+
+function fxText() {
+  return fxRate ? `${fxRate.source} 1 日圓 ≈ ${fxRate.rate} 台幣（${fxRate.date}）` : '匯率載入中';
+}
+
+// 例如「🚃 電車 15 分鐘・¥230（≈NT$47）」
 function transitLabel(a, currency) {
   const mode = travelMode(a);
   const travel = Number(a.travelMin) || 0;
-  const cost = Number(a.travelCost) || 0;
-  if (!mode && !travel && !cost) return '';
+  const fare = fareText(a, currency);
+  if (!mode && !travel && !fare) return '';
   const parts = [mode ? `${mode.icon} ${mode.label}` : '⏱️ 移動'];
   if (travel) parts.push(travelText(travel));
-  return parts.join(' ') + (cost ? `・${money(cost, currency)}` : '');
+  return parts.join(' ') + (fare ? `・${fare}` : '');
 }
 
 function transitItem(prev, a, currency) {
@@ -248,9 +293,9 @@ function sortDay(list) {
   return list.sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
 }
 
-// 花費＝行程本身＋前往的車資
-function sumCost(list) {
-  return list.reduce((s, a) => s + (Number(a.cost) || 0) + (Number(a.travelCost) || 0), 0);
+// 花費＝行程本身＋前往的車資（車資換算成旅程幣別）
+function sumCost(list, currency) {
+  return list.reduce((s, a) => s + (Number(a.cost) || 0) + fareIn(a, currency), 0);
 }
 
 function allActivities(t) {
@@ -403,7 +448,7 @@ function planView(t, dates) {
     : '';
   const days = dates.map((d, i) => {
     const list = t.days[d] || [];
-    const total = sumCost(list);
+    const total = sumCost(list, t.currency);
     const route = dayRouteUrl(list);
     return `
       <section class="day" id="day-${d}">
@@ -456,7 +501,7 @@ function activityItem(a, date, currency) {
 
 function budgetView(t, dates) {
   const all = allActivities(t);
-  const spent = sumCost(all);
+  const spent = sumCost(all, t.currency);
   const budget = Number(t.budget) || 0;
   const remain = budget - spent;
   const over = budget > 0 && remain < 0;
@@ -467,7 +512,7 @@ function budgetView(t, dates) {
       ...c,
       key: k,
       // 車資一律算在「交通」
-      sum: all.reduce((s, a) => s + (catKey(a) === k ? Number(a.cost) || 0 : 0) + (k === 'transport' ? Number(a.travelCost) || 0 : 0), 0),
+      sum: all.reduce((s, a) => s + (catKey(a) === k ? Number(a.cost) || 0 : 0) + (k === 'transport' ? fareIn(a, t.currency) : 0), 0),
     }))
     .filter((x) => x.sum > 0)
     .sort((a, b) => b.sum - a.sum);
@@ -503,7 +548,7 @@ function budgetView(t, dates) {
         <tbody>
           ${dates.map((d, i) => {
             const list = t.days[d] || [];
-            return `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td>${list.length}</td><td>${money(sumCost(list), t.currency)}</td></tr>`;
+            return `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td>${list.length}</td><td>${money(sumCost(list, t.currency), t.currency)}</td></tr>`;
           }).join('')}
         </tbody>
       </table>
@@ -664,7 +709,7 @@ function openActivityDialog(date, activity) {
   activityForm.reset();
   activityForm.elements.date.innerHTML = dateRange(t.startDate, t.endDate)
     .map((d, i) => `<option value="${d}">Day ${i + 1}・${prettyDate(d)}</option>`).join('');
-  const a = activity || { title: '', time: '', endTime: '', travelMin: '', travelMode: '', travelCost: '', category: 'sight', location: '', mapUrl: '', cost: '', notes: '' };
+  const a = activity || { title: '', time: '', endTime: '', travelMin: '', travelMode: '', travelCost: '', travelCostCurrency: '', category: 'sight', location: '', mapUrl: '', cost: '', notes: '' };
   activityForm.elements.date.value = date;
   activityForm.elements.title.value = a.title;
   activityForm.elements.time.value = a.time || '';
@@ -672,6 +717,7 @@ function openActivityDialog(date, activity) {
   activityForm.elements.travelMin.value = a.travelMin || '';
   activityForm.elements.travelMode.value = travelMode(a) ? a.travelMode : '';
   activityForm.elements.travelCost.value = a.travelCost || '';
+  activityForm.elements.travelCostCurrency.value = (a.travelCost && a.travelCostCurrency) || lastFareCurrency();
   activityForm.dataset.autoTime = activity ? '' : '1'; // 新增時自動帶入開始時間，使用者自己改過就停止
   activityForm.elements.category.value = catKey(a);
   activityForm.elements.location.value = a.location || '';
@@ -679,6 +725,7 @@ function openActivityDialog(date, activity) {
   activityForm.elements.cost.value = a.cost || '';
   activityForm.elements.notes.value = a.notes || '';
   updateAutoTime();
+  updateFareHint();
   activityDialog.showModal();
   activityForm.elements.title.focus();
 }
@@ -702,6 +749,33 @@ activityForm.elements.travelMin.addEventListener('input', updateAutoTime);
 activityForm.elements.date.addEventListener('change', updateAutoTime);
 activityForm.elements.time.addEventListener('input', () => { activityForm.dataset.autoTime = ''; });
 
+function lastFareCurrency() {
+  try {
+    return localStorage.getItem('travel-planner:fare-currency') || 'JPY';
+  } catch {
+    return 'JPY';
+  }
+}
+
+// 車資下方即時顯示換算
+function updateFareHint() {
+  const el = $('#fare-hint');
+  const cost = Number(activityForm.elements.travelCost.value) || 0;
+  const cur = activityForm.elements.travelCostCurrency.value;
+  const target = cur === 'JPY' ? 'TWD' : 'JPY';
+  const conv = cost ? convertAmount(cost, cur, target) : null;
+  el.textContent = cost ? (conv == null ? fxText() : `≈ ${fmtFare(conv, target)}｜${fxText()}`) : '';
+  el.hidden = !cost;
+}
+
+activityForm.elements.travelCost.addEventListener('input', updateFareHint);
+activityForm.elements.travelCostCurrency.addEventListener('change', () => {
+  try {
+    localStorage.setItem('travel-planner:fare-currency', activityForm.elements.travelCostCurrency.value);
+  } catch { /* 忽略 */ }
+  updateFareHint();
+});
+
 activityForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const t = currentTrip();
@@ -715,6 +789,7 @@ activityForm.addEventListener('submit', (e) => {
     travelMin: Math.min(1440, Math.max(0, Math.round(Number(f.get('travelMin')) || 0))),
     travelMode: Object.hasOwn(TRAVEL_MODES, f.get('travelMode')) ? f.get('travelMode') : '',
     travelCost: Math.max(0, Number(f.get('travelCost')) || 0),
+    travelCostCurrency: CURRENCIES.includes(f.get('travelCostCurrency')) ? f.get('travelCostCurrency') : '',
     title: f.get('title').trim(),
     category: f.get('category'),
     location: f.get('location').trim(),
@@ -759,6 +834,7 @@ function normalizeTrip(raw) {
           travelMin: Math.min(1440, Math.max(0, Math.round(Number(a.travelMin) || 0))),
           travelMode: Object.hasOwn(TRAVEL_MODES, a.travelMode) ? a.travelMode : '',
           travelCost: Math.max(0, Number(a.travelCost) || 0),
+          travelCostCurrency: CURRENCIES.includes(a.travelCostCurrency) ? a.travelCostCurrency : '',
           title: str(a.title, 100),
           category: catKey(a),
           location: str(a.location, 200),

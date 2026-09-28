@@ -65,6 +65,9 @@ const ctx = {
         const ok = opt.payload.id_token.startsWith('good:');
         return { getResponseCode: () => (ok ? 200 : 400), getContentText: () => JSON.stringify({ sub: opt.payload.id_token.slice(5), exp: Date.now() / 1000 + 3600 }) };
       }
+      if (url.includes('finmindtrade')) {
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ data: [{ date: '2026-09-23', cash_sell: 0.2045 }, { date: '2026-09-24', cash_sell: 0.2044 }] }) };
+      }
       if (url.includes('/v2/bot/profile/')) {
         const id = url.split('/').pop();
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ displayName: `Name-${id}` }) };

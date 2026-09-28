@@ -180,6 +180,30 @@ const Cloud = {
   },
 };
 
+// 日幣匯率（不需登入）；讀不到就沿用上次存下的
+async function loadRate() {
+  if (!API_URL) return;
+  try {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'rate' }),
+    });
+    const data = await res.json();
+    if (!data.ok || !data.rate) return;
+    fxRate = data.rate;
+    try {
+      localStorage.setItem(FX_KEY, JSON.stringify(fxRate));
+    } catch { /* 忽略 */ }
+    if (!document.querySelector('dialog[open]')) route();
+    else updateFareHint();
+  } catch (err) {
+    console.warn('匯率讀取失敗', err);
+  }
+}
+
+loadRate();
+
 // 從 LINE 傳來的連結（?trip=<id>）直接開啟該旅程
 function openTripFromQuery() {
   const id = new URLSearchParams(location.search).get('trip');

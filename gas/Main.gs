@@ -41,6 +41,7 @@ function json_(obj) {
 
 /* ---------- 網站 API ---------- */
 function handleApi_(body) {
+  if (body.action === 'rate') return { rate: jpyRate_() }; // 匯率不需登入
   const userId = verifyIdToken_(body.idToken);
   checkAllowed_(userId);
 

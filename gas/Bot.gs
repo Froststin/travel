@@ -14,7 +14,8 @@ const HELP_TEXT = [
   '・新旅程 京都 10/28-10/30',
   '・新增 明天 10:00 清水寺 @清水寺 $400',
   '・新增 明天 09:00-12:00 清水寺 移動15分',
-  '・新增 明天 13:00 伏見稻荷 電車15分 車資230',
+  '・新增 明天 13:00 伏見稻荷 電車15分 車資230円',
+  '　（車資寫「円／日幣」是日幣、「元／台幣」是台幣，沒寫單位當日幣）',
   '',
   '【修改／刪除】',
   '・改 清水寺 11:30（有結束時間會一起平移）',
@@ -111,6 +112,7 @@ function handleText_(ctx, rawText) {
     if (!arg || isDateOnly_(ctx, arg)) return cmdJournalView_(ctx, arg);
   }
   if ((m = text.match(/^(?:日誌|日記|記錄|紀錄|記下|筆記|寫日誌)\s*[:：]?\s*([\s\S]+)$/))) return cmdJournalAdd_(ctx, m[1].trim());
+  if (/^(匯率|日幣|日圓|日幣匯率|匯率多少)$/.test(text)) return say_(ctx, textMsg_(`💱 ${rateText_()}\n\n例：¥1,000 ≈ ${fmtMoney_(convertAmount_(1000, 'JPY', 'TWD', jpyRate_()) || 0, 'TWD')}`));
   if (/預算|花費|花多少|多少錢|開銷|支出/.test(text)) return cmdBudget_(ctx);
   if (/行李|打包/.test(text)) return cmdPacking_(ctx);
   if (/^(行程|旅程|我的旅程|所有旅程|旅程列表|列表|全部行程|全部旅程)$/.test(text)) return cmdTrips_(ctx);
@@ -234,7 +236,7 @@ function cmdBudget_(ctx) {
   if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
   const trip = activeTrip_(ctx.trips, ctx.today);
   const all = Object.values(trip.days).flat();
-  const spent = all.reduce((s, a) => s + (Number(a.cost) || 0) + (Number(a.travelCost) || 0), 0);
+  const spent = Math.round(all.reduce((s, a) => s + (Number(a.cost) || 0) + fareIn_(a, trip.currency), 0));
   const cur = trip.currency;
   const lines = [`💰 ${trip.name} 預算`];
   if (trip.budget) {
@@ -247,12 +249,13 @@ function cmdBudget_(ctx) {
   const byCat = {};
   all.forEach((a) => {
     byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + (Number(a.cost) || 0);
-    byCat.transport = (byCat.transport || 0) + (Number(a.travelCost) || 0); // 車資算交通
+    byCat.transport = (byCat.transport || 0) + fareIn_(a, trip.currency); // 車資算交通（換算成旅程幣別）
   });
   const cats = Object.entries(byCat).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   if (cats.length) {
     lines.push('', '分類：');
-    cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${v.toLocaleString()} ${cur}`));
+    cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${Math.round(v).toLocaleString()} ${cur}`));
+    if (all.some((a) => Number(a.travelCost) && (a.travelCostCurrency || cur) !== cur)) lines.push('', `※ 日幣車資以${rateText_()}換算`);
   }
   return say_(ctx, textMsg_(lines.join('\n')));
 }
@@ -321,7 +324,8 @@ function cmdAdd_(ctx, body) {
 
   const activity = {
     id: Utilities.getUuid(), time: t ? t.time : '', endTime: t ? t.endTime : '', travelMin: tr ? tr.travelMin : 0,
-    travelMode: tr ? tr.travelMode : '', travelCost: tr && tr.travelCost != null ? tr.travelCost : 0, title: title.slice(0, 100),
+    travelMode: tr ? tr.travelMode : '', travelCost: tr && tr.travelCost != null ? tr.travelCost : 0,
+    travelCostCurrency: tr && tr.travelCost != null ? tr.travelCostCurrency : '', title: title.slice(0, 100),
     category: guessCategory_(`${title} ${loc ? loc.location : ''}`), location: loc ? loc.location.slice(0, 200) : '',
     mapUrl: u ? cleanUrl_(u.url) : '', cost: c ? c.cost : 0, notes: '',
   };
@@ -379,7 +383,7 @@ function cmdEdit_(ctx, body) {
   const tr = extractTravel_(rest);
   if (tr) {
     if (tr.hasTravel) { changes.travelMin = tr.travelMin; if (tr.travelMode) changes.travelMode = tr.travelMode; }
-    if (tr.travelCost != null) changes.travelCost = tr.travelCost;
+    if (tr.travelCost != null) { changes.travelCost = tr.travelCost; changes.travelCostCurrency = tr.travelCostCurrency; }
     rest = tr.rest;
   }
   const t = extractTimeRange_(rest);
@@ -419,7 +423,10 @@ function applyEdit_(ctx, id, changes) {
   // 「改 X 搭電車」只改方式時保留原本的分鐘數
   if (changes.travelMin != null && (changes.travelMin > 0 || !changes.travelMode)) activity.travelMin = Math.min(1440, Math.max(0, Math.round(Number(changes.travelMin) || 0)));
   if (changes.travelMode) activity.travelMode = travelModeKey_(changes.travelMode);
-  if (changes.travelCost != null) activity.travelCost = Math.max(0, Number(changes.travelCost) || 0);
+  if (changes.travelCost != null) {
+    activity.travelCost = Math.max(0, Number(changes.travelCost) || 0);
+    activity.travelCostCurrency = CURRENCY_CODES.includes(changes.travelCostCurrency) ? changes.travelCostCurrency : '';
+  }
   if (changes.cost != null) activity.cost = Math.max(0, Number(changes.cost) || 0);
   if (changes.location) activity.location = String(changes.location).slice(0, 200);
   if (changes.mapUrl && cleanUrl_(changes.mapUrl)) activity.mapUrl = cleanUrl_(changes.mapUrl);

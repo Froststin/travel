@@ -61,8 +61,17 @@
         <div class="form-row form-row-3">
           <label>移動方式<select name="travelMode"></select></label>
           <label>移動時間（分）<input type="number" name="travelMin" min="0" max="1440" step="1" inputmode="numeric" placeholder="15"></label>
-          <label>車資<input type="number" name="travelCost" min="0" step="any" inputmode="decimal" placeholder="0"></label>
+          <label>車資
+            <span class="fare-input">
+              <input type="number" name="travelCost" min="0" step="any" inputmode="decimal" placeholder="0">
+              <select name="travelCostCurrency" aria-label="車資幣別">
+                <option value="JPY">¥ 日幣</option>
+                <option value="TWD">NT$ 台幣</option>
+              </select>
+            </span>
+          </label>
         </div>
+        <p id="fare-hint" class="form-hint muted"></p>
       </fieldset>
       <div class="form-row">
         <label>開始時間<input type="time" name="time"></label>

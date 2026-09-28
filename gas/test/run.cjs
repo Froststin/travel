@@ -211,16 +211,29 @@ check('地名含「船」不會被誤判', tv === null, JSON.stringify(tv));
 check('導航帶入交通方式', P('navUrl_({location:"清水寺",travelMode:"train"})').endsWith('&travelmode=transit'));
 
 r = say('新增 明天 19:30 先斗町晚餐 電車15分 車資230 $3000');
-check('新增含移動方式與車資', r.text.includes('🚃 電車 15 分鐘・230 TWD') && r.text.includes('💰 3000 TWD'), r.text);
+check('新增含移動方式與車資（沒寫單位當日幣，附台幣換算）', r.text.includes('🚃 電車 15 分鐘・¥230（≈NT$47）') && r.text.includes('💰 3000 TWD'), r.text);
 check('試算表存了移動方式與車資', rows('Activities').some((a) => a.title === '先斗町晚餐' && a.travelMode === 'train' && a.travelCost === '230' && a.cost === '3000'));
 r = say('改 先斗町晚餐 搭計程車');
-check('只改移動方式保留分鐘數', r.text.includes('🚕 計程車 15 分鐘・230 TWD'), r.text);
-r = say('改 先斗町晚餐 車資500');
-check('只改車資', r.text.includes('🚕 計程車 15 分鐘・500 TWD'), r.text);
+check('只改移動方式保留分鐘數', r.text.includes('🚕 計程車 15 分鐘・¥230'), r.text);
+r = say('改 先斗町晚餐 車資500元');
+check('只改車資（台幣）', r.text.includes('🚕 計程車 15 分鐘・NT$500') && !r.text.includes('≈'), r.text);
 r = say('明天');
-check('行程卡片顯示移動方式與車資', r.text.includes('🚕 計程車 15 分鐘・500 TWD'), r.text.slice(0, 300));
+check('行程卡片顯示移動方式與車資', r.text.includes('🚕 計程車 15 分鐘・NT$500'), r.text.slice(0, 300));
 r = say('導航 先斗町晚餐');
 check('導航使用計程車（開車）路線', r.text.includes('先斗町晚餐') && r.quick[0].action.uri.endsWith('&travelmode=driving'), JSON.stringify(r.quick[0]));
+tv = T('extractTravel_("車資230円")');
+check('車資230円＝日幣', tv.travelCost === 230 && tv.travelCostCurrency === 'JPY', JSON.stringify(tv));
+tv = T('extractTravel_("車資 NT$50")');
+check('車資 NT$50＝台幣', tv.travelCost === 50 && tv.travelCostCurrency === 'TWD', JSON.stringify(tv));
+tv = T('extractTravel_("車資¥1200")');
+check('車資¥1200＝日幣', tv.travelCost === 1200 && tv.travelCostCurrency === 'JPY', JSON.stringify(tv));
+check('日幣換算台幣', P('convertAmount_(1000, "JPY", "TWD", {rate: 0.2044})') === 204.4 && P('convertAmount_(100, "USD", "TWD", {rate: 0.2})') === null);
+r = say('匯率');
+check('LINE 查匯率', r.text.includes('臺灣銀行現金賣出') && r.text.includes('0.2044') && r.text.includes('≈ NT$204'), r.text);
+say('改 先斗町晚餐 車資1000円');
+r = say('預算');
+check('預算把日幣車資換算成台幣', r.text.includes('以臺灣銀行現金賣出'), r.text);
+check('API 匯率不需登入', api('rate', {}, '').rate.rate === 0.2044);
 r = say('預算');
 check('車資算進預算的交通類', r.text.includes('🚆 交通') && /預估花費：[\d,]+ TWD/.test(r.text), r.text);
 
@@ -255,7 +268,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '4');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '5');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
