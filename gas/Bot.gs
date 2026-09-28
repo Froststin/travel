@@ -19,6 +19,11 @@ const HELP_TEXT = [
   '・改 清水寺 到 後天',
   '・刪除 清水寺',
   '',
+  '【Google 地圖導航】',
+  '・導航 清水寺、清水寺怎麼去',
+  '・今天路線、明天路線 → 串起當天所有地點',
+  '・新增或修改時貼上 Google 地圖分享連結也可以',
+  '',
   '【旅遊日誌】',
   '・日誌 今天的抹茶超好喝',
   '・直接傳照片 → 自動記到今天的日誌',
@@ -81,6 +86,8 @@ function handleText_(ctx, rawText) {
   if (/^(取消|算了|不用了|不要)$/.test(text)) return say_(ctx, textMsg_('好的，已取消。'));
   if (text.length <= 15 && /網站|網頁|連結|網址|link|開啟|打開/i.test(text)) return cmdSite_(ctx);
   if ((m = text.match(/^(?:新旅程|新增旅程|建立旅程)\s*([\s\S]*)$/))) return cmdNewTrip_(ctx, m[1]);
+  if (/路線/.test(text) && text.length <= 12) return cmdRoute_(ctx, text.replace(/路線|導航/g, ''));
+  if ((m = text.match(/^(?:導航到|導航|帶我去|怎麼去|前往)\s*(.+)$/)) || (m = text.match(/^(.+?)\s*(?:怎麼去|怎麼走|導航)$/))) return cmdNavigate_(ctx, m[1]);
   if ((m = text.match(/^(?:新增|加入|\+)\s*([\s\S]+)$/))) return cmdAdd_(ctx, m[1]);
   if ((m = text.match(/^(?:刪除|移除|刪掉)\s*([\s\S]+)$/))) return cmdDelete_(ctx, m[1]);
   if ((m = text.match(/^(?:修改|更改|改)\s*([\s\S]+)$/))) return cmdEdit_(ctx, m[1]);
@@ -167,10 +174,14 @@ function replySearchHits_(ctx, kw, hits) {
       `${info.icon} ${a.title}`,
       `🗓️ ${trip.name}・Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}${a.time ? ` ${a.time}` : ''}`,
     ];
-    if (a.location) lines.push(`📍 ${a.location}\nhttps://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.location)}`);
+    if (a.location) lines.push(`📍 ${a.location}`);
+    if (placeUrl_(a)) lines.push(`🗺️ 地圖：${placeUrl_(a)}`);
+    if (navUrl_(a)) lines.push(`🧭 導航：${navUrl_(a)}`);
     if (a.cost) lines.push(`💰 ${a.cost} ${trip.currency}`);
     if (a.notes) lines.push(`📝 ${a.notes}`);
-    return say_(ctx, textMsg_(lines.join('\n'), [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/')), ...defaultQuick_()]));
+    const quick = [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/'))];
+    if (navUrl_(a)) quick.unshift(qUri_('🧭 開始導航', navUrl_(a)));
+    return say_(ctx, textMsg_(lines.join('\n'), [...quick, ...defaultQuick_()]));
   }
   const lines = [`🔎 找到 ${hits.length} 筆跟「${kw}」有關的行程：`];
   hits.slice(0, 15).forEach((h) => lines.push(`${prettyDate_(h.date)} ${activityLine_(h.activity)}`));
@@ -267,6 +278,8 @@ function cmdAdd_(ctx, body) {
   if (!ctx.trips.length) return say_(ctx, textMsg_('要先建立旅程喔，例如：新旅程 京都 10/28-10/30'));
   const base = activeTrip_(ctx.trips, ctx.today);
   let rest = body;
+  const u = extractUrl_(rest);
+  if (u) rest = u.rest;
   const d = extractDate_(rest, { today: ctx.today, trips: ctx.trips, trip: base });
   if (d) rest = d.rest;
   const t = extractTime_(rest);
@@ -289,7 +302,7 @@ function cmdAdd_(ctx, body) {
   const activity = {
     id: Utilities.getUuid(), time: t ? t.time : '', title: title.slice(0, 100),
     category: guessCategory_(`${title} ${loc ? loc.location : ''}`), location: loc ? loc.location.slice(0, 200) : '',
-    cost: c ? c.cost : 0, notes: '',
+    mapUrl: u ? cleanUrl_(u.url) : '', cost: c ? c.cost : 0, notes: '',
   };
   (trip.days[date] = trip.days[date] || []).push(activity);
   sortDay_(trip.days[date]);
@@ -338,6 +351,8 @@ function cmdEdit_(ctx, body) {
   let rest = body;
   const changes = {};
   const base = activeTrip_(ctx.trips, ctx.today);
+  const u = extractUrl_(rest);
+  if (u) { changes.mapUrl = u.url; rest = u.rest; }
   const t = extractTime_(rest);
   if (t) { changes.time = t.time; rest = t.rest; }
   const c = extractCost_(rest);
@@ -349,7 +364,7 @@ function cmdEdit_(ctx, body) {
   const kw = keywordOf_(rest.replace(/改成|改到|換到|移到|到|成|為/g, ' '));
 
   if (!Object.keys(changes).length || !kw) {
-    return say_(ctx, textMsg_('要怎麼改呢？例如：\n改 清水寺 11:30\n改 清水寺 到 後天\n改 清水寺 $500\n改 清水寺 @京都東山\n\n其他內容請到網站修改（輸入「網站」）。'));
+    return say_(ctx, textMsg_('要怎麼改呢？例如：\n改 清水寺 11:30\n改 清水寺 到 後天\n改 清水寺 $500\n改 清水寺 @京都東山\n改 清水寺 https://maps.app.goo.gl/…\n\n其他內容請到網站修改（輸入「網站」）。'));
   }
   const hits = searchActivities_(ctx.trips, kw, 0.6);
   if (!hits.length) return say_(ctx, textMsg_(`找不到跟「${kw}」有關的行程。`));
@@ -366,6 +381,7 @@ function applyEdit_(ctx, id, changes) {
   if (changes.time && /^\d{2}:\d{2}$/.test(changes.time)) activity.time = changes.time;
   if (changes.cost != null) activity.cost = Math.max(0, Number(changes.cost) || 0);
   if (changes.location) activity.location = String(changes.location).slice(0, 200);
+  if (changes.mapUrl && cleanUrl_(changes.mapUrl)) activity.mapUrl = cleanUrl_(changes.mapUrl);
   if (changes.date && changes.date !== date) {
     if (changes.date < trip.startDate || changes.date > trip.endDate) {
       return say_(ctx, textMsg_(`${prettyDate_(changes.date)} 不在「${trip.name}」的日期範圍內喔。`));
@@ -447,4 +463,39 @@ function handlePostback_(ctx, data) {
     const row = deleteJournal_(ctx.userId, p.id);
     return say_(ctx, textMsg_(row ? '🗑️ 已刪除這則日誌' : '這則日誌已經不存在了。'));
   }
+}
+
+/* ---------- Google 地圖導航 ---------- */
+function cmdNavigate_(ctx, query) {
+  const q = query.trim();
+  const kw = keywordOf_(q);
+  const hit = kw ? searchActivities_(ctx.trips, kw, 0.6)[0] : null;
+  if (hit && navUrl_(hit.activity)) {
+    const a = hit.activity;
+    const url = navUrl_(a);
+    return say_(ctx, textMsg_(`🧭 導航到「${a.title}」${a.location ? `（${a.location}）` : ''}\n${url}`, [qUri_('🧭 開始導航', url), ...defaultQuick_()]));
+  }
+  if (!q) return say_(ctx, textMsg_('要導航到哪裡呢？例如：導航 清水寺'));
+  // 行程裡找不到（或沒有地點），直接用輸入的文字導航
+  const place = hit ? hit.activity.title : q;
+  const url = navToUrl_(place);
+  return say_(ctx, textMsg_(`🧭 導航到「${place}」\n${url}`, [qUri_('🧭 開始導航', url), ...defaultQuick_()]));
+}
+
+function cmdRoute_(ctx, text) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  const base = activeTrip_(ctx.trips, ctx.today);
+  const found = extractDate_(text, { today: ctx.today, trips: ctx.trips, trip: base });
+  let date = found ? found.date : ctx.today;
+  const trip = activeTrip_(ctx.trips, ctx.today, date);
+  if (date < trip.startDate || date > trip.endDate) date = trip.startDate;
+  const list = trip.days[date] || [];
+  const url = dayRouteUrl_(list);
+  if (!url) return say_(ctx, textMsg_(`${prettyDate_(date)} 的行程還沒有填地點，沒辦法規劃路線喔。`));
+  const stops = list.filter((a) => a.location);
+  const lines = [`🧭 ${prettyDate_(date)} 路線（從目前位置出發）`];
+  stops.forEach((a, i) => lines.push(`${i + 1}. ${a.time || '--:--'} ${a.title}（${a.location}）`));
+  if (stops.length > 10) lines.push('※ Google 地圖一次最多 10 個地點，只帶入最後 10 個');
+  lines.push('', url);
+  return say_(ctx, textMsg_(lines.join('\n'), [qUri_('🧭 開始導航', url), ...defaultQuick_()]));
 }

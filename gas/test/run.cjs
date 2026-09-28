@@ -3,6 +3,8 @@
  */
 const { ctx, run, props, sent, flags } = require('./harness.cjs');
 
+function rows(name) { run('__clearCache()'); ctx.__n = name; return run('readTable_(__n)'); }
+
 /* ---------- 工具 ---------- */
 let failures = 0;
 function check(name, cond, detail) {
@@ -140,6 +142,26 @@ flags.failFlex = true;
 r = say('今天');
 check('Flex 失敗時改回純文字', r.msgs[0].type === 'text' && r.text.includes('清水寺'), r.text);
 flags.failFlex = false;
+
+/* ---------- Google 地圖 ---------- */
+r = say('新增 今天 13:00 八坂神社 @八坂神社 https://maps.app.goo.gl/abc123');
+check('新增時貼地圖連結', rows('Activities').some((a) => a.title === '八坂神社' && a.mapUrl === 'https://maps.app.goo.gl/abc123'), r.text);
+r = say('八坂神社');
+check('查詢顯示地圖與導航連結', r.text.includes('🗺️ 地圖：https://maps.app.goo.gl/abc123') && r.text.includes('🧭 導航：https://www.google.com/maps/dir/?api=1&destination=%E5%85%AB%E5%9D%82%E7%A5%9E%E7%A4%BE'), r.text);
+check('查詢的快速回覆有「開始導航」', r.quick[0].action.type === 'uri' && r.quick[0].action.uri.includes('/maps/dir/'), JSON.stringify(r.quick[0]));
+r = say('導航 清水寺');
+check('導航 清水寺', r.text.includes('destination=%E6%B8%85%E6%B0%B4%E5%AF%BA'), r.text);
+r = say('清水寺怎麼去');
+check('清水寺怎麼去', r.text.includes('/maps/dir/'), r.text);
+r = say('導航 金閣寺');
+check('行程外的地點也能導航', r.text.includes('金閣寺') && r.text.includes('destination=%E9%87%91%E9%96%A3%E5%AF%BA'), r.text);
+r = say('今天路線');
+check('今天路線串起多個地點', r.text.includes('waypoints=') && r.text.includes('1. 11:30 清水寺'), r.text);
+r = say('今天');
+check('Flex 有導航與當天路線按鈕', r.text.includes('🧭 導航') && r.text.includes('當天路線'), r.text.slice(0, 200));
+r = say('改 八坂神社 https://maps.app.goo.gl/xyz');
+check('修改地圖連結', rows('Activities').some((a) => a.title === '八坂神社' && a.mapUrl === 'https://maps.app.goo.gl/xyz'), r.text);
+check('拒絕非 https 連結', P('cleanUrl_("javascript:alert(1)")') === '' && P('cleanUrl_("http://x.com")') === '');
 
 /* ---------- 網站 API ---------- */
 let res = api('list', {});

@@ -139,6 +139,33 @@ function mapUrl(q) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
+// 只接受 https 連結，避免 javascript: 之類的網址被放進 href
+function cleanUrl(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return /^https:\/\/[^\s"'<>]+$/i.test(s) ? s.slice(0, 500) : '';
+}
+
+// 地點頁：有貼 Google 地圖連結就用它，否則用地點名稱搜尋
+function placeUrl(a) {
+  return a.mapUrl || (a.location ? mapUrl(a.location) : '');
+}
+
+// 導航：以目前位置為起點，直接進入 Google 地圖路線規劃
+function navUrl(a) {
+  if (a.location) return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(a.location)}`;
+  return a.mapUrl || '';
+}
+
+// 當天路線：依時間順序串起有填地點的行程（Google 地圖最多 9 個中途點）
+function dayRouteUrl(list) {
+  const stops = list.map((a) => a.location).filter(Boolean);
+  if (!stops.length) return '';
+  const dest = stops[stops.length - 1];
+  const waypoints = stops.slice(0, -1).slice(-9);
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}`
+    + (waypoints.length ? `&waypoints=${encodeURIComponent(waypoints.join('|'))}` : '');
+}
+
 function catKey(a) {
   return Object.hasOwn(CATEGORIES, a.category) ? a.category : 'other';
 }
@@ -298,6 +325,7 @@ function planView(t, dates) {
   const days = dates.map((d, i) => {
     const list = t.days[d] || [];
     const total = sumCost(list);
+    const route = dayRouteUrl(list);
     return `
       <section class="day" id="day-${d}">
         <header class="day-head">
@@ -307,6 +335,7 @@ function planView(t, dates) {
           </div>
           <div class="day-meta">
             ${total ? `<span class="muted">${money(total, t.currency)}</span>` : ''}
+            ${route ? `<a class="btn btn-sm no-print" href="${esc(route)}" target="_blank" rel="noopener" title="用 Google 地圖導航這天的所有地點">🧭 路線</a>` : ''}
             <button class="btn btn-sm btn-line no-print" data-action="share-day" data-date="${d}" title="把這天的行程分享到 LINE">LINE</button>
             <button class="btn btn-sm no-print" data-action="add-activity" data-date="${d}">＋ 新增</button>
           </div>
@@ -322,12 +351,18 @@ function planView(t, dates) {
 function activityItem(a, date, currency) {
   const key = catKey(a);
   const c = CATEGORIES[key];
+  const place = placeUrl(a);
+  const nav = navUrl(a);
   return `
     <li class="activity cat-${key}">
       <div class="act-time">${a.time ? esc(a.time) : '—'}</div>
       <div class="act-body">
         <div class="act-title"><span aria-hidden="true">${c.icon}</span>${esc(a.title)}<span class="chip">${c.label}</span></div>
-        ${a.location ? `<a class="act-loc" href="${mapUrl(a.location)}" target="_blank" rel="noopener">📍 ${esc(a.location)}</a>` : ''}
+        ${place || nav ? `
+          <div class="act-links">
+            ${place ? `<a class="act-loc" href="${esc(place)}" target="_blank" rel="noopener">📍 ${esc(a.location || '地圖')}</a>` : ''}
+            ${nav ? `<a class="act-nav no-print" href="${esc(nav)}" target="_blank" rel="noopener">🧭 導航</a>` : ''}
+          </div>` : ''}
         ${a.notes ? `<p class="act-notes">${esc(a.notes)}</p>` : ''}
       </div>
       <div class="act-side">
@@ -522,12 +557,13 @@ function openActivityDialog(date, activity) {
   activityForm.reset();
   activityForm.elements.date.innerHTML = dateRange(t.startDate, t.endDate)
     .map((d, i) => `<option value="${d}">Day ${i + 1}・${prettyDate(d)}</option>`).join('');
-  const a = activity || { title: '', time: '', category: 'sight', location: '', cost: '', notes: '' };
+  const a = activity || { title: '', time: '', category: 'sight', location: '', mapUrl: '', cost: '', notes: '' };
   activityForm.elements.date.value = date;
   activityForm.elements.title.value = a.title;
   activityForm.elements.time.value = a.time || '';
   activityForm.elements.category.value = catKey(a);
   activityForm.elements.location.value = a.location || '';
+  activityForm.elements.mapUrl.value = a.mapUrl || '';
   activityForm.elements.cost.value = a.cost || '';
   activityForm.elements.notes.value = a.notes || '';
   activityDialog.showModal();
@@ -546,10 +582,12 @@ activityForm.addEventListener('submit', (e) => {
     title: f.get('title').trim(),
     category: f.get('category'),
     location: f.get('location').trim(),
+    mapUrl: cleanUrl(f.get('mapUrl')),
     cost: Math.max(0, Number(f.get('cost')) || 0),
     notes: f.get('notes').trim(),
   };
   if (!activity.title) return toast('請填寫標題');
+  if (f.get('mapUrl').trim() && !activity.mapUrl) return toast('地圖連結要是 https:// 開頭的網址');
 
   if (editingActivity) {
     const old = editingActivity.date;
@@ -582,6 +620,7 @@ function normalizeTrip(raw) {
           title: str(a.title, 100),
           category: catKey(a),
           location: str(a.location, 200),
+          mapUrl: cleanUrl(a.mapUrl),
           cost: Math.max(0, Number(a.cost) || 0),
           notes: str(a.notes),
         })));

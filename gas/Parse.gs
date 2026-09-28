@@ -294,3 +294,38 @@ function parseTripSpec_(text, ctx) {
   const name = rest.replace(/\s+/g, ' ').trim();
   return { name, startDate: start.date, endDate };
 }
+
+/* ---------- Google 地圖 ---------- */
+function extractUrl_(text) {
+  const m = text.match(/https:\/\/[^\s"'<>]+/i);
+  return m ? { url: m[0].slice(0, 500), rest: text.replace(m[0], ' ').trim() } : null;
+}
+
+// 只接受 https 連結，避免奇怪的網址被放進按鈕或網頁
+function cleanUrl_(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return /^https:\/\/[^\s"'<>]+$/i.test(s) ? s.slice(0, 500) : '';
+}
+
+function placeUrl_(a) {
+  if (a.mapUrl) return a.mapUrl;
+  return a.location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(a.location)}` : '';
+}
+
+// 導航：以目前位置為起點，直接開啟 Google 地圖路線
+function navUrl_(a) {
+  if (a.location) return navToUrl_(a.location);
+  return a.mapUrl || '';
+}
+
+function navToUrl_(place) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(place)}`;
+}
+
+// 當天路線：依時間順序串起有地點的行程（Google 地圖最多 9 個中途點）
+function dayRouteUrl_(list) {
+  const stops = list.map((a) => a.location).filter(Boolean);
+  if (!stops.length) return '';
+  const waypoints = stops.slice(0, -1).slice(-9);
+  return navToUrl_(stops[stops.length - 1]) + (waypoints.length ? `&waypoints=${encodeURIComponent(waypoints.join('|'))}` : '');
+}

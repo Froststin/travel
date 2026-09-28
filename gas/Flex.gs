@@ -22,12 +22,23 @@ function activityRow_(a) {
         layout: 'vertical',
         contents: [
           fText_(`${info.icon} ${a.title}`, { size: 'sm', weight: 'bold', color: '#1f2a2e' }),
-          ...(a.location ? [fText_(`📍 ${a.location}`, { size: 'xs', color: '#0f766e' })] : []),
+          ...mapLinks_(a),
           ...(a.notes ? [fText_(a.notes, { size: 'xs', color: '#66727a' })] : []),
         ],
       },
     ],
   };
+}
+
+// 地點（點了開地圖）＋導航按鈕
+function mapLinks_(a) {
+  const place = placeUrl_(a);
+  const nav = navUrl_(a);
+  if (!place && !nav) return [];
+  const contents = [];
+  if (place) contents.push(fText_(`📍 ${a.location || '地圖'}`, { size: 'xs', color: '#0f766e', flex: 1, action: { type: 'uri', label: '地圖', uri: place } }));
+  if (nav) contents.push(fText_('🧭 導航', { size: 'xs', color: '#0f766e', weight: 'bold', flex: 0, action: { type: 'uri', label: '導航', uri: nav } }));
+  return [{ type: 'box', layout: 'horizontal', spacing: 'md', contents }];
 }
 
 /** 單日行程卡片；filter 可限定類別 */
@@ -38,6 +49,7 @@ function dayBubble_(trip, date, filter) {
   const rows = list.slice(0, FLEX_MAX_ITEMS).map(activityRow_);
   if (list.length > FLEX_MAX_ITEMS) rows.push(fText_(`……還有 ${list.length - FLEX_MAX_ITEMS} 項`, { size: 'xs', color: '#66727a' }));
   if (!rows.length) rows.push(fText_(filter ? `這天沒有${CATEGORY_INFO[filter].label}類的行程` : '這天還沒有安排', { size: 'sm', color: '#66727a' }));
+  const route = filter ? '' : dayRouteUrl_(trip.days[date] || []);
 
   return {
     type: 'bubble',
@@ -55,13 +67,13 @@ function dayBubble_(trip, date, filter) {
     body: { type: 'box', layout: 'vertical', spacing: 'lg', contents: rows },
     footer: {
       type: 'box',
-      layout: 'vertical',
-      contents: [{
-        type: 'button',
-        style: 'link',
-        height: 'sm',
-        action: { type: 'uri', label: '在網站開啟', uri: tripLiffUrl_(trip.id) },
-      }],
+      layout: 'horizontal',
+      contents: [
+        ...(route && route.length <= 1000 ? [{
+          type: 'button', style: 'link', height: 'sm', action: { type: 'uri', label: '🧭 當天路線', uri: route },
+        }] : []),
+        { type: 'button', style: 'link', height: 'sm', action: { type: 'uri', label: '在網站開啟', uri: tripLiffUrl_(trip.id) } },
+      ],
     },
   };
 }

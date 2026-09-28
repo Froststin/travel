@@ -63,7 +63,8 @@
         <label>類別<select name="category"></select></label>
         <label>花費<input type="number" name="cost" min="0" step="any" placeholder="0"></label>
       </div>
-      <label>地點<input name="location" maxlength="200" placeholder="填寫後可直接開啟 Google 地圖"></label>
+      <label>地點<input name="location" maxlength="200" placeholder="地名或地址，填寫後可直接用 Google 地圖導航"></label>
+      <label>Google 地圖連結（選填）<input name="mapUrl" type="url" maxlength="500" inputmode="url" placeholder="在 Google 地圖按「分享」→ 複製連結，貼在這裡"></label>
       <label>備註<textarea name="notes" rows="3" maxlength="500" placeholder="門票、營業時間、交通方式……"></textarea></label>
       <div class="form-actions">
         <button type="button" class="btn" data-action="close-dialog">取消</button>

@@ -303,8 +303,19 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
   background: var(--surface-2);
   color: var(--muted);
 }
-.act-loc { display: inline-block; font-size: .88rem; margin-top: 2px; text-decoration: none; }
+.act-links { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 2px; }
+.act-loc { display: inline-block; font-size: .88rem; text-decoration: none; }
 .act-loc:hover { text-decoration: underline; }
+.act-nav {
+  display: inline-block;
+  padding: 1px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  font-size: .8rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.act-nav:hover { background: var(--primary-soft); }
 .act-notes { margin: 4px 0 0; font-size: .88rem; color: var(--muted); white-space: pre-wrap; }
 .act-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .act-cost { font-size: .9rem; font-variant-numeric: tabular-nums; }

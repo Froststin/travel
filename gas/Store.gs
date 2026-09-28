@@ -4,7 +4,7 @@
 
 const TABLES = {
   Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt'],
-  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes'],
+  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt'],
 };
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
@@ -71,6 +71,7 @@ function sanitizeActivity_(a) {
     title: str_(a.title, 100),
     category: catKey_(a.category),
     location: str_(a.location, 200),
+    mapUrl: cleanUrl_(a.mapUrl),
     cost: Math.max(0, Number(a.cost) || 0),
     notes: str_(a.notes),
   };
@@ -114,7 +115,7 @@ function rowToTrip_(row, acts) {
   for (const a of acts) {
     (days[a.date] = days[a.date] || []).push({
       id: a.id, time: a.time, title: a.title, category: catKey_(a.category),
-      location: a.location, cost: Number(a.cost) || 0, notes: a.notes,
+      location: a.location, mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes,
     });
   }
   Object.values(days).forEach(sortDay_);
@@ -179,7 +180,7 @@ function saveTrip_(userId, trip) {
     for (const a of list) {
       acts.push({
         id: a.id, tripId: trip.id, userId, date, time: a.time || '', title: a.title,
-        category: catKey_(a.category), location: a.location || '', cost: Number(a.cost) || 0, notes: a.notes || '',
+        category: catKey_(a.category), location: a.location || '', mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes || '',
       });
     }
   }
