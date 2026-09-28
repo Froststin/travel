@@ -30,7 +30,7 @@ function loadScript(src) {
 }
 
 async function initLiff() {
-  if (!LIFF_ID) return;
+  if (!LIFF_ID) return settleLocal();
   try {
     await loadScript(LIFF_SDK_URL);
     await liff.init({ liffId: LIFF_ID });
@@ -38,14 +38,26 @@ async function initLiff() {
     document.body.classList.toggle('in-line', liff.isInClient());
   } catch (err) {
     console.warn('LIFF 初始化失敗，改用一般分享連結', err);
+    settleLocal();
     return;
   }
   if (!API_URL) {
     openTripFromQuery();
     return;
   }
-  if (liff.isLoggedIn()) Cloud.start();
-  else document.getElementById('login-btn').hidden = false;
+  if (liff.isLoggedIn()) {
+    Cloud.start();
+  } else {
+    document.getElementById('login-btn').hidden = false;
+    settleLocal();
+  }
+}
+
+// 不走雲端時，用本機資料重新判斷目前頁面
+function settleLocal() {
+  if (!cloudPending) return;
+  cloudPending = false;
+  route();
 }
 
 function lineLogin() {

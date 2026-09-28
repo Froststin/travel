@@ -29,6 +29,11 @@ const HELP_TEXT = [
   '・直接傳照片 → 自動記到今天的日誌',
   '・日誌／日誌 10/29 → 查看',
   '',
+  '【旅伴】',
+  '・邀請 → 產生邀請訊息，轉傳給旅伴',
+  '・加入 邀請碼 → 加入別人的旅程',
+  '・成員、退出旅程、移除成員 名字',
+  '',
   '【網站】輸入「網站」取得連結，可以編輯完整行程',
 ].join('\n');
 
@@ -53,6 +58,7 @@ function handleEvent_(ev) {
     return;
   }
 
+  withLock_(() => ensureUserName_(userId));
   if (ev.type === 'follow') {
     reply_(ev.replyToken, textMsg_(`歡迎使用旅程手帖！\n\n${HELP_TEXT}`, defaultQuick_()));
     return;
@@ -88,6 +94,11 @@ function handleText_(ctx, rawText) {
   if ((m = text.match(/^(?:新旅程|新增旅程|建立旅程)\s*([\s\S]*)$/))) return cmdNewTrip_(ctx, m[1]);
   if (/路線/.test(text) && text.length <= 12) return cmdRoute_(ctx, text.replace(/路線|導航/g, ''));
   if ((m = text.match(/^(?:導航到|導航|帶我去|怎麼去|前往)\s*(.+)$/)) || (m = text.match(/^(.+?)\s*(?:怎麼去|怎麼走|導航)$/))) return cmdNavigate_(ctx, m[1]);
+  if ((m = text.match(/^加入\s*([A-Za-z0-9]{6})$/)) && /\d/.test(m[1]) && /[a-z]/i.test(m[1])) return cmdJoin_(ctx, m[1]);
+  if ((m = text.match(/^(?:邀請|邀請旅伴|分享旅程|共用旅程|共享旅程)\s*(.*)$/))) return cmdInvite_(ctx, m[1]);
+  if (/^(成員|旅伴|同行者|成員名單|有誰)$/.test(text)) return cmdMembers_(ctx);
+  if ((m = text.match(/^(?:退出|離開)(?:旅程)?\s*(.*)$/))) return cmdLeave_(ctx, m[1]);
+  if ((m = text.match(/^(?:移除成員|踢除|踢掉)\s*(.+)$/))) return cmdRemoveMember_(ctx, m[1]);
   if ((m = text.match(/^(?:新增|加入|\+)\s*([\s\S]+)$/))) return cmdAdd_(ctx, m[1]);
   if ((m = text.match(/^(?:刪除|移除|刪掉)\s*([\s\S]+)$/))) return cmdDelete_(ctx, m[1]);
   if ((m = text.match(/^(?:修改|更改|改)\s*([\s\S]+)$/))) return cmdEdit_(ctx, m[1]);
@@ -112,7 +123,7 @@ function isDateOnly_(ctx, s) {
 function cmdQuery_(ctx, text) {
   const trips = ctx.trips;
   if (!trips.length) {
-    return say_(ctx, textMsg_('目前還沒有任何旅程。\n可以輸入「新旅程 京都 10/28-10/30」建立，或輸入「網站」到網頁上規劃。'));
+    return say_(ctx, textMsg_('目前還沒有任何旅程。\n可以輸入「新旅程 京都 10/28-10/30」建立，或輸入「網站」到網頁上規劃。\n旅伴有邀請碼的話，傳「加入 邀請碼」就能加入。'));
   }
   const base = activeTrip_(trips, ctx.today);
   const found = extractDate_(text, { today: ctx.today, trips, trip: base });
@@ -423,7 +434,7 @@ function cmdJournalView_(ctx, arg) {
   const entries = all.filter((j) => j.date === date);
   const lines = [`📔 ${prettyDate_(date)} 旅遊日誌`];
   if (!entries.length) lines.push('（這天沒有紀錄）');
-  entries.forEach((j) => lines.push(`${j.time} ${j.type === 'image' ? '📷 照片' : j.text}`));
+  entries.forEach((j) => lines.push(`${j.time} ${j.mine ? '' : `${j.author}：`}${j.type === 'image' ? '📷 照片' : j.text}`));
   const photos = entries.filter((j) => j.type === 'image').length;
   const trip = ctx.trips.find((t) => t.startDate <= date && date <= t.endDate);
   if (photos) lines.push('', `照片 ${photos} 張，可以在網站的「日誌」分頁查看：`, tripLiffUrl_(trip && trip.id));
@@ -458,6 +469,16 @@ function handlePostback_(ctx, data) {
     const trip = ctx.trips.find((t) => t.id === p.id);
     if (!trip) return say_(ctx, textMsg_('這個旅程已經不存在了。'));
     return say_(ctx, tripFlex_(trip), tripOverviewText_(trip));
+  }
+  if (p.a === 'leave') {
+    const trip = ctx.trips.find((t) => t.id === p.id);
+    if (!trip) return say_(ctx, textMsg_('你已經不在這個旅程裡了。'));
+    leaveTrip_(ctx.userId, p.id);
+    return say_(ctx, textMsg_(`👋 已退出「${trip.name}」`));
+  }
+  if (p.a === 'rmm') {
+    const removed = removeMember_(ctx.userId, p.t, p.u);
+    return say_(ctx, textMsg_(removed ? `已將 ${userName_(removed)} 移出旅程` : '這位成員已經不在旅程裡了。'));
   }
   if (p.a === 'delj') {
     const row = deleteJournal_(ctx.userId, p.id);
@@ -498,4 +519,100 @@ function cmdRoute_(ctx, text) {
   if (stops.length > 10) lines.push('※ Google 地圖一次最多 10 個地點，只帶入最後 10 個');
   lines.push('', url);
   return say_(ctx, textMsg_(lines.join('\n'), [qUri_('🧭 開始導航', url), ...defaultQuick_()]));
+}
+
+/* ---------- 旅伴（共用旅程） ---------- */
+function ensureUserName_(userId) {
+  if (hasUserName_(userId)) return;
+  const res = lineApi_(`profile/${userId}`, null, 'get');
+  if (res.getResponseCode() === 200) setUserName_(userId, JSON.parse(res.getContentText()).displayName);
+}
+
+function pickTrip_(ctx, name) {
+  const q = keywordOf_(name || '');
+  if (q) {
+    const hit = searchTrips_(ctx.trips, q)[0];
+    if (hit) return hit.trip;
+  }
+  return ctx.trips.length ? activeTrip_(ctx.trips, ctx.today) : null;
+}
+
+function inviteText_(tripRow, code, inviter) {
+  const id = encodeURIComponent(BOT_BASIC_ID);
+  return [
+    `🧳 ${inviter} 邀請你加入旅程「${tripRow.name}」`,
+    `🗓️ ${prettyDate_(tripRow.startDate)} – ${prettyDate_(tripRow.endDate)}`,
+    '',
+    '1️⃣ 先加「旅程手帖」官方帳號好友：',
+    `https://line.me/R/ti/p/${id}`,
+    '2️⃣ 點這裡加入旅程：',
+    `https://line.me/R/oaMessage/${id}/?${encodeURIComponent(`加入 ${code}`)}`,
+    '',
+    `（或直接傳「加入 ${code}」給官方帳號）`,
+  ].join('\n');
+}
+
+function cmdInvite_(ctx, name) {
+  const trip = pickTrip_(ctx, name);
+  if (!trip) return say_(ctx, textMsg_('要先建立旅程才能邀請旅伴喔，例如：新旅程 京都 10/28-10/30'));
+  const code = inviteCodeFor_(ctx.userId, trip.id);
+  const text = inviteText_(findTripRow_(trip.id), code, userName_(ctx.userId));
+  return say_(ctx, [
+    textMsg_(`👇 把下面這則邀請轉傳給「${trip.name}」的旅伴（長按訊息 → 分享），或按下方的「分享給旅伴」。`),
+    textMsg_(text, [qUri_('📤 分享給旅伴', `https://line.me/R/share?text=${encodeURIComponent(text)}`), qMsg_('成員'), ...defaultQuick_()]),
+  ]);
+}
+
+function cmdJoin_(ctx, code) {
+  const res = joinTrip_(ctx.userId, code);
+  if (!res) return say_(ctx, textMsg_(`找不到邀請碼「${code.toUpperCase()}」，請確認有沒有打錯。`));
+  const names = membersOf_(res.row).map((m) => m.name).join('、');
+  if (res.already) return say_(ctx, textMsg_(`你已經在「${res.row.name}」裡了 😊\n成員：${names}`));
+  return say_(ctx, textMsg_(
+    `🎉 已加入「${res.row.name}」！\n🗓️ ${prettyDate_(res.row.startDate)} – ${prettyDate_(res.row.endDate)}\n👥 成員：${names}\n\n可以試試「所有旅程」「今天」「明天吃什麼」，或輸入「說明」看所有用法。`,
+  ));
+}
+
+function cmdMembers_(ctx) {
+  const trip = pickTrip_(ctx, '');
+  if (!trip) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  const row = findTripRow_(trip.id);
+  const members = membersOf_(row);
+  const lines = [`👥「${trip.name}」的成員（${members.length} 人）`];
+  members.forEach((m) => lines.push(`${m.role === 'owner' ? '👑' : '・'} ${m.name}${m.userId === ctx.userId ? '（你）' : ''}`));
+  const quick = [qMsg_('📨 邀請旅伴', '邀請')];
+  if (row.userId === ctx.userId) {
+    members.filter((m) => m.role !== 'owner').slice(0, 10).forEach((m) =>
+      quick.push(qPostback_(`移除 ${m.name}`, { a: 'rmm', t: row.id, u: m.userId }, `移除成員 ${m.name}`)));
+  } else {
+    quick.push(qMsg_('退出旅程'));
+  }
+  return say_(ctx, textMsg_(lines.join('\n'), [...quick, ...defaultQuick_()]));
+}
+
+function cmdLeave_(ctx, name) {
+  const trip = pickTrip_(ctx, name);
+  if (!trip) return say_(ctx, textMsg_('你目前沒有加入任何旅程。'));
+  if (trip.role === 'owner') {
+    return say_(ctx, textMsg_(`你是「${trip.name}」的主人，沒辦法退出喔。\n要刪除整個旅程請到網站操作（輸入「網站」）。`));
+  }
+  return say_(ctx, textMsg_(`確定要退出「${trip.name}」嗎？退出後就看不到這個旅程了。`, [
+    qPostback_('確定退出', { a: 'leave', id: trip.id }), qMsg_('取消'),
+  ]));
+}
+
+function cmdRemoveMember_(ctx, name) {
+  const trip = pickTrip_(ctx, '');
+  if (!trip) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  const row = findTripRow_(trip.id);
+  if (row.userId !== ctx.userId) return say_(ctx, textMsg_('只有旅程主人可以移除成員喔。'));
+  const hit = membersOf_(row)
+    .filter((m) => m.role !== 'owner')
+    .map((m) => ({ m, score: similarity_(name, m.name) }))
+    .filter((x) => x.score >= 0.5)
+    .sort((a, b) => b.score - a.score)[0];
+  if (!hit) return say_(ctx, textMsg_(`「${trip.name}」裡找不到叫「${name}」的成員。輸入「成員」可以看名單。`));
+  return say_(ctx, textMsg_(`確定要把 ${hit.m.name} 移出「${trip.name}」嗎？`, [
+    qPostback_('確定移除', { a: 'rmm', t: row.id, u: hit.m.userId }, `移除成員 ${hit.m.name}`), qMsg_('取消'),
+  ]));
 }

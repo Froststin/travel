@@ -1,7 +1,14 @@
 /* 本機測試：用假的 Google／LINE 服務載入所有 .gs，模擬 LINE 訊息與網站 API
  * 執行：node gas/test/run.cjs
  */
-const { ctx, run, props, sent, flags } = require('./harness.cjs');
+const H = require('./harness.cjs');
+const { ctx, run, props, sent, flags } = H;
+
+// 走和正式環境一樣的入口（doPost → ensureSchema_ → handleWebhook_）
+function hook() {
+  ctx.__req = { parameter: { src: 'line', key: 'k' }, postData: { contents: JSON.stringify(ctx.__ev) } };
+  run('doPost(__req)');
+}
 
 function rows(name) { run('__clearCache()'); ctx.__n = name; return run('readTable_(__n)'); }
 
@@ -16,7 +23,7 @@ function say(text, user = 'U1') {
   sent.length = 0;
   run('__clearCache()');
   ctx.__ev = { events: [{ type: 'message', replyToken: 'r', source: { userId: user }, message: { type: 'text', text } }] };
-  run('handleWebhook_(__ev)');
+  hook();
   return lastReply();
 }
 
@@ -24,7 +31,7 @@ function postback(data, user = 'U1') {
   sent.length = 0;
   run('__clearCache()');
   ctx.__ev = { events: [{ type: 'postback', replyToken: 'r', source: { userId: user }, postback: { data: JSON.stringify(data) } }] };
-  run('handleWebhook_(__ev)');
+  hook();
   return lastReply();
 }
 
@@ -116,7 +123,7 @@ ctx.__ev = { events: [
   { type: 'message', replyToken: 'r1', source: { userId: 'U1' }, message: { type: 'image', id: 'm1', imageSet: { id: 's', index: 1, total: 2 } } },
   { type: 'message', replyToken: 'r2', source: { userId: 'U1' }, message: { type: 'image', id: 'm2', imageSet: { id: 's', index: 2, total: 2 } } },
 ] };
-run('handleWebhook_(__ev)');
+hook();
 const imgReplies = sent.filter((s) => s.url.includes('message/reply'));
 check('多張照片只回覆一次', imgReplies.length === 1 && imgReplies[0].body.messages[0].text.includes('2 張照片'), JSON.stringify(imgReplies));
 
@@ -178,7 +185,7 @@ check('API 舊版本 → 409', stale.status === 409, JSON.stringify(stale));
 check('API 別人的旅程 → 403', api('saveTrip', { trip, baseUpdatedAt: res.updatedAt }, 'good:U2').status === 403);
 
 res = api('addJournal', { entry: { date: '2026-10-29', text: '網站寫的日誌' } });
-check('API addJournal', res.ok && res.entry.text === '網站寫的日誌');
+check('API addJournal', res.ok && res.entry.id && res.entry.tripId);
 check('API deleteJournal', api('deleteJournal', { id: res.entry.id }).ok);
 const photo = api('list', {}).journal.find((j) => j.type === 'image');
 check('API photo', api('photo', { fileId: photo.fileId }).dataUrl.startsWith('data:image/jpeg;base64,'));
@@ -191,6 +198,60 @@ props.ALLOWED_USERS = 'U9';
 r = say('今天');
 check('ALLOWED_USERS 限制', r.text.includes('私人使用'), r.text);
 props.ALLOWED_USERS = '';
+
+
+/* ---------- 旅伴（共用旅程） ---------- */
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '2');
+check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
+r = say('邀請');
+const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
+check('邀請產生邀請碼與連結', code && r.text.includes('https://line.me/R/oaMessage/%40839jhulx/?') && r.text.includes('https://line.me/R/ti/p/%40839jhulx'), r.text);
+check('邀請有「分享給旅伴」按鈕', r.quick[0].action.uri.startsWith('https://line.me/R/share?text='));
+check('再邀請一次邀請碼不變', say('邀請').text.includes(`加入 ${code}`));
+r = say(`加入 ${code.toLowerCase()}`, 'U2');
+check('旅伴用邀請碼加入（大小寫皆可）', r.text.includes('已加入「京都」') && r.text.includes('Name-U1、Name-U2'), r.text);
+check('重複加入不會重複成員', say(`加入 ${code}`, 'U2').text.includes('已經在') && rows('Members').length === 1);
+check('錯誤邀請碼', say('加入 ZZZ999', 'U2').text.includes('找不到邀請碼'));
+r = say('今天', 'U2');
+check('旅伴看得到行程', r.msgs[0].type === 'flex' && r.text.includes('清水寺'), r.text.slice(0, 200));
+r = say('新增 今天 15:00 金閣寺 @金閣寺', 'U2');
+check('旅伴可以新增行程', r.text.includes('金閣寺'), r.text);
+check('主人看得到旅伴新增的行程', say('今天').text.includes('金閣寺'));
+check('旅伴新增後主人仍是擁有者', rows('Trips')[0].userId === 'U1');
+say('日誌 金閣寺好美', 'U2');
+r = say('日誌');
+check('共用日誌標註作者', r.text.includes('Name-U2：金閣寺好美') && r.text.includes('抹茶超好喝') && !r.text.includes('Name-U1：'), r.text);
+r = say('成員', 'U2');
+check('成員名單', r.text.includes('👑 Name-U1') && r.text.includes('Name-U2（你）') && r.quick.some((q) => q.action.label === '退出旅程'), r.text);
+r = say('成員');
+check('主人的成員名單有移除按鈕', r.quick.some((q) => q.action.label === '移除 Name-U2'));
+check('非主人不能移除成員', say('移除成員 Name-U1', 'U2').text.includes('只有旅程主人'));
+check('「加入 Costco」仍是新增行程', say('加入 今天 Costco').text.includes('已新增'));
+
+res = api('list', {}, 'good:U2');
+const shared = res.trips[0];
+check('API：旅伴拿到共用旅程與角色', shared.role === 'editor' && shared.members.length === 2 && shared.members.find((m) => m.me).name === 'Name-U2', JSON.stringify(shared.members));
+check('API：不外流其他人的 LINE userId', !JSON.stringify(res).includes('"U1"'));
+check('API：旅伴看得到共用日誌與照片', res.journal.some((j) => j.author === 'Name-U1' && !j.mine) && api('photo', { fileId: res.journal.find((j) => j.type === 'image').fileId }, 'good:U2').ok);
+res = api('saveTrip', { trip: shared, baseUpdatedAt: shared.updatedAt }, 'good:U2');
+check('API：旅伴可以存檔', res.ok, JSON.stringify(res));
+check('API：外人不能存檔', api('saveTrip', { trip: shared, baseUpdatedAt: res.updatedAt }, 'good:U3').status === 403);
+const ownerView = api('list', {}).trips[0];
+const u2key = ownerView.members.find((m) => m.name === 'Name-U2').id;
+check('API：旅伴不能刪別人的日誌', api('deleteJournal', { id: api('list', {}, 'good:U2').journal.find((j) => !j.mine).id }, 'good:U2').status === 403);
+res = api('invite', { tripId: shared.id }, 'good:U2');
+check('API：旅伴也能產生邀請', res.ok && res.code === code && res.text.includes('Name-U2 邀請你'), JSON.stringify(res));
+
+r = say('移除成員 Name-U2');
+check('移除成員先確認', r.text.includes('確定要把 Name-U2 移出'), r.text);
+r = postback(JSON.parse(r.quick[0].action.data));
+check('主人移除成員', r.text.includes('已將 Name-U2 移出') && say('今天', 'U2').text.includes('還沒有任何旅程'), r.text);
+say(`加入 ${code}`, 'U2');
+check('API：旅伴刪除旅程＝退出', api('deleteTrip', { id: shared.id }, 'good:U2').result === 'left' && api('list', {}).trips.length === 1);
+say(`加入 ${code}`, 'U2');
+check('API：主人用成員代號移除', api('removeMember', { tripId: shared.id, member: u2key }).ok && api('list', {}, 'good:U2').trips.length === 0);
+r = say('退出旅程');
+check('主人不能退出自己的旅程', r.text.includes('你是「京都」的主人'), r.text);
 
 check('API deleteTrip', api('deleteTrip', { id: trip.id }).ok && api('list', {}).trips.length === 0);
 

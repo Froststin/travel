@@ -484,3 +484,25 @@ textarea { resize: vertical; }
   background: var(--surface-2);
   object-fit: cover;
 }
+
+/* ---------- 旅伴 ---------- */
+.members { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.member {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: .85rem;
+}
+.member-remove {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0 0 4px;
+  font-size: .8rem;
+}
+.member-remove:hover { color: var(--danger); }
+.journal-author { display: block; font-size: .8rem; font-weight: 600; color: var(--primary); margin-bottom: 2px; }

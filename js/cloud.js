@@ -62,11 +62,39 @@ const Cloud = {
     return this.enqueue(() => this.call('deleteJournal', { id }));
   },
 
+  /** 產生邀請訊息，開啟 LINE 分享畫面傳給旅伴 */
+  async invite(tripId) {
+    try {
+      await this.queue;
+      const r = await this.call('invite', { tripId });
+      toast(`邀請碼：${r.code}，選擇要傳給哪位旅伴`);
+      openLineShareUrl(r.text);
+    } catch (err) {
+      this.handleError(err);
+    }
+  },
+
+  removeMember(tripId, member) {
+    return this.enqueue(async () => {
+      await this.call('removeMember', { tripId, member });
+      toast('已移出旅程');
+      this.refresh();
+    });
+  },
+
+  async profileName() {
+    try {
+      return (await liff.getProfile()).displayName || '';
+    } catch (err) {
+      return '';
+    }
+  },
+
   async start() {
     this.setStatus('syncing');
     app.innerHTML = '<p class="loading">☁️ 正在從雲端載入旅程……</p>';
     try {
-      const data = await this.call('list');
+      const data = await this.call('list', { name: await this.profileName() });
       const local = state;
       this.enabled = true;
       state = { trips: data.trips, journal: data.journal };
@@ -90,6 +118,7 @@ const Cloud = {
       this.enabled = false;
       this.handleError(err);
     }
+    cloudPending = false;
     openTripFromQuery();
     route();
   },

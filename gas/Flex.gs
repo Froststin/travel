@@ -113,7 +113,7 @@ function tripListFlex_(trips, today) {
           fText_(t.name, { size: 'md', weight: 'bold' }),
           fText_(`📍 ${t.destination || '未設定'}`, { size: 'xs', color: '#66727a' }),
           fText_(`${prettyDate_(t.startDate)} 起・${durationText_(n)}`, { size: 'xs', color: '#66727a' }),
-          fText_(`${count} 個行程項目`, { size: 'xs', color: '#66727a' }),
+          fText_(`${count} 個行程項目${t.members && t.members.length > 1 ? `・👥 ${t.members.length} 人` : ''}`, { size: 'xs', color: '#66727a' }),
         ],
       },
       footer: {

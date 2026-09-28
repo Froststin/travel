@@ -11,6 +11,7 @@ const LIFF_ID = '2011768794-Lhly8AIw';
 const LOGIN_CHANNEL_ID = LIFF_ID.split('-')[0];
 const SITE_URL = 'https://froststin.github.io/travel/';
 const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
+const BOT_BASIC_ID = '@839jhulx'; // 官方帳號 ID，用於邀請連結
 const RICHMENU_IMAGE_URL = `${SITE_URL}gas/richmenu.png`;
 const TZ = 'Asia/Taipei';
 

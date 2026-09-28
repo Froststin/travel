@@ -39,6 +39,8 @@ let currentTripId = null;
 let currentTab = 'plan';
 let editingTripId = null;       // null = 新增旅程
 let editingActivity = null;     // { date, id } 或 null = 新增項目
+// 有設定雲端時，LINE 登入與雲端載入完成前先別判定「旅程不存在」
+let cloudPending = !!(window.TRAVEL_CONFIG && window.TRAVEL_CONFIG.apiUrl && window.TRAVEL_CONFIG.liffId);
 
 /* ---------- 儲存 ---------- */
 function loadState() {
@@ -223,6 +225,10 @@ function route() {
       renderTrip(trip);
       return;
     }
+    if (cloudPending) {
+      app.innerHTML = '<p class="loading">載入中……</p>';
+      return;
+    }
     location.hash = '#/';
     return;
   }
@@ -302,13 +308,14 @@ function renderTrip(t) {
         <h1>${esc(t.name)}</h1>
         <p class="muted">📍 ${esc(t.destination || '未設定目的地')}・${prettyDate(t.startDate)} – ${prettyDate(t.endDate)}・${durationText(dates.length)}</p>
         ${t.notes ? `<p class="trip-notes">${esc(t.notes)}</p>` : ''}
+        ${membersView(t)}
       </div>
       <div class="actions no-print">
         <button class="btn btn-line" data-action="share-line">分享到 LINE</button>
         <button class="btn" data-action="edit-trip">編輯</button>
         <button class="btn" data-action="export-trip">匯出</button>
         <button class="btn" data-action="print">列印</button>
-        <button class="btn btn-danger" data-action="delete-trip">刪除</button>
+        <button class="btn btn-danger" data-action="delete-trip">${isTripOwner(t) ? '刪除' : '退出旅程'}</button>
       </div>
     </div>
     <nav class="tabs no-print" role="tablist">
@@ -450,8 +457,29 @@ function packingView(t) {
     </section>`;
 }
 
+/* ---------- 旅伴（雲端模式才有） ---------- */
+function isTripOwner(t) {
+  return !t.role || t.role === 'owner';
+}
+
+function membersView(t) {
+  if (!cloudOn() || !Array.isArray(t.members)) return '';
+  const owner = isTripOwner(t);
+  const chips = t.members.map((m) => `
+    <span class="member">
+      ${m.role === 'owner' ? '👑 ' : ''}${esc(m.name)}${m.me ? '（我）' : ''}
+      ${owner && !m.me ? `<button class="member-remove no-print" data-action="remove-member" data-id="${esc(m.id)}" data-name="${esc(m.name)}" title="移出旅程" aria-label="移出 ${esc(m.name)}">✕</button>` : ''}
+    </span>`).join('');
+  return `
+    <div class="members">
+      <span class="muted">👥</span>${chips}
+      <button class="btn btn-sm btn-line no-print" data-action="invite">＋ 邀請旅伴</button>
+    </div>`;
+}
+
 function journalView(t, dates) {
-  const entries = (state.journal || []).filter((j) => j.date >= t.startDate && j.date <= t.endDate);
+  const entries = (state.journal || []).filter((j) =>
+    (j.tripId ? j.tripId === t.id : true) && j.date >= t.startDate && j.date <= t.endDate);
   const today = fmtDate(new Date());
   const defaultDate = dates.includes(today) ? today : dates[0];
   const days = dates
@@ -459,7 +487,7 @@ function journalView(t, dates) {
     .map((d) => `
       <section class="panel">
         <h3>Day ${dates.indexOf(d) + 1}・${prettyDate(d)}</h3>
-        <ul class="journal-list">${entries.filter((j) => j.date === d).map(journalItem).join('')}</ul>
+        <ul class="journal-list">${entries.filter((j) => j.date === d).map((j) => journalItem(j, t)).join('')}</ul>
       </section>`)
     .join('');
   return `
@@ -476,15 +504,17 @@ function journalView(t, dates) {
     ${days || '<p class="muted journal-empty">這趟旅程還沒有日誌。</p>'}`;
 }
 
-function journalItem(j) {
+function journalItem(j, t) {
   const body = j.type === 'image'
     ? `<img class="journal-photo" data-file-id="${esc(j.fileId)}" alt="旅遊照片">`
     : `<p>${esc(j.text)}</p>`;
+  const mine = j.mine !== false;
+  const canDelete = mine || isTripOwner(t);
   return `
     <li class="journal-item">
       <span class="journal-time">${esc(j.time)}</span>
-      <div class="journal-body">${body}</div>
-      <button class="icon-btn no-print" data-action="delete-journal" data-id="${esc(j.id)}" title="刪除" aria-label="刪除">✕</button>
+      <div class="journal-body">${!mine && j.author ? `<span class="journal-author">${esc(j.author)}</span>` : ''}${body}</div>
+      ${canDelete ? `<button class="icon-btn no-print" data-action="delete-journal" data-id="${esc(j.id)}" title="刪除" aria-label="刪除">✕</button>` : '<span></span>'}
     </li>`;
 }
 
@@ -757,13 +787,25 @@ document.addEventListener('click', (e) => {
       renderTrip(t);
       window.print();
       break;
-    case 'delete-trip':
-      if (t && confirm(`確定要刪除「${t.name}」嗎？此動作無法復原。`)) {
+    case 'delete-trip': {
+      if (!t) break;
+      const owner = isTripOwner(t);
+      const msg = owner
+        ? `確定要刪除「${t.name}」嗎？${t.members && t.members.length > 1 ? '所有旅伴也會看不到這個旅程，' : ''}此動作無法復原。`
+        : `確定要退出「${t.name}」嗎？退出後就看不到這個旅程了。`;
+      if (confirm(msg)) {
         state.trips = state.trips.filter((x) => x.id !== t.id);
         commitDeleteTrip(t.id);
-        toast('旅程已刪除');
+        toast(owner ? '旅程已刪除' : '已退出旅程');
         location.hash = '#/';
       }
+      break;
+    }
+    case 'invite':
+      if (t && cloudOn()) Cloud.invite(t.id);
+      break;
+    case 'remove-member':
+      if (t && cloudOn() && confirm(`確定要把 ${el.dataset.name} 移出「${t.name}」嗎？`)) Cloud.removeMember(t.id, el.dataset.id);
       break;
     case 'add-activity':
       openActivityDialog(el.dataset.date, null);
@@ -835,7 +877,7 @@ document.addEventListener('submit', (e) => {
     const now = new Date();
     const entry = {
       id: uid(), date: f.get('date'), time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
-      type: 'text', text: text.slice(0, 2000), fileId: '', createdAt: Date.now(),
+      type: 'text', text: text.slice(0, 2000), fileId: '', createdAt: Date.now(), tripId: t.id, mine: true,
     };
     state.journal.push(entry);
     sortJournal();

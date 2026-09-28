@@ -51,7 +51,7 @@ const ctx = {
     base64Encode: (b) => Buffer.from(b).toString('base64'),
     DigestAlgorithm: { SHA_256: 'sha256' },
   },
-  SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] }) },
+  SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet()) }) },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
   CacheService: { getScriptCache: () => ({ get: () => null, put() {} }) },
   DriveApp: {
@@ -64,6 +64,10 @@ const ctx = {
       if (url.includes('oauth2/v2.1/verify')) {
         const ok = opt.payload.id_token.startsWith('good:');
         return { getResponseCode: () => (ok ? 200 : 400), getContentText: () => JSON.stringify({ sub: opt.payload.id_token.slice(5), exp: Date.now() / 1000 + 3600 }) };
+      }
+      if (url.includes('/v2/bot/profile/')) {
+        const id = url.split('/').pop();
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ displayName: `Name-${id}` }) };
       }
       if (url.includes('/content')) {
         return { getResponseCode: () => 200, getBlob: () => ({ getContentType: () => 'image/jpeg', setName() { return this; } }) };

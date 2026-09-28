@@ -21,11 +21,13 @@ function doPost(e) {
   if (e.parameter.src === 'line') {
     const key = prop_('WEBHOOK_KEY');
     if (!key || e.parameter.key !== key) return ContentService.createTextOutput('forbidden');
+    ensureSchema_();
     handleWebhook_(body);
     return ContentService.createTextOutput('ok');
   }
 
   try {
+    ensureSchema_();
     return json_(Object.assign({ ok: true }, handleApi_(body)));
   } catch (err) {
     if (!err.status) console.error(err);
@@ -44,6 +46,7 @@ function handleApi_(body) {
 
   switch (body.action) {
     case 'list':
+      if (body.name) withLock_(() => setUserName_(userId, body.name));
       return { trips: loadTrips_(userId), journal: loadJournal_(userId) };
 
     case 'saveTrip':
@@ -52,15 +55,25 @@ function handleApi_(body) {
         if (!trip) throw apiError_(400, '旅程資料格式錯誤');
         const current = findTripRow_(trip.id);
         if (current) {
-          if (current.userId !== userId) throw apiError_(403, '沒有權限修改這個旅程');
+          if (!roleIn_(userId, current)) throw apiError_(403, '沒有權限修改這個旅程');
           if (body.baseUpdatedAt !== current.updatedAt) throw apiError_(409, '這個旅程已在其他地方更新');
         }
         return { updatedAt: saveTrip_(userId, trip) };
       });
 
     case 'deleteTrip':
+      return withLock_(() => ({ result: deleteTrip_(userId, String(body.id || '')) }));
+
+    case 'invite':
       return withLock_(() => {
-        deleteTrip_(userId, String(body.id || ''));
+        const tripId = String(body.tripId || '');
+        const code = inviteCodeFor_(userId, tripId);
+        return { code, text: inviteText_(findTripRow_(tripId), code, userName_(userId)) };
+      });
+
+    case 'removeMember':
+      return withLock_(() => {
+        if (!removeMember_(userId, String(body.tripId || ''), String(body.member || ''))) throw apiError_(404, '找不到這位成員');
         return {};
       });
 
@@ -68,7 +81,8 @@ function handleApi_(body) {
       return withLock_(() => {
         const text = str_(body.entry && body.entry.text, 2000).trim();
         if (!text) throw apiError_(400, '日誌內容是空的');
-        return { entry: addJournal_(userId, Object.assign({}, body.entry, { type: 'text', text, fileId: '' })) };
+        const row = addJournal_(userId, Object.assign({}, body.entry, { type: 'text', text, fileId: '' }));
+        return { entry: { id: row.id, tripId: row.tripId } };
       });
 
     case 'deleteJournal':
@@ -79,7 +93,7 @@ function handleApi_(body) {
 
     case 'photo': {
       const row = readTable_('Journal').find((j) => j.fileId && j.fileId === body.fileId);
-      if (!row || row.userId !== userId) throw apiError_(404, '找不到照片');
+      if (!row || !canSeeJournal_(userId, row)) throw apiError_(404, '找不到照片');
       const blob = DriveApp.getFileById(row.fileId).getBlob();
       return { dataUrl: `data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}` };
     }
