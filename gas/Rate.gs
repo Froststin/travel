@@ -100,20 +100,67 @@ function fmtMoney_(n, cur) {
   return `${v.toLocaleString()} ${cur || ''}`.trim();
 }
 
-function fareIn_(a, currency) {
-  const v = convertAmount_(a.travelCost, a.travelCostCurrency || currency, currency, jpyRate_());
-  return v == null ? Number(a.travelCost) || 0 : v;
+/* ---------- 其他幣別：國際參考匯率（以台幣為基準） ---------- */
+function referenceRates_() {
+  if (referenceRates_.memo) return referenceRates_.memo;
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('ref_rates_TWD');
+  if (hit) return (referenceRates_.memo = JSON.parse(hit));
+  const out = {};
+  try {
+    const res = UrlFetchApp.fetch('https://open.er-api.com/v6/latest/TWD', { muteHttpExceptions: true });
+    const data = JSON.parse(res.getContentText());
+    const date = Utilities.formatDate(new Date(data.time_last_update_unix * 1000), TZ, 'yyyy-MM-dd');
+    for (const c of CURRENCY_CODES) {
+      if (c !== 'TWD' && data.rates && data.rates[c]) out[c] = { rate: Math.round((1 / data.rates[c]) * 10000) / 10000, date, source: '國際參考匯率' };
+    }
+    if (Object.keys(out).length) cache.put('ref_rates_TWD', JSON.stringify(out), 3600);
+  } catch (err) {
+    console.warn('國際參考匯率讀取失敗', err);
+  }
+  return (referenceRates_.memo = out);
+}
+
+/** 1 單位 cur ＝多少台幣；日幣用臺銀現金賣出 */
+function rateFor_(cur) {
+  if (!cur || cur === 'TWD') return { rate: 1 };
+  if (cur === 'JPY') return jpyRate_();
+  return referenceRates_()[cur] || null;
+}
+
+/* ---------- 金額：一律以台幣為主 ---------- */
+function ntd_(n) {
+  return `NT$${Math.round(Number(n) || 0).toLocaleString()}`;
+}
+
+function toTWD_(amount, cur) {
+  const r = rateFor_(cur);
+  return r && r.rate ? (Number(amount) || 0) * r.rate : null;
+}
+
+// 加總用：換不了就先用原數字
+function twdOrRaw_(amount, cur) {
+  const v = toTWD_(amount, cur);
+  return v == null ? Number(amount) || 0 : v;
+}
+
+// 台幣只顯示台幣；外幣顯示「NT$47（¥230）」
+function showMoney_(amount, cur) {
+  if (!cur || cur === 'TWD') return ntd_(amount);
+  const v = toTWD_(amount, cur);
+  return v == null ? fmtMoney_(amount, cur) : `${ntd_(v)}（${fmtMoney_(amount, cur)}）`;
+}
+
+function fareCurrency_(a, currency) {
+  return a.travelCostCurrency || currency;
 }
 
 function fareText_(a, currency) {
-  const cost = Number(a.travelCost) || 0;
-  if (!cost) return '';
-  const cur = a.travelCostCurrency || currency;
-  const conv = cur === currency ? null : convertAmount_(cost, cur, currency, jpyRate_());
-  return fmtMoney_(cost, cur) + (conv == null ? '' : `（≈${fmtMoney_(conv, currency)}）`);
+  return Number(a.travelCost) ? showMoney_(a.travelCost, fareCurrency_(a, currency)) : '';
 }
 
-function rateText_() {
-  const fx = jpyRate_();
-  return fx ? `${fx.source}：1 日圓 ≈ ${fx.rate} 台幣（${fx.date}）` : '目前查不到匯率';
+function rateText_(cur) {
+  const c = cur || 'JPY';
+  const r = rateFor_(c);
+  return r && r.source ? `${r.source}：1 ${c === 'JPY' ? '日圓' : c} ≈ ${r.rate} 台幣（${r.date}）` : '目前查不到匯率';
 }

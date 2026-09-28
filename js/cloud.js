@@ -195,6 +195,19 @@ async function fetchBankRate() {
   return last ? { rate: Number(last.cash_sell), date: last.date, source: BANK_SOURCE } : null;
 }
 
+// 其他幣別：國際參考匯率（以台幣為基準）
+async function fetchReferenceRates() {
+  const res = await fetch('https://open.er-api.com/v6/latest/TWD');
+  const data = await res.json();
+  if (data.result !== 'success') return null;
+  const date = fmtDate(new Date(data.time_last_update_unix * 1000));
+  const out = {};
+  for (const c of CURRENCIES) {
+    if (c !== 'TWD' && data.rates[c]) out[c] = { rate: Math.round((1 / data.rates[c]) * 10000) / 10000, date, source: '國際參考匯率' };
+  }
+  return out;
+}
+
 async function fetchServerRate() {
   if (!API_URL) return null;
   const res = await fetch(API_URL, {
@@ -207,20 +220,23 @@ async function fetchServerRate() {
 }
 
 async function loadRate() {
-  if (fxRate && fxRate.source === BANK_SOURCE && Date.now() - (fxRate.fetchedAt || 0) < 6 * 3600 * 1000) return;
-  let rate = null;
-  for (const fetcher of [fetchBankRate, fetchServerRate]) {
+  const jpy = fx.rates.JPY;
+  if (jpy && jpy.source === BANK_SOURCE && Date.now() - fx.fetchedAt < 6 * 3600 * 1000) return;
+  const [bank, ref] = await Promise.allSettled([fetchBankRate(), fetchReferenceRates()]);
+  const rates = { ...((ref.status === 'fulfilled' && ref.value) || {}) };
+  if (bank.status === 'fulfilled' && bank.value) rates.JPY = bank.value;
+  if (!rates.JPY) {
     try {
-      rate = await fetcher();
-      if (rate) break;
+      const server = await fetchServerRate();
+      if (server) rates.JPY = server;
     } catch (err) {
       console.warn('匯率讀取失敗', err);
     }
   }
-  if (!rate) return;
-  fxRate = { ...rate, fetchedAt: Date.now() };
+  if (!Object.keys(rates).length) return;
+  fx = { rates: { ...fx.rates, ...rates }, fetchedAt: Date.now() };
   try {
-    localStorage.setItem(FX_KEY, JSON.stringify(fxRate));
+    localStorage.setItem(FX_KEY, JSON.stringify(fx));
   } catch { /* 忽略 */ }
   reportRate();
   if (!document.querySelector('dialog[open]')) route();
@@ -229,9 +245,10 @@ async function loadRate() {
 
 // 把臺銀匯率分享給後端，LINE 機器人也能用（需登入）
 function reportRate() {
-  if (!Cloud.enabled || !fxRate || fxRate.source !== BANK_SOURCE || Cloud.rateReported) return;
+  const jpy = fx.rates.JPY;
+  if (!Cloud.enabled || !jpy || jpy.source !== BANK_SOURCE || Cloud.rateReported) return;
   Cloud.rateReported = true;
-  Cloud.call('reportRate', { rate: { rate: fxRate.rate, date: fxRate.date } }).catch(() => {});
+  Cloud.call('reportRate', { rate: { rate: jpy.rate, date: jpy.date } }).catch(() => {});
 }
 
 loadRate();

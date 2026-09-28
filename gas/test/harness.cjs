@@ -66,7 +66,8 @@ const ctx = {
         return { getResponseCode: () => (ok ? 200 : 400), getContentText: () => JSON.stringify({ sub: opt.payload.id_token.slice(5), exp: Date.now() / 1000 + 3600 }) };
       }
       if (url.includes('open.er-api.com')) {
-        return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ rates: { TWD: 0.2019 }, time_last_update_unix: 1790553600 }) };
+        const twdBase = url.endsWith('/TWD');
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ rates: twdBase ? { JPY: 4.953, USD: 0.0315 } : { TWD: 0.2019 }, time_last_update_unix: 1790553600 }) };
       }
       if (url.includes('finmindtrade') && flags.finmindBanned) {
         return { getResponseCode: () => 403, getContentText: () => '{"msg":"ip banned"}' };

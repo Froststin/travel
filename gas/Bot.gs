@@ -112,7 +112,7 @@ function handleText_(ctx, rawText) {
     if (!arg || isDateOnly_(ctx, arg)) return cmdJournalView_(ctx, arg);
   }
   if ((m = text.match(/^(?:日誌|日記|記錄|紀錄|記下|筆記|寫日誌)\s*[:：]?\s*([\s\S]+)$/))) return cmdJournalAdd_(ctx, m[1].trim());
-  if (/^(匯率|日幣|日圓|日幣匯率|匯率多少)$/.test(text)) return say_(ctx, textMsg_(`💱 ${rateText_()}\n\n例：¥1,000 ≈ ${fmtMoney_(convertAmount_(1000, 'JPY', 'TWD', jpyRate_()) || 0, 'TWD')}`));
+  if (/^(匯率|日幣|日圓|日幣匯率|匯率多少)$/.test(text)) return say_(ctx, textMsg_(`💱 ${rateText_('JPY')}\n\n例：¥1,000 ≈ ${ntd_(toTWD_(1000, 'JPY') || 0)}`));
   if (/預算|花費|花多少|多少錢|開銷|支出/.test(text)) return cmdBudget_(ctx);
   if (/行李|打包/.test(text)) return cmdPacking_(ctx);
   if (/^(行程|旅程|我的旅程|所有旅程|旅程列表|列表|全部行程|全部旅程)$/.test(text)) return cmdTrips_(ctx);
@@ -194,7 +194,7 @@ function replySearchHits_(ctx, kw, hits) {
     if (a.location) lines.push(`📍 ${a.location}`);
     if (placeUrl_(a)) lines.push(`🗺️ 地圖：${placeUrl_(a)}`);
     if (navUrl_(a)) lines.push(`🧭 導航：${navUrl_(a)}`);
-    if (a.cost) lines.push(`💰 ${a.cost} ${trip.currency}`);
+    if (a.cost) lines.push(`💰 ${showMoney_(a.cost, trip.currency)}`);
     if (a.notes) lines.push(`📝 ${a.notes}`);
     const quick = [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/'))];
     if (navUrl_(a)) quick.unshift(qUri_('🧭 開始導航', navUrl_(a)));
@@ -236,27 +236,29 @@ function cmdBudget_(ctx) {
   if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
   const trip = activeTrip_(ctx.trips, ctx.today);
   const all = Object.values(trip.days).flat();
-  const spent = Math.round(all.reduce((s, a) => s + (Number(a.cost) || 0) + fareIn_(a, trip.currency), 0));
   const cur = trip.currency;
+  // 全部換算成台幣
+  const spent = all.reduce((s, a) => s + twdOrRaw_(a.cost, cur) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)), 0);
   const lines = [`💰 ${trip.name} 預算`];
   if (trip.budget) {
-    const remain = trip.budget - spent;
-    lines.push(`總預算：${trip.budget.toLocaleString()} ${cur}`, `預估花費：${spent.toLocaleString()} ${cur}`,
-      remain >= 0 ? `剩餘：${remain.toLocaleString()} ${cur}` : `⚠️ 超出預算：${(-remain).toLocaleString()} ${cur}`);
+    const remain = twdOrRaw_(trip.budget, cur) - spent;
+    lines.push(`總預算：${showMoney_(trip.budget, cur)}`, `預估花費：${ntd_(spent)}`,
+      remain >= 0 ? `剩餘：${ntd_(remain)}` : `⚠️ 超出預算：${ntd_(-remain)}`);
   } else {
-    lines.push(`預估花費：${spent.toLocaleString()} ${cur}（尚未設定總預算）`);
+    lines.push(`預估花費：${ntd_(spent)}（尚未設定總預算）`);
   }
   const byCat = {};
   all.forEach((a) => {
-    byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + (Number(a.cost) || 0);
-    byCat.transport = (byCat.transport || 0) + fareIn_(a, trip.currency); // 車資算交通（換算成旅程幣別）
+    byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, cur);
+    byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
   });
   const cats = Object.entries(byCat).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   if (cats.length) {
     lines.push('', '分類：');
-    cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${Math.round(v).toLocaleString()} ${cur}`));
-    if (all.some((a) => Number(a.travelCost) && (a.travelCostCurrency || cur) !== cur)) lines.push('', `※ 日幣車資以${rateText_()}換算`);
+    cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${ntd_(v)}`));
   }
+  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur))])].filter((c) => c && c !== 'TWD');
+  if (foreign.length) lines.push('', `※ 金額皆換算成台幣：${foreign.map(rateText_).join('；')}`);
   return say_(ctx, textMsg_(lines.join('\n')));
 }
 
@@ -335,7 +337,7 @@ function cmdAdd_(ctx, body) {
   const list = trip.days[date];
   const issue = scheduleIssue_(list[list.indexOf(activity) - 1], activity);
   return say_(ctx, textMsg_(
-    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${activity.cost} ${trip.currency}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`,
+    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`,
     [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/')), qPostback_('復原', { a: 'del', id: activity.id }, '復原剛才的新增'), ...defaultQuick_()],
   ));
 }
@@ -441,7 +443,7 @@ function applyEdit_(ctx, id, changes) {
   sortDay_(trip.days[date]);
   saveTrip_(ctx.userId, trip);
   const issue = scheduleIssue_(trip.days[date][trip.days[date].indexOf(activity) - 1], activity);
-  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${activity.cost} ${trip.currency}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
+  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
 }
 
 /* ---------- 旅遊日誌 ---------- */

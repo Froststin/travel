@@ -105,7 +105,7 @@ r = say('改 伏見稻荷 到 第三天');
 check('移到別天', r.text.includes('10/30'), r.text);
 
 r = say('預算');
-check('預算', r.text.includes('預估花費：1,380 TWD'), r.text);
+check('預算（台幣）', r.text.includes('預估花費：NT$1,380'), r.text);
 
 r = say('刪除 拉麵');
 check('刪除先確認', r.text.includes('確定要刪除') && r.quick[0].action.type === 'postback', r.text);
@@ -211,12 +211,12 @@ check('地名含「船」不會被誤判', tv === null, JSON.stringify(tv));
 check('導航帶入交通方式', P('navUrl_({location:"清水寺",travelMode:"train"})').endsWith('&travelmode=transit'));
 
 r = say('新增 明天 19:30 先斗町晚餐 電車15分 車資230 $3000');
-check('新增含移動方式與車資（沒寫單位當日幣，附台幣換算）', r.text.includes('🚃 電車 15 分鐘・¥230（≈NT$47）') && r.text.includes('💰 3000 TWD'), r.text);
+check('新增含移動方式與車資（沒寫單位當日幣，台幣為主）', r.text.includes('🚃 電車 15 分鐘・NT$47（¥230）') && r.text.includes('💰 NT$3,000') && !r.text.includes('TWD'), r.text);
 check('試算表存了移動方式與車資', rows('Activities').some((a) => a.title === '先斗町晚餐' && a.travelMode === 'train' && a.travelCost === '230' && a.cost === '3000'));
 r = say('改 先斗町晚餐 搭計程車');
-check('只改移動方式保留分鐘數', r.text.includes('🚕 計程車 15 分鐘・¥230'), r.text);
+check('只改移動方式保留分鐘數', r.text.includes('🚕 計程車 15 分鐘・NT$47（¥230）'), r.text);
 r = say('改 先斗町晚餐 車資500元');
-check('只改車資（台幣）', r.text.includes('🚕 計程車 15 分鐘・NT$500') && !r.text.includes('≈'), r.text);
+check('只改車資（台幣只顯示台幣）', r.text.includes('🚕 計程車 15 分鐘・NT$500') && !r.text.includes('¥'), r.text);
 r = say('明天');
 check('行程卡片顯示移動方式與車資', r.text.includes('🚕 計程車 15 分鐘・NT$500'), r.text.slice(0, 300));
 r = say('導航 先斗町晚餐');
@@ -232,7 +232,7 @@ r = say('匯率');
 check('LINE 查匯率', r.text.includes('臺灣銀行現金賣出') && r.text.includes('0.2044') && r.text.includes('≈ NT$204'), r.text);
 say('改 先斗町晚餐 車資1000円');
 r = say('預算');
-check('預算把日幣車資換算成台幣', r.text.includes('以臺灣銀行現金賣出'), r.text);
+check('預算把日幣車資換算成台幣並註明匯率', r.text.includes('金額皆換算成台幣：臺灣銀行現金賣出'), r.text);
 check('API 匯率不需登入', api('rate', {}, '').rate.rate === 0.2044);
 flags.finmindBanned = true;
 run('jpyRate_.memo = undefined; fetchReferenceRate_.memo = undefined');
@@ -246,7 +246,11 @@ check('回報匯率需要登入', api('reportRate', { rate: { rate: 0.2044, date
 flags.finmindBanned = false;
 run('jpyRate_.memo = undefined');
 r = say('預算');
-check('車資算進預算的交通類', r.text.includes('🚆 交通') && /預估花費：[\d,]+ TWD/.test(r.text), r.text);
+check('車資算進預算的交通類', r.text.includes('🚆 交通') && /預估花費：NT\$[\d,]+/.test(r.text), r.text);
+
+check('台幣只顯示台幣', P('showMoney_(500, "TWD")') === 'NT$500');
+check('外幣顯示台幣為主', P('showMoney_(1000, "JPY")') === 'NT$204（¥1,000）');
+check('其他幣別用國際參考匯率換算', P('showMoney_(10, "USD")').startsWith('NT$3'), P('showMoney_(10, "USD")'));
 
 /* ---------- 網站 API ---------- */
 let res = api('list', {});

@@ -46,14 +46,15 @@ const activityForm = $('#activity-form');
 const importFile = $('#import-file');
 
 let state = loadState();
-// 日幣匯率（臺灣銀行現金賣出，1 JPY = rate TWD）；由 cloud.js 的 loadRate() 更新
-const FX_KEY = 'travel-planner:fx-jpy';
-let fxRate = (() => {
+// 匯率：fx.rates[幣別] = { rate: 1 單位 = 多少台幣, date, source }；由 cloud.js 的 loadRate() 更新
+// 日幣用臺灣銀行現金賣出，其他幣別用國際參考匯率
+const FX_KEY = 'travel-planner:fx';
+let fx = (() => {
   try {
-    return JSON.parse(localStorage.getItem(FX_KEY)) || null;
-  } catch {
-    return null;
-  }
+    const saved = JSON.parse(localStorage.getItem(FX_KEY));
+    if (saved && saved.rates) return saved;
+  } catch { /* 忽略 */ }
+  return { rates: {}, fetchedAt: 0 };
 })();
 let currentTripId = null;
 let currentTab = 'plan';
@@ -197,43 +198,56 @@ function travelMode(a) {
   return Object.hasOwn(TRAVEL_MODES, a.travelMode) ? TRAVEL_MODES[a.travelMode] : null;
 }
 
-/* ---------- 車資幣別與換算 ---------- */
-function fmtFare(n, cur) {
-  const v = Math.round(Number(n) * 100) / 100;
-  if (cur === 'JPY') return `¥${Math.round(v).toLocaleString()}`;
-  if (cur === 'TWD') return `NT$${Math.round(v).toLocaleString()}`;
-  return money(v, cur);
+/* ---------- 金額：一律以台幣為主 ---------- */
+function ntd(n) {
+  return `NT$${Math.round(Number(n) || 0).toLocaleString()}`;
 }
 
-// 在日幣與台幣之間換算；無法換算時回傳 null
-function convertAmount(amount, from, to) {
+// 原幣寫法（括號內用）
+function origMoney(n, cur) {
+  if (cur === 'JPY') return `¥${Math.round(Number(n) || 0).toLocaleString()}`;
+  return money(n, cur);
+}
+
+// 換成台幣；沒有匯率時回傳 null
+function toTWD(amount, cur) {
   const n = Number(amount) || 0;
-  if (!from || from === to) return n;
-  if (!fxRate || !fxRate.rate) return null;
-  if (from === 'JPY' && to === 'TWD') return n * fxRate.rate;
-  if (from === 'TWD' && to === 'JPY') return n / fxRate.rate;
-  return null;
+  if (!cur || cur === 'TWD') return n;
+  const r = fx.rates[cur];
+  return r && r.rate ? n * r.rate : null;
 }
 
-// 車資換算成旅程幣別（換算不了就用原數字）
-function fareIn(a, currency) {
-  const v = convertAmount(a.travelCost, a.travelCostCurrency || currency, currency);
-  return v == null ? Number(a.travelCost) || 0 : v;
+// 加總用：換不了就先用原數字
+function twdOrRaw(amount, cur) {
+  const v = toTWD(amount, cur);
+  return v == null ? Number(amount) || 0 : v;
+}
+
+// 顯示：台幣只顯示台幣；外幣顯示「NT$47（¥230）」
+function showMoney(amount, cur) {
+  if (!cur || cur === 'TWD') return ntd(amount);
+  const v = toTWD(amount, cur);
+  return v == null ? origMoney(amount, cur) : `${ntd(v)}（${origMoney(amount, cur)}）`;
+}
+
+function fareCurrency(a, currency) {
+  return a.travelCostCurrency || currency;
 }
 
 function fareText(a, currency) {
-  const cost = Number(a.travelCost) || 0;
-  if (!cost) return '';
-  const cur = a.travelCostCurrency || currency;
-  const conv = cur === currency ? null : convertAmount(cost, cur, currency);
-  return fmtFare(cost, cur) + (conv == null ? '' : `（≈${fmtFare(conv, currency)}）`);
+  return Number(a.travelCost) ? showMoney(a.travelCost, fareCurrency(a, currency)) : '';
+}
+
+function rateNote(cur) {
+  const r = fx.rates[cur];
+  return r ? `${r.source} 1 ${cur === 'JPY' ? '日圓' : cur} ≈ ${r.rate} 台幣（${r.date}）` : '匯率載入中';
 }
 
 function fxText() {
-  return fxRate ? `${fxRate.source} 1 日圓 ≈ ${fxRate.rate} 台幣（${fxRate.date}）` : '匯率載入中';
+  return rateNote('JPY');
 }
 
-// 例如「🚃 電車 15 分鐘・¥230（≈NT$47）」
+// 例如「🚃 電車 15 分鐘・NT$47（¥230）」
 function transitLabel(a, currency) {
   const mode = travelMode(a);
   const travel = Number(a.travelMin) || 0;
@@ -293,9 +307,9 @@ function sortDay(list) {
   return list.sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
 }
 
-// 花費＝行程本身＋前往的車資（車資換算成旅程幣別）
+// 花費＝行程本身＋前往的車資，全部換算成台幣
 function sumCost(list, currency) {
-  return list.reduce((s, a) => s + (Number(a.cost) || 0) + fareIn(a, currency), 0);
+  return list.reduce((s, a) => s + twdOrRaw(a.cost, currency) + twdOrRaw(a.travelCost, fareCurrency(a, currency)), 0);
 }
 
 function allActivities(t) {
@@ -458,7 +472,7 @@ function planView(t, dates) {
             <h3>${prettyDate(d)}</h3>
           </div>
           <div class="day-meta">
-            ${total ? `<span class="muted">${money(total, t.currency)}</span>` : ''}
+            ${total ? `<span class="muted">${ntd(total)}</span>` : ''}
             ${route ? `<a class="btn btn-sm no-print" href="${esc(route)}" target="_blank" rel="noopener" title="用 Google 地圖導航這天的所有地點">🧭 路線</a>` : ''}
             <button class="btn btn-sm btn-line no-print" data-action="share-day" data-date="${d}" title="把這天的行程分享到 LINE">LINE</button>
             <button class="btn btn-sm no-print" data-action="add-activity" data-date="${d}">＋ 新增</button>
@@ -490,7 +504,7 @@ function activityItem(a, date, currency) {
         ${a.notes ? `<p class="act-notes">${esc(a.notes)}</p>` : ''}
       </div>
       <div class="act-side">
-        ${a.cost ? `<span class="act-cost">${money(a.cost, currency)}</span>` : ''}
+        ${a.cost ? `<span class="act-cost">${showMoney(a.cost, currency)}</span>` : ''}
         <div class="act-actions no-print">
           <button class="icon-btn" data-action="edit-activity" data-date="${date}" data-id="${a.id}" title="編輯" aria-label="編輯">✎</button>
           <button class="icon-btn" data-action="delete-activity" data-date="${date}" data-id="${a.id}" title="刪除" aria-label="刪除">✕</button>
@@ -502,7 +516,8 @@ function activityItem(a, date, currency) {
 function budgetView(t, dates) {
   const all = allActivities(t);
   const spent = sumCost(all, t.currency);
-  const budget = Number(t.budget) || 0;
+  const budget = twdOrRaw(t.budget, t.currency);
+  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency))])].filter((c) => c && c !== 'TWD');
   const remain = budget - spent;
   const over = budget > 0 && remain < 0;
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
@@ -512,7 +527,8 @@ function budgetView(t, dates) {
       ...c,
       key: k,
       // 車資一律算在「交通」
-      sum: all.reduce((s, a) => s + (catKey(a) === k ? Number(a.cost) || 0 : 0) + (k === 'transport' ? fareIn(a, t.currency) : 0), 0),
+      sum: all.reduce((s, a) => s + (catKey(a) === k ? twdOrRaw(a.cost, t.currency) : 0)
+        + (k === 'transport' ? twdOrRaw(a.travelCost, fareCurrency(a, t.currency)) : 0), 0),
     }))
     .filter((x) => x.sum > 0)
     .sort((a, b) => b.sum - a.sum);
@@ -520,11 +536,11 @@ function budgetView(t, dates) {
 
   return `
     <div class="stats">
-      <div class="stat"><div class="label">總預算</div><div class="value">${budget ? money(budget, t.currency) : '未設定'}</div></div>
-      <div class="stat"><div class="label">預估花費</div><div class="value">${money(spent, t.currency)}</div></div>
+      <div class="stat"><div class="label">總預算</div><div class="value">${budget ? showMoney(t.budget, t.currency) : '未設定'}</div></div>
+      <div class="stat"><div class="label">預估花費</div><div class="value">${ntd(spent)}</div></div>
       <div class="stat">
         <div class="label">${over ? '超出預算' : '剩餘'}</div>
-        <div class="value ${over ? 'over' : ''}">${budget ? money(Math.abs(remain), t.currency) : '—'}</div>
+        <div class="value ${over ? 'over' : ''}">${budget ? ntd(Math.abs(remain)) : '—'}</div>
       </div>
     </div>
     ${budget ? `
@@ -538,7 +554,7 @@ function budgetView(t, dates) {
         <div class="bar-row">
           <span>${x.icon} ${x.label}</span>
           <div class="progress"><span style="width:${(x.sum / maxCat) * 100}%;background:var(--cat-${x.key})"></span></div>
-          <span class="amount">${money(x.sum, t.currency)}</span>
+          <span class="amount">${ntd(x.sum)}</span>
         </div>`).join('') : '<p class="muted">行程項目還沒有填寫花費。</p>'}
     </section>
     <section class="panel">
@@ -548,10 +564,11 @@ function budgetView(t, dates) {
         <tbody>
           ${dates.map((d, i) => {
             const list = t.days[d] || [];
-            return `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td>${list.length}</td><td>${money(sumCost(list, t.currency), t.currency)}</td></tr>`;
+            return `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td>${list.length}</td><td>${ntd(sumCost(list, t.currency))}</td></tr>`;
           }).join('')}
         </tbody>
       </table>
+      ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map(rateNote).join('；')}</p>` : ''}
     </section>`;
 }
 
@@ -723,6 +740,7 @@ function openActivityDialog(date, activity) {
   activityForm.elements.location.value = a.location || '';
   activityForm.elements.mapUrl.value = a.mapUrl || '';
   activityForm.elements.cost.value = a.cost || '';
+  $('#cost-label').textContent = t.currency === 'TWD' ? '花費（NT$）' : `花費（${t.currency}，會換算成台幣）`;
   activityForm.elements.notes.value = a.notes || '';
   updateAutoTime();
   updateFareHint();
@@ -762,10 +780,10 @@ function updateFareHint() {
   const el = $('#fare-hint');
   const cost = Number(activityForm.elements.travelCost.value) || 0;
   const cur = activityForm.elements.travelCostCurrency.value;
-  const target = cur === 'JPY' ? 'TWD' : 'JPY';
-  const conv = cost ? convertAmount(cost, cur, target) : null;
-  el.textContent = cost ? (conv == null ? fxText() : `≈ ${fmtFare(conv, target)}｜${fxText()}`) : '';
-  el.hidden = !cost;
+  // 台幣不用另外換算
+  const conv = cost && cur !== 'TWD' ? toTWD(cost, cur) : null;
+  el.textContent = cost && cur !== 'TWD' ? (conv == null ? rateNote(cur) : `≈ ${ntd(conv)}｜${rateNote(cur)}`) : '';
+  el.hidden = !el.textContent;
 }
 
 activityForm.elements.travelCost.addEventListener('input', updateFareHint);
