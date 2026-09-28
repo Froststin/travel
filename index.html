@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="靜態旅遊行程規劃工具：每日行程、預算與行李清單，資料存在瀏覽器中。">
+  <title>旅程手帖</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="site-header no-print">
+    <a href="#/" class="logo"><span aria-hidden="true">🧭</span> 旅程手帖</a>
+    <div class="header-actions">
+      <button class="btn btn-ghost" data-action="import">匯入</button>
+      <button class="btn btn-ghost" data-action="export-all">匯出全部</button>
+      <button class="btn btn-primary" data-action="new-trip">＋ 新增旅程</button>
+    </div>
+  </header>
+
+  <main id="app" class="container"></main>
+
+  <footer class="site-footer no-print">
+    資料只儲存在這個瀏覽器（localStorage），換裝置前請先「匯出全部」備份。
+  </footer>
+
+  <!-- 旅程表單 -->
+  <dialog id="trip-dialog">
+    <form id="trip-form" class="form">
+      <h2 id="trip-dialog-title">新增旅程</h2>
+      <label>旅程名稱<input name="name" required maxlength="60" placeholder="例如：京都賞楓之旅"></label>
+      <label>目的地<input name="destination" maxlength="60" placeholder="例如：日本京都"></label>
+      <div class="form-row">
+        <label>出發日期<input type="date" name="startDate" required></label>
+        <label>回程日期<input type="date" name="endDate" required></label>
+      </div>
+      <div class="form-row">
+        <label>總預算<input type="number" name="budget" min="0" step="any" placeholder="0"></label>
+        <label>幣別
+          <select name="currency"></select>
+        </label>
+      </div>
+      <label>備註<textarea name="notes" rows="3" maxlength="500" placeholder="訂房資訊、航班編號、同行旅伴……"></textarea></label>
+      <div class="form-actions">
+        <button type="button" class="btn" data-action="close-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 行程項目表單 -->
+  <dialog id="activity-dialog">
+    <form id="activity-form" class="form">
+      <h2 id="activity-dialog-title">新增行程</h2>
+      <label>標題<input name="title" required maxlength="100" placeholder="例如：清水寺"></label>
+      <div class="form-row">
+        <label>日期<select name="date" required></select></label>
+        <label>時間<input type="time" name="time"></label>
+      </div>
+      <div class="form-row">
+        <label>類別<select name="category"></select></label>
+        <label>花費<input type="number" name="cost" min="0" step="any" placeholder="0"></label>
+      </div>
+      <label>地點<input name="location" maxlength="200" placeholder="填寫後可直接開啟 Google 地圖"></label>
+      <label>備註<textarea name="notes" rows="3" maxlength="500" placeholder="門票、營業時間、交通方式……"></textarea></label>
+      <div class="form-actions">
+        <button type="button" class="btn" data-action="close-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <input type="file" id="import-file" accept="application/json,.json" hidden>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/line.js"></script>
+</body>
+</html>
