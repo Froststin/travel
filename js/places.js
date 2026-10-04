@@ -135,8 +135,42 @@ async function geoSearch(q, center) {
     lat: Number(hit.lat),
     lng: Number(hit.lon),
     geoName: String(hit.name || q).slice(0, 80),
-    area: String(a.city_district || a.suburb || a.borough || a.city || a.town || a.village || a.county || a.state || '').slice(0, 40),
+    area: areaName(a),
   };
+}
+
+// 所在的區，當作分組的名稱。定位服務有時回「丰岛区 / 豐島區」這種兩種寫法並列的，取最後一個
+function areaName(a) {
+  const raw = String(a.city_district || a.suburb || a.borough || a.city || a.town || a.village || a.county || a.state || '');
+  return raw.split(/\s*\/\s*/).pop().slice(0, 40);
+}
+
+/**
+ * 定位服務要每個字都對得上才找得到，「六歌仙 新宿西口总店」這種帶分店名的常常查不到。
+ * 所以整串查不到時，從後面一段一段拿掉再查（最多查 3 次）：「六歌仙 新宿西口总店」→「六歌仙」
+ */
+function geoCandidates(query) {
+  const parts = query.trim().split(/[\s　]+/).filter(Boolean);
+  const out = [parts.join(' ')];
+  for (let n = parts.length - 1; n >= 1 && out.length < 3; n--) out.push(parts.slice(0, n).join(' '));
+  // 沒有空格可以拆時，只拿掉結尾的「總店／本店」這類字樣：「六歌仙总店」→「六歌仙」
+  // （不去猜哪一段是分店名，免得「一蘭拉麵新宿店」被當成別家分店）
+  if (parts.length === 1) {
+    const base = parts[0].replace(/(?:總本店|总本店|總店|总店|本店)$/, '');
+    if (base.length >= 2 && base !== parts[0]) out.push(base);
+  }
+  return [...new Set(out)];
+}
+
+async function geoSearchSmart(query, center) {
+  const tries = geoCandidates(query);
+  for (let i = 0; i < tries.length; i++) {
+    if (i) await geoPause();
+    const hit = await geoSearch(tries[i], center);
+    // 用簡化過的名稱查到的可能是別家分店，寫在查到的名稱後面，提醒點開地圖確認
+    if (hit) return i ? { ...hit, geoName: `${hit.geoName}（用「${tries[i]}」查的，請確認）`.slice(0, 80) } : hit;
+  }
+  return null;
 }
 
 // 由座標查所在的區（用來當分組的名稱），查不到就算了
@@ -145,7 +179,7 @@ async function geoArea(lat, lng) {
     const params = new URLSearchParams({ format: 'jsonv2', lat, lon: lng, zoom: '14', 'accept-language': 'zh-TW' });
     const res = await fetch(`${GEO_URL.replace('/search', '/reverse')}?${params}`);
     const a = (await res.json()).address || {};
-    return String(a.city_district || a.suburb || a.borough || a.city || a.town || a.village || a.county || a.state || '').slice(0, 40);
+    return areaName(a);
   } catch (err) {
     return '';
   }
@@ -176,8 +210,9 @@ async function destinationCenter(t) {
 async function organizePlaces(tripId) {
   if (organizing) return;
   const first = getTrip(tripId);
-  const todo = ((first && first.places) || []).filter((p) => p.geo !== 'ok' && p.geo !== 'none').map((p) => ({ id: p.id, name: placeQuery(p) }));
-  if (!todo.length) return toast('都整理好了。新加的地點、或改過名稱的地點才需要再整理');
+  // 之前找不到的也再查一次（可能只是當時連線失敗）
+  const todo = ((first && first.places) || []).filter((p) => p.geo !== 'ok').map((p) => ({ id: p.id, name: placeQuery(p) }));
+  if (!todo.length) return toast('都整理好了。新加的地點、或改過地址的地點才需要再整理');
   const results = new Map();
   organizing = '準備中……';
   refreshPlaces(tripId);
@@ -187,7 +222,7 @@ async function organizePlaces(tripId) {
       organizing = `正在查位置 ${i + 1} / ${todo.length}：${todo[i].name}`;
       refreshPlaces(tripId);
       if (i) await geoPause();
-      results.set(todo[i].id, await geoSearch(todo[i].name, center));
+      results.set(todo[i].id, await geoSearchSmart(todo[i].name, center));
     }
   } catch (err) {
     console.warn('定位失敗', err);
@@ -207,7 +242,8 @@ async function organizePlaces(tripId) {
   });
   if (found || none) commitTrip(t);
   refreshPlaces(tripId);
-  if (found || none) toast(`整理好了：${found} 個找到位置${none ? `，${none} 個找不到` : ''}`);
+  const unsure = t.places.filter((p) => results.has(p.id) && /請確認）$/.test(p.geoName || '')).length;
+  if (found || none) toast(`整理好了：${found} 個找到位置${none ? `，${none} 個找不到` : ''}${unsure ? `；其中 ${unsure} 個是用簡化的名稱查的，請點開地圖確認` : ''}`);
 }
 
 function refreshPlaces(tripId) {
@@ -270,7 +306,7 @@ function placesView(t, dates) {
       </form>
       <div class="shop-day-head">
         <div class="packing-summary">共 ${places.length} 個${places.length ? `，已排入行程 ${scheduled} 個` : ''}</div>
-        <button class="btn btn-line no-print" data-action="organize-places" ${organizing || !pending.length ? 'disabled' : ''}>🧭 整理待去清單</button>
+        <button class="btn btn-line no-print" data-action="organize-places" ${organizing || !(pending.length + missing.length) ? 'disabled' : ''}>🧭 整理待去清單</button>
       </div>
       ${organizing ? `<p class="place-progress">${esc(organizing)}</p>` : ''}
       <p class="muted hint">「整理」會查出每個地點的位置，把距離近（約 ${GROUP_KM} 公里內）的分成一組，方便排在同一天；之後可以整組或單獨排進某一天。
@@ -286,7 +322,7 @@ function placesView(t, dates) {
     ${missing.length ? `
       <section class="panel">
         <h3>找不到位置<span class="muted shop-day-total">${missing.length} 個</span></h3>
-        <p class="muted hint">按 ✎ 填 Google 地圖的地址或貼上地圖連結，再整理一次；不改也可以直接排進行程。</p>
+        <p class="muted hint">按 ✎ 在「Google 地圖的地址」填店名或地標（比門牌號碼容易查到），或貼上電腦版 Google 地圖網址列的完整連結，再整理一次；不改也可以直接排進行程。</p>
         <ul class="shop-list">${missing.map((p) => placeItem(t, p, dates)).join('')}</ul>
       </section>` : ''}`;
 }
