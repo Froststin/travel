@@ -7,7 +7,7 @@
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }],
  *                shopping: [{ id, text, date, activityId, price, done }], createdAt } ] }
  *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走），
- *             price 是預估金額（旅程幣別），計入預算的「購物」
+ *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份
  *   activity = { id, time, endTime, title, category, location, mapUrl, cost, notes,
  *                travelMode, travelMin, travelCost, travelCostCurrency }  // travel* 是「從上一站過來」
  *   cost 用旅程幣別；travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
@@ -420,6 +420,7 @@ function shoppingView(t, dates) {
       <div class="progress"><span style="width:${pct}%"></span></div>
       ${items.length ? '' : '<p class="muted shop-empty">還沒有要買的東西。可以指定哪一天、在哪一站買，每日行程裡也會跟著顯示。</p>'}
       ${total ? '<p class="muted hint">有填金額的會計入「💰 預算」的購物分類。</p>' : ''}
+      ${cloudOn() && Array.isArray(t.members) && t.members.length > 1 ? '<p class="muted hint">🔒 購物清單是你自己的，旅伴看不到；預算裡的購物金額也只算你自己的。</p>' : ''}
       <p class="muted hint no-print">${cloudOn()
         ? '也可以在 LINE 官方帳號輸入「買 明天 抹茶粉」「買 面膜 @藥妝店」「買到 抹茶粉」。'
         : '在「每日行程」每一站的 🛒 也能直接加。'}</p>
@@ -707,7 +708,7 @@ function budgetView(t, dates) {
           ${looseShop > 0.005 ? `<tr><td>🛒 購物清單（不指定日期）</td><td>—</td><td>${ntd(looseShop)}</td></tr>` : ''}
         </tbody>
       </table>
-      ${shopTotal ? `<p class="muted hint">※ 含購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
+      ${shopTotal ? `<p class="muted hint">※ 含${cloudOn() && Array.isArray(t.members) && t.members.length > 1 ? '你自己的' : ''}購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
       ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
     </section>`;
 }

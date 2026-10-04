@@ -285,7 +285,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && props.SCHEMA_VERSION === '6');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Shopping && props.SCHEMA_VERSION === '7');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -410,6 +410,37 @@ st = shopTrip();
 st.shopping.find((s) => s.text === '茶碗').price = -5;
 api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
 check('API：購物金額不合法會歸零', shopTrip().shopping.find((s) => s.text === '茶碗').price === 0);
+
+/* ---------- 購物清單依 LINE 帳號分開 ---------- */
+const kyoto = shopTrip();
+const mineBefore = JSON.stringify(kyoto.shopping);
+say(`加入 ${api('invite', { tripId: kyoto.id }).code}`, 'U2');
+const tripOf = (user) => api('list', {}, `good:${user}`).trips.find((t) => t.id === kyoto.id);
+check('旅伴看不到別人的購物清單', kyoto.shopping.length > 0 && tripOf('U2').shopping.length === 0 && say('購物清單', 'U2').text.includes('還是空的'));
+r = say('買 今天 U2的東西 100', 'U2');
+check('旅伴加的東西只在自己那份', r.text.includes('已加入') && tripOf('U2').shopping.map((s) => s.text).join() === 'U2的東西' && JSON.stringify(tripOf('U1').shopping) === mineBefore, r.text);
+check('查當天行程只列出自己要買的', say('今天', 'U2').text.includes('🛒 要買：U2的東西') && !say('今天').text.includes('U2的東西'));
+const u2budget = Number(say('預算', 'U2').text.match(/購物 NT\$([\d,]+)/)[1].replace(/,/g, ''));
+check('預算的購物金額只算自己的', u2budget === 100 && shopCat() === 0, `U2 ${u2budget}／U1 ${shopCat()}`);
+let u2trip = tripOf('U2');
+u2trip.shopping.push({ id: 'u2-web', text: '網站加的', date: '', activityId: '', price: 50 });
+res = api('saveTrip', { trip: u2trip, baseUpdatedAt: u2trip.updatedAt }, 'good:U2');
+check('旅伴在網站存檔不會動到別人的購物清單', res.ok && tripOf('U2').shopping.length === 2 && JSON.stringify(tripOf('U1').shopping) === mineBefore);
+check('買到別人的東西會找不到', say('買到 U2的東西').text.includes('找不到') && !tripOf('U2').shopping[0].done);
+check('試算表每一列都記了是誰的', rows('Shopping').filter((s) => s.tripId === kyoto.id).every((s) => ['U1', 'U2'].includes(s.userId)) && rows('Shopping').filter((s) => s.userId === 'U2').length === 2);
+// 舊版資料（存在 Trips.shopping）升級後歸給旅程主人
+const col = H.sheets.Trips.data[0].indexOf('shopping');
+const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
+H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
+props.SCHEMA_VERSION = '6';
+check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '7');
+props.SCHEMA_VERSION = '6';
+H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
+check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
+say('不買 舊版的東西');
+api('deleteTrip', { id: kyoto.id }, 'good:U2');
+check('退出旅程後主人的購物清單不受影響', JSON.stringify(tripOf('U1').shopping) === mineBefore);
 
 /* ---------- 花費幣別、過長的修改內容 ---------- */
 r = say('新增 今天 15:00 龍安寺 400円');

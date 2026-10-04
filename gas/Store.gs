@@ -4,6 +4,7 @@
  * 共用旅程：Trips.userId 是建立者（主人），其他旅伴記在 Members。
  * 主人與成員都能查看、編輯行程；只有主人能刪除旅程、移除成員。
  * 日誌以 tripId 歸屬到旅程，同旅程的成員都看得到。
+ * 購物清單是個人的：Shopping 每一列記 tripId＋userId，每個人只讀寫自己的，旅伴互相看不到。
  * ============================================================ */
 
 const TABLES = {
@@ -12,8 +13,9 @@ const TABLES = {
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt'],
+  Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done'],
 };
-const SCHEMA_VERSION = '6';
+const SCHEMA_VERSION = '7';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
@@ -52,6 +54,27 @@ function ensureSchema_() {
       if (t) { j.tripId = t.id; changed = true; }
     }
     if (changed) writeTable_('Journal', journal);
+    // 舊版購物清單存在 Trips.shopping（整個旅程共用）：搬到 Shopping，歸給旅程主人
+    const shop = readTable_('Shopping');
+    const have = new Set(shop.map((s) => `${s.tripId}:${s.id}`));
+    const moved = [];
+    for (const t of trips) {
+      if (!t.shopping) continue;
+      let items = [];
+      try {
+        items = JSON.parse(t.shopping);
+      } catch (err) {
+        items = [];
+      }
+      for (const s of Array.isArray(items) ? items : []) {
+        if (!s || typeof s.text !== 'string' || !s.text.trim()) continue;
+        const row = shopRow_(t.id, t.userId, Object.assign({}, s, { id: cleanId_(s.id) || Utilities.getUuid() }));
+        if (!have.has(`${t.id}:${row.id}`)) moved.push(row); // 搬到一半失敗再重跑時不會重複
+      }
+      t.shopping = '';
+    }
+    if (moved.length) writeTable_('Shopping', shop.concat(moved));
+    if (trips.some((t) => t.shopping === '')) writeTable_('Trips', trips);
     PropertiesService.getScriptProperties().setProperty('SCHEMA_VERSION', SCHEMA_VERSION);
   });
 }
@@ -222,7 +245,7 @@ function sanitizeTrip_(raw) {
       .slice(0, 300)
       .map((p) => ({ id: cleanId_(p.id) || Utilities.getUuid(), text: str_(p.text, 80), done: !!p.done }))
     : [];
-  // 購物清單：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（要是這個旅程裡的行程），price 是預估金額（旅程幣別）
+  // 購物清單（存檔者自己的）：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（要是這個旅程裡的行程），price 是預估金額（旅程幣別）
   const actIds = new Set(Object.values(days).flat().map((a) => a.id));
   const shopping = Array.isArray(raw.shopping)
     ? raw.shopping
@@ -251,6 +274,20 @@ function sanitizeTrip_(raw) {
     shopping,
     createdAt: Number(raw.createdAt) || Date.now(),
   };
+}
+
+/* ---------- 購物清單（每個人各自一份） ---------- */
+function shopRow_(tripId, userId, s) {
+  return {
+    id: s.id, tripId, userId, text: str_(s.text, 80).trim(), date: isValidDate_(s.date) ? s.date : '',
+    activityId: cleanId_(s.activityId), price: Math.max(0, Number(s.price) || 0), done: s.done ? '1' : '',
+  };
+}
+
+function loadShopping_(tripId, userId) {
+  return readTable_('Shopping')
+    .filter((s) => s.tripId === tripId && s.userId === userId)
+    .map((s) => ({ id: s.id, text: s.text, date: s.date, activityId: s.activityId, price: Number(s.price) || 0, done: s.done === '1' }));
 }
 
 /* ---------- 使用者名稱 ---------- */
@@ -318,12 +355,7 @@ function rowToTrip_(row, acts, viewerId) {
   } catch (err) {
     packing = [];
   }
-  let shopping = [];
-  try {
-    shopping = JSON.parse(row.shopping || '[]');
-  } catch (err) {
-    shopping = [];
-  }
+  const shopping = loadShopping_(row.id, viewerId); // 只有自己的
   const members = membersOf_(row);
   return {
     id: row.id,
@@ -381,8 +413,10 @@ function saveTrip_(userId, trip) {
     createdAt: existing ? existing.createdAt : String(trip.createdAt || now),
     updatedAt: now,
     inviteCode: existing ? existing.inviteCode : '',
-    shopping: JSON.stringify(syncShopping_(trip)),
+    shopping: '', // 舊欄位，已改存 Shopping 工作表
   };
+  // 購物清單只換掉存檔這個人自己的，旅伴的不動
+  replaceRows_('Shopping', (s) => s.tripId === trip.id && s.userId === userId, syncShopping_(trip).map((s) => shopRow_(trip.id, userId, s)));
   const acts = [];
   for (const [date, list] of Object.entries(trip.days || {})) {
     for (const a of list) {
@@ -414,6 +448,7 @@ function deleteTrip_(userId, tripId) {
   replaceRows_('Trips', (t) => t.id === tripId, []);
   replaceRows_('Activities', (a) => a.tripId === tripId, []);
   replaceRows_('Members', (m) => m.tripId === tripId, []);
+  replaceRows_('Shopping', (s) => s.tripId === tripId, []);
   return 'deleted';
 }
 
