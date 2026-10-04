@@ -87,10 +87,17 @@ function handleEvent_(ev) {
     return;
   }
   const ctx = newCtx_(userId, ev.replyToken);
-  if (ev.type === 'postback') return withLock_(() => handlePostback_(ctx, ev.postback.data));
-  if (ev.type !== 'message') return;
-  if (ev.message.type === 'text') return withLock_(() => handleText_(ctx, ev.message.text));
-  if (ev.message.type === 'image') return withLock_(() => handleImage_(ctx, ev.message));
+  // 鎖只包住讀寫試算表的部分；連外部網站、產生 PDF 這些慢的事放在鎖外面，才不會卡住其他人的存檔
+  if (ev.type === 'postback') {
+    warmRates_();
+    withLock_(() => handlePostback_(ctx, ev.postback.data));
+  } else if (ev.type === 'message' && ev.message.type === 'text') {
+    warmRates_();
+    withLock_(() => handleText_(ctx, ev.message.text));
+  } else if (ev.type === 'message' && ev.message.type === 'image') {
+    handleImage_(ctx, ev.message);
+  }
+  if (ctx.afterLock) ctx.afterLock();
 }
 
 function newCtx_(userId, replyToken) {
@@ -255,7 +262,7 @@ function cmdSite_(ctx) {
 function cmdExport_(ctx, name) {
   const trip = pickTrip_(ctx, name);
   if (!trip) return say_(ctx, textMsg_('還沒有旅程可以匯出喔。'));
-  return exportTrip_(ctx, trip);
+  ctx.afterLock = () => exportTrip_(ctx, trip); // 產生 PDF 要幾秒，放到鎖外面做
 }
 
 function exportTrip_(ctx, trip) {
@@ -762,7 +769,8 @@ function handleImage_(ctx, message) {
   const date = ctx.today;
   const ext = (blob.getContentType() || 'image/jpeg').split('/')[1] || 'jpg';
   const file = folder.createFile(blob.setName(`${date}_${nowTime_().replace(':', '')}_${message.id}.${ext}`));
-  addJournal_(ctx.userId, { date, type: 'image', text: '', fileId: file.getId() });
+  // 下載與存檔在鎖外面做，只有寫進試算表這一步要鎖
+  withLock_(() => addJournal_(ctx.userId, { date, type: 'image', text: '', fileId: file.getId() }));
   if (set && set.index !== set.total) return; // 一次傳多張時，只在最後一張回覆
   const count = set ? set.total : 1;
   return say_(ctx, textMsg_(`📷 已把 ${count} 張照片記到 ${prettyDate_(date)} 的旅遊日誌`, [qMsg_('看今天日誌', '日誌'), ...defaultQuick_()]));
@@ -786,7 +794,8 @@ function handlePostback_(ctx, data) {
   if (p.a === 'export') {
     const trip = ctx.trips.find((t) => t.id === p.id);
     if (!trip) return say_(ctx, textMsg_('這個旅程已經不存在了。'));
-    return exportTrip_(ctx, trip);
+    ctx.afterLock = () => exportTrip_(ctx, trip);
+    return;
   }
   if (p.a === 'trip') {
     const trip = ctx.trips.find((t) => t.id === p.id);

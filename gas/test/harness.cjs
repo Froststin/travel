@@ -54,6 +54,7 @@ const props = { SHEET_ID: 'sheet1', PHOTO_FOLDER_ID: 'folder1', WEBHOOK_KEY: 'k'
 const sent = [];
 const cache = new Map();
 const files = [];
+const lockLog = [];
 
 const ctx = {
   console,
@@ -62,7 +63,7 @@ const ctx = {
     formatDate: (d, tz, fmt) => (fmt === 'yyyy-MM-dd' ? flags.today : '14:05'),
     getUuid: () => crypto.randomUUID(),
     newBlob: (content, type, name) => {
-      const blob = { content, type, name, getAs(t) { if (flags.failPdf) throw new Error('轉檔失敗'); return { ...blob, type: t, setName(n) { this.name = n; return this; } }; } };
+      const blob = { content, type, name, getAs(t) { lockLog.push('pdf'); if (flags.failPdf) throw new Error('轉檔失敗'); return { ...blob, type: t, setName(n) { this.name = n; return this; } }; } };
       return blob;
     },
     computeDigest: (a, s) => [...crypto.createHash('sha256').update(s).digest()],
@@ -71,7 +72,11 @@ const ctx = {
     DigestAlgorithm: { SHA_256: 'sha256' },
   },
   SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet(n)) }) },
-  LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+  // lockLog 記錄拿鎖、放鎖與鎖內做的慢事，測試用來確認慢的事都在鎖外面
+  LockService: { getScriptLock: () => ({
+    waitLock() { if (flags.lockBusy) throw new Error('Lock timeout'); lockLog.push('lock'); },
+    releaseLock() { lockLog.push('unlock'); },
+  }) },
   // 只有 postback 暫存（pb_ 開頭）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
   CacheService: { getScriptCache: () => ({
     get: (k) => (k.startsWith('pb_') && cache.has(k) ? cache.get(k) : null),
@@ -104,6 +109,7 @@ const ctx = {
         const twdBase = url.endsWith('/TWD');
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ rates: twdBase ? { JPY: 4.953, USD: 0.0315 } : { TWD: 0.2019 }, time_last_update_unix: 1790553600 }) };
       }
+      if (url.includes('finmindtrade')) flags.finmindCalls = (flags.finmindCalls || 0) + 1;
       if (url.includes('finmindtrade') && flags.finmindBanned) {
         return { getResponseCode: () => 403, getContentText: () => '{"msg":"ip banned"}' };
       }
@@ -145,4 +151,4 @@ const run = (code) => vm.runInContext(code, ctx);
 run('var __clearCache = () => { for (const k in tableCache_) delete tableCache_[k]; }');
 
 
-module.exports = { ctx, run, sheets, props, sent, flags, writes, cache, files };
+module.exports = { ctx, run, sheets, props, sent, flags, writes, cache, files, lockLog };

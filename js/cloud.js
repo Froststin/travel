@@ -173,7 +173,7 @@ const Cloud = {
     this.setStatus('syncing');
     app.innerHTML = '<p class="loading">☁️ 正在從雲端載入旅程……</p>';
     try {
-      const data = await this.call('list', { name: await this.profileName() });
+      const data = await this.listWithRetry({ name: await this.profileName() });
       const local = state;
       this.enabled = true;
       state = { trips: data.trips, journal: data.journal };
@@ -202,6 +202,20 @@ const Cloud = {
     reportRate();
     openTripFromQuery();
     route();
+  },
+
+  /** 載入旅程；後端忙碌或網路不穩時多試幾次（登入過期與權限問題不重試） */
+  async listWithRetry(payload) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.call('list', payload);
+      } catch (err) {
+        if (attempt >= 3 || [401, 403].includes(err.status)) throw err;
+        console.warn(`載入失敗，第 ${attempt} 次重試`, err);
+        app.innerHTML = '<p class="loading">☁️ 雲端有點忙，正在重試……</p>';
+        await new Promise((r) => setTimeout(r, attempt * 2000));
+      }
+    }
   },
 
   async refresh() {

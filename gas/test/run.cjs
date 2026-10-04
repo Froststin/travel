@@ -2,7 +2,7 @@
  * 執行：node gas/test/run.cjs
  */
 const H = require('./harness.cjs');
-const { ctx, run, props, sent, flags, writes, sheets, cache, files } = H;
+const { ctx, run, props, sent, flags, writes, sheets, cache, files, lockLog } = H;
 
 // 走和正式環境一樣的入口（doPost → ensureSchema_ → handleWebhook_）
 function hook() {
@@ -259,10 +259,18 @@ flags.finmindBanned = true;
 run('jpyRate_.memo = undefined; fetchReferenceRate_.memo = undefined');
 let fx = api('rate', {}, '').rate;
 check('FinMind 被封鎖時改用國際參考匯率並記下原因', fx.source === '國際參考匯率' && fx.rate === 0.2019 && fx.note.includes('ip banned'), JSON.stringify(fx));
+let calls = flags.finmindCalls;
+run('jpyRate_.memo = undefined; fetchReferenceRate_.memo = undefined');
+api('rate', {}, '');
+check('FinMind 失敗後 6 小時內不再問', flags.finmindCalls === calls && Number(props.FINMIND_FAILED_AT) > 0);
 check('網站回報離譜的匯率會被拒絕', api('reportRate', { rate: { rate: 0.5, date: '2026-10-28' } }).accepted === false);
 check('網站回報合理的臺銀匯率', api('reportRate', { rate: { rate: 0.2044, date: '2026-10-28' } }).accepted === true);
 fx = api('rate', {}, '').rate;
 check('之後改用網站回報的臺銀匯率', fx.source === '臺灣銀行現金賣出' && fx.rate === 0.2044, JSON.stringify(fx));
+delete props.FINMIND_FAILED_AT;
+calls = flags.finmindCalls;
+run('jpyRate_.memo = undefined');
+check('有網站回報的匯率時不問 FinMind', api('rate', {}, '').rate.rate === 0.2044 && flags.finmindCalls === calls);
 check('回報匯率需要登入', api('reportRate', { rate: { rate: 0.2044, date: '2026-10-28' } }, '').status === 401);
 flags.finmindBanned = false;
 run('jpyRate_.memo = undefined');
@@ -509,6 +517,15 @@ check('預設快速按鈕有「匯出」', say('今天').quick.some((q) => q.act
 r = say('所有旅程');
 const exportBtn = JSON.stringify(r.msgs).match(/\{\\"a\\":\\"export\\",\\"id\\":\\"([\w-]+)\\"\}/);
 check('旅程卡片有「匯出 PDF」按鈕，按了會匯出', exportBtn && postback({ a: 'export', id: exportBtn[1] }).text.includes('已匯出'), JSON.stringify(r.msgs).slice(0, 300));
+// 產生 PDF 這種慢的事要在放掉鎖之後才做，不能卡住其他人的存檔
+lockLog.length = 0;
+say('匯出');
+check('匯出：PDF 在鎖外面產生', lockLog.includes('pdf') && lockLog.lastIndexOf('unlock') < lockLog.indexOf('pdf'), lockLog.join(','));
+flags.lockBusy = true;
+res = api('list', {});
+r = say('今天');
+flags.lockBusy = false;
+check('拿不到鎖時回 503，機器人也會回覆請稍後再試', res.status === 503 && res.error.includes('稍後再試') && r.text.includes('稍後再試'), `${JSON.stringify(res)} ${r.text}`);
 flags.failPdf = true;
 r = say('匯出');
 flags.failPdf = false;

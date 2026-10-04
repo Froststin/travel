@@ -1,7 +1,8 @@
 /* ============================================================
  * 日幣匯率：臺灣銀行現金賣出（FinMind 每日整理），抓不到時用國際參考匯率
- * FinMind 常封鎖 Google 的共用 IP，所以網站會在使用者的瀏覽器直接查，
- * 再回報給這裡（reportRate_，與國際匯率比對過才採用）。大致即可。
+ * FinMind 常封鎖 Google 的共用 IP（或回得很慢），所以網站會在使用者的瀏覽器直接查，
+ * 再回報給這裡（reportRate_，與國際匯率比對過才採用）；這裡優先用回報的，沒有才自己問 FinMind。
+ * 查匯率要連外部網站，可能很慢：一律在拿鎖之前先查好（warmRates_），不要卡住其他人的存檔。
  * ============================================================ */
 
 const RATE_CACHE_KEY = 'rate_JPY_TWD_v2';
@@ -14,7 +15,8 @@ function jpyRate_() {
   if (hit) return (jpyRate_.memo = JSON.parse(hit));
   let rate = null;
   const errors = [];
-  for (const fetcher of [fetchBotCashRate_, reportedRate_, fetchReferenceRate_]) {
+  // 網站回報的臺銀匯率優先：FinMind 對 Google 的 IP 不是封鎖就是回得很慢，能不問就不問
+  for (const fetcher of [reportedRate_, fetchBotCashRate_, fetchReferenceRate_]) {
     try {
       rate = fetcher();
       if (rate) break;
@@ -34,7 +36,20 @@ function jpyRate_() {
   return (jpyRate_.memo = rate);
 }
 
+const FINMIND_RETRY_MS = 6 * 3600 * 1000; // FinMind 失敗後多久內不再問
+
 function fetchBotCashRate_() {
+  const failedAt = Number(prop_('FINMIND_FAILED_AT') || 0);
+  if (Date.now() - failedAt < FINMIND_RETRY_MS) throw new Error('FinMind 最近查詢失敗，暫時略過');
+  try {
+    return fetchFinMind_();
+  } catch (err) {
+    PropertiesService.getScriptProperties().setProperty('FINMIND_FAILED_AT', String(Date.now()));
+    throw err;
+  }
+}
+
+function fetchFinMind_() {
   const start = Utilities.formatDate(new Date(Date.now() - 14 * 86400000), TZ, 'yyyy-MM-dd');
   const token = prop_('FINMIND_TOKEN'); // 選填：Google 的共用 IP 容易撞到免登入的次數上限
   const res = UrlFetchApp.fetch(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanExchangeRate&data_id=JPY&start_date=${start}`, {
@@ -81,6 +96,15 @@ function fetchReferenceRate_() {
   const rate = data.rates && Number(data.rates.TWD);
   if (!rate) return null;
   return (fetchReferenceRate_.memo = { rate: Math.round(rate * 10000) / 10000, date: Utilities.formatDate(new Date(data.time_last_update_unix * 1000), TZ, 'yyyy-MM-dd'), source: '國際參考匯率' });
+}
+
+/** 在拿鎖之前先把匯率查好（結果會記在這次執行裡），失敗也沒關係 */
+function warmRates_() {
+  try {
+    jpyRate_();
+  } catch (err) {
+    console.warn('匯率預先讀取失敗', err);
+  }
 }
 
 /* ---------- 換算（rate 由呼叫端傳入，方便測試） ---------- */

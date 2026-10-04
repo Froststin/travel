@@ -189,7 +189,11 @@ let lockHeld_ = false;
 function withLock_(fn) {
   if (lockHeld_) return fn(); // 已在鎖內（例如機器人事件中又呼叫需要鎖的函式）
   const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  try {
+    lock.waitLock(20000);
+  } catch (err) {
+    throw apiError_(503, '系統正在忙，請稍後再試一次'); // 網站收到 503 會自動重試
+  }
   lockHeld_ = true;
   try {
     return fn();

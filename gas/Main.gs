@@ -49,6 +49,7 @@ function handleApi_(body) {
 
   switch (body.action) {
     case 'reportRate':
+      fetchReferenceRate_(); // 連外部網站，先查好再拿鎖
       return { accepted: withLock_(() => reportRate_(body.rate)) };
 
     case 'list':
