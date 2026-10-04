@@ -483,12 +483,13 @@ st = shopTrip();
 const day2 = st.days['2026-10-29'];
 Object.assign(st.places[0], { geo: 'ok', lat: 35.7134031, lng: 139.7955261, area: '臺東區', geoName: '淺草寺', activityId: day2[0].id });
 Object.assign(st.places[2], { geo: 'ok', lat: 35.7163, lng: 139.7714, area: '臺東區', geoName: '上野動物園' });
-Object.assign(st.places[1], { geo: 'none' });
+Object.assign(st.places[1], { geo: 'none', address: '  東京都墨田區押上1-1-2  ', mapUrl: 'javascript:alert(1)' });
+Object.assign(st.places[2], { mapUrl: 'https://maps.app.goo.gl/abc123' });
 Object.assign(st.places[3], { geo: 'ok', lat: 999, lng: 139, area: '壞資料', activityId: 'nope' });
 res = api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
 st = shopTrip();
 check('API：待去清單存回定位結果並清理不合法的資料', res.ok && st.places[0].geo === 'ok' && st.places[0].lat === 35.713403 && st.places[0].activityId === day2[0].id
-  && st.places[1].geo === 'none' && st.places[3].geo === '' && st.places[3].lat === '' && st.places[3].area === '' && st.places[3].activityId === '', JSON.stringify(st.places));
+  && st.places[1].geo === 'none' && st.places[1].address === '東京都墨田區押上1-1-2' && st.places[1].mapUrl === '' && st.places[2].mapUrl === 'https://maps.app.goo.gl/abc123' && st.places[3].geo === '' && st.places[3].lat === '' && st.places[3].area === '' && st.places[3].activityId === '', JSON.stringify(st.places));
 r = say('待去清單');
 check('待去清單：依區域分組並標示已排入', r.text.includes('【臺東區】') && r.text.includes('✅ 淺草寺（已排入 Day 2）') && r.text.includes('・ 上野動物園') && r.text.includes('【還沒整理】') && r.text.includes('4 個，已排入行程 1 個'), r.text);
 r = say('不去 晴空塔、火星');

@@ -300,6 +300,8 @@ function sanitizePlaces_(list, actIds) {
       return {
         id: cleanId_(p.id) || Utilities.getUuid(),
         name: str_(p.name, 80).trim(),
+        address: str_(p.address, 200).trim(), // Google 地圖用的地址（空＝用名稱搜尋）
+        mapUrl: cleanUrl_(p.mapUrl),          // Google 地圖分享連結（選填）
         geo: ok ? 'ok' : (p.geo === 'none' ? 'none' : ''),
         lat: ok ? Math.round(lat * 1e6) / 1e6 : '',
         lng: ok ? Math.round(lng * 1e6) / 1e6 : '',

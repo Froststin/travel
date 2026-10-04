@@ -164,8 +164,8 @@ function buildStaticHtml(t, photos = new Map()) {
     <section id="places">
       <h2>📍 想去（還沒排進行程）</h2>
       <ul class="check">
-        ${pg.groups.map((g) => `<li><b>${esc(g.label)}一帶</b>：${g.items.map((p) => `<a href="${esc(mapUrl(p.name))}">${esc(p.name)}</a>`).join('、')}</li>`).join('')}
-        ${[...pg.pending, ...pg.missing].length ? `<li>${pg.groups.length ? '<b>其他</b>：' : ''}${[...pg.pending, ...pg.missing].map((p) => `<a href="${esc(mapUrl(p.name))}">${esc(p.name)}</a>`).join('、')}</li>` : ''}
+        ${pg.groups.map((g) => `<li><b>${esc(g.label)}一帶</b>：${g.items.map((p) => `<a href="${esc(placeMapUrl(p))}">${esc(p.name)}</a>`).join('、')}</li>`).join('')}
+        ${[...pg.pending, ...pg.missing].length ? `<li>${pg.groups.length ? '<b>其他</b>：' : ''}${[...pg.pending, ...pg.missing].map((p) => `<a href="${esc(placeMapUrl(p))}">${esc(p.name)}</a>`).join('、')}</li>` : ''}
       </ul>
     </section>` : '';
 

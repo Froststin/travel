@@ -1115,7 +1115,7 @@ function normalizeTrip(raw) {
       ? raw.places.filter((p) => p && typeof p.name === 'string' && p.name.trim()).slice(0, 100).map((p) => {
         const ok = p.geo === 'ok' && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)) && p.lat !== '' && p.lng !== '';
         return {
-          id: uid(), name: str(p.name, 80).trim(), geo: ok ? 'ok' : (p.geo === 'none' ? 'none' : ''),
+          id: uid(), name: str(p.name, 80).trim(), address: str(p.address, 200).trim(), mapUrl: cleanUrl(p.mapUrl), geo: ok ? 'ok' : (p.geo === 'none' ? 'none' : ''),
           lat: ok ? Number(p.lat) : '', lng: ok ? Number(p.lng) : '', area: ok ? str(p.area, 40) : '', geoName: ok ? str(p.geoName, 80) : '',
           activityId: newIds.get(p.activityId) || '',
         };
@@ -1338,13 +1338,7 @@ document.addEventListener('click', (e) => {
       break;
     case 'edit-place': {
       const p = t?.places?.find((x) => x.id === el.dataset.id);
-      const name = p && (prompt('地點名稱（改了會重新定位）', p.name) || '').trim().slice(0, 80);
-      if (p && name && name !== p.name) {
-        Object.assign(p, { name, geo: '', lat: '', lng: '', area: '', geoName: '' });
-        commitTrip(t);
-        renderTrip(t);
-        toast('已改名，按「整理」重新定位');
-      }
+      if (p) openPlaceDialog(p);
       break;
     }
     case 'delete-place': {

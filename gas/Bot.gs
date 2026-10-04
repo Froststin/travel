@@ -570,7 +570,7 @@ function cmdPlacesAdd_(ctx, body) {
   const fresh = names.filter((n) => !have.has(n));
   if (!names.length) return say_(ctx, textMsg_('想去哪裡呢？例如：想去 淺草寺、晴空塔'));
   if (trip.places.length + fresh.length > MAX_PLACES) return say_(ctx, textMsg_(`待去清單最多 ${MAX_PLACES} 個地方。`));
-  fresh.forEach((name) => trip.places.push({ id: Utilities.getUuid(), name, geo: '', lat: '', lng: '', area: '', geoName: '', activityId: '' }));
+  fresh.forEach((name) => trip.places.push({ id: Utilities.getUuid(), name, address: '', mapUrl: '', geo: '', lat: '', lng: '', area: '', geoName: '', activityId: '' }));
   if (fresh.length) saveTrip_(ctx.userId, trip);
   const lines = [fresh.length ? `📍 已加入「${trip.name}」的待去清單：${fresh.join('、')}` : '這些地方都已經在待去清單裡了。'];
   if (names.length > fresh.length && fresh.length) lines.push(`（已經有的：${names.filter((n) => have.has(n)).join('、')}）`);
