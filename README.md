@@ -78,7 +78,7 @@
 | `gas/Line.gs` | LINE API 呼叫 |
 | `gas/Export.gs` | 匯出 PDF 到 Google 雲端硬碟 |
 | `gas/Setup.gs` | 初始設定與圖文選單 |
-| `gas/richmenu.png` | 圖文選單圖片（2500×1686） |
+| `gas/richmenu-v2.png` | 圖文選單圖片（2500×1686，上排 3 格、下排 4 格）。改選單時把 `Config.gs` 的 `RICHMENU_VERSION` 加 1、圖片換成對應檔名，部署後會自動重建 |
 | `gas/test/run.cjs` | 本機測試：`node gas/test/run.cjs` |
 
 ### 安全性

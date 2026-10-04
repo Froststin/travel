@@ -114,6 +114,17 @@ const ctx = {
         const id = url.split('/').pop();
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ displayName: `Name-${id}` }) };
       }
+      if (url.endsWith('.png')) {
+        return { getResponseCode: () => (flags.menuImageMissing ? 404 : 200), getBlob: () => ({ getBytes: () => [1, 2, 3] }) };
+      }
+      if (url.includes('/richmenu/') && url.includes('/content')) {
+        sent.push({ url, body: null });
+        return { getResponseCode: () => 200, getContentText: () => '{}' };
+      }
+      if (url.endsWith('/v2/bot/richmenu')) {
+        sent.push({ url, body: JSON.parse(opt.payload) });
+        return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ richMenuId: `menu-${sent.length}` }) };
+      }
       if (url.includes('/content')) {
         return { getResponseCode: () => 200, getBlob: () => ({ getContentType: () => 'image/jpeg', setName() { return this; } }) };
       }

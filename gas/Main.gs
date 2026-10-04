@@ -7,7 +7,7 @@
  * ============================================================ */
 
 function doGet() {
-  return ContentService.createTextOutput('旅程手帖 API 運作中');
+  return ContentService.createTextOutput(`旅程手帖 API 運作中（圖文選單 v${prop_('RICHMENU_VERSION') || '1'}，程式 v${RICHMENU_VERSION}）`);
 }
 
 function doPost(e) {
@@ -22,12 +22,14 @@ function doPost(e) {
     const key = prop_('WEBHOOK_KEY');
     if (!key || e.parameter.key !== key) return ContentService.createTextOutput('forbidden');
     ensureSchema_();
+    ensureRichMenu_();
     handleWebhook_(body);
     return ContentService.createTextOutput('ok');
   }
 
   try {
     ensureSchema_();
+    ensureRichMenu_();
     return json_(Object.assign({ ok: true }, handleApi_(body)));
   } catch (err) {
     if (!err.status) console.error(err);

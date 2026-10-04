@@ -49,6 +49,25 @@ function api(action, payload, token = 'good:U1') {
   return JSON.parse(run('doPost(__req)').s);
 }
 
+/* ---------- 圖文選單：版本不同時自動重建 ---------- */
+const menuCreates = () => sent.filter((s) => s.url.endsWith('/v2/bot/richmenu'));
+flags.menuImageMissing = true;
+api('list', {});
+check('圖文選單：圖片還抓不到時不建立、也不影響使用', menuCreates().length === 0 && !props.RICHMENU_VERSION && api('list', {}).ok);
+flags.menuImageMissing = false;
+api('list', {});
+check('圖文選單：失敗後 10 分鐘內不重試', menuCreates().length === 0);
+props.RICHMENU_TRIED_AT = String(Date.now() - 11 * 60 * 1000);
+api('list', {});
+const menu = menuCreates()[0] && menuCreates()[0].body;
+check('圖文選單：自動重建成 7 格，含「匯出」', menuCreates().length === 1 && menu.areas.length === 7 && props.RICHMENU_VERSION === '2'
+  && menu.areas.some((a) => a.action.text === '匯出' && a.bounds.x === 1250 && a.bounds.y === 843 && a.bounds.width === 625)
+  && menu.areas.reduce((s, a) => s + a.bounds.width * a.bounds.height, 0) === 2500 * 1686, JSON.stringify(menu));
+check('圖文選單：有上傳圖片並設為預設', sent.some((s) => /richmenu\/menu-\d+\/content$/.test(s.url)) && sent.some((s) => /user\/all\/richmenu\/menu-\d+$/.test(s.url)));
+api('list', {});
+check('圖文選單：已是最新版就不再重建', menuCreates().length === 1);
+sent.length = 0;
+
 /* ---------- 解析 ---------- */
 const P = (code) => run(code);
 const c0 = { today: '2026-10-29', trips: [], trip: { startDate: '2026-10-28', endDate: '2026-10-30' } };

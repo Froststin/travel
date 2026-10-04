@@ -1,8 +1,23 @@
 /* ============================================================
  * 初始設定：在 Apps Script 編輯器裡手動執行
  *  1. setup()         建立試算表、照片資料夾、Webhook 金鑰；有 token 時順便建立圖文選單
- *  2. setupRichMenu() 單獨重建圖文選單（改過圖片或按鈕時）
+ *  2. setupRichMenu() 單獨重建圖文選單（平常不用手動執行：RICHMENU_VERSION 變了會自動重建）
  * ============================================================ */
+
+/** 圖文選單版本不同時自動重建一次；失敗不影響正常使用，10 分鐘後再試 */
+function ensureRichMenu_() {
+  if (prop_('RICHMENU_VERSION') === RICHMENU_VERSION || !prop_('CHANNEL_ACCESS_TOKEN')) return;
+  if (Date.now() - Number(prop_('RICHMENU_TRIED_AT') || 0) < 10 * 60 * 1000) return;
+  withLock_(() => {
+    if (prop_('RICHMENU_VERSION') === RICHMENU_VERSION) return;
+    PropertiesService.getScriptProperties().setProperty('RICHMENU_TRIED_AT', String(Date.now()));
+    try {
+      setupRichMenu();
+    } catch (err) {
+      console.error(`圖文選單重建失敗：${err && err.message}`);
+    }
+  });
+}
 
 function setup() {
   const props = PropertiesService.getScriptProperties();
@@ -36,31 +51,44 @@ function setup() {
 }
 
 function setupRichMenu() {
-  const cell = (col, row) => ({ x: [0, 833, 1667][col], y: row * 843, width: col === 1 ? 834 : 833, height: 843 });
+  // 上排 3 格、下排 4 格
+  const top = (col) => ({ x: [0, 833, 1667][col], y: 0, width: col === 1 ? 834 : 833, height: 843 });
+  const bottom = (col) => ({ x: col * 625, y: 843, width: 625, height: 843 });
+  // 先確認圖片抓得到，再建立選單，避免留下沒有圖片的空選單
+  const img = UrlFetchApp.fetch(RICHMENU_IMAGE_URL, { muteHttpExceptions: true });
+  if (img.getResponseCode() !== 200) throw new Error(`抓不到圖文選單圖片（${img.getResponseCode()}）：${RICHMENU_IMAGE_URL}`);
   const menu = {
     size: { width: 2500, height: 1686 },
     selected: true,
     name: '旅程手帖選單',
     chatBarText: '旅程選單',
     areas: [
-      { bounds: cell(0, 0), action: { type: 'message', text: '今天' } },
-      { bounds: cell(1, 0), action: { type: 'message', text: '明天' } },
-      { bounds: cell(2, 0), action: { type: 'message', text: '所有旅程' } },
-      { bounds: cell(0, 1), action: { type: 'message', text: '日誌' } },
-      { bounds: cell(1, 1), action: { type: 'uri', uri: LIFF_URL } },
-      { bounds: cell(2, 1), action: { type: 'message', text: '說明' } },
+      { bounds: top(0), action: { type: 'message', text: '今天' } },
+      { bounds: top(1), action: { type: 'message', text: '明天' } },
+      { bounds: top(2), action: { type: 'message', text: '所有旅程' } },
+      { bounds: bottom(0), action: { type: 'message', text: '日誌' } },
+      { bounds: bottom(1), action: { type: 'uri', uri: LIFF_URL } },
+      { bounds: bottom(2), action: { type: 'message', text: '匯出' } },
+      { bounds: bottom(3), action: { type: 'message', text: '說明' } },
     ],
   };
   const res = lineApi_('richmenu', menu);
   if (res.getResponseCode() !== 200) throw new Error(`建立圖文選單失敗：${res.getContentText()}`);
   const id = JSON.parse(res.getContentText()).richMenuId;
 
-  const image = UrlFetchApp.fetch(RICHMENU_IMAGE_URL).getBlob();
   const up = lineFetch_(`https://api-data.line.me/v2/bot/richmenu/${id}/content`, {
-    method: 'post', contentType: 'image/png', payload: image.getBytes(),
+    method: 'post', contentType: 'image/png', payload: img.getBlob().getBytes(),
   });
-  if (up.getResponseCode() !== 200) throw new Error(`上傳圖文選單圖片失敗：${up.getContentText()}`);
-  lineApi_(`user/all/richmenu/${id}`, null, 'post');
+  if (up.getResponseCode() !== 200) {
+    lineApi_(`richmenu/${id}`, null, 'delete'); // 不留半成品
+    throw new Error(`上傳圖文選單圖片失敗：${up.getContentText()}`);
+  }
+  const set = lineApi_(`user/all/richmenu/${id}`, null, 'post');
+  if (set.getResponseCode() !== 200) {
+    lineApi_(`richmenu/${id}`, null, 'delete');
+    throw new Error(`套用圖文選單失敗：${set.getContentText()}`);
+  }
+  PropertiesService.getScriptProperties().setProperty('RICHMENU_VERSION', RICHMENU_VERSION);
 
   // 刪除舊的選單
   const list = JSON.parse(lineApi_('richmenu/list', null, 'get').getContentText()).richmenus || [];
