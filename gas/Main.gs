@@ -1,6 +1,7 @@
 /* ============================================================
  * 進入點
  *  - LINE Webhook：POST  <網頁應用程式網址>?src=line&key=<WEBHOOK_KEY>
+ *  - 投資日報推播：POST  <網頁應用程式網址>?src=invest&key=<INVEST_PUSH_KEY>（見 Invest.gs）
  *  - 網站 API：   POST  <網頁應用程式網址>（text/plain 的 JSON，附 LIFF ID token）
  * Apps Script 無法讀取 HTTP header，因此 LINE 簽章改用網址上的 WEBHOOK_KEY 驗證；
  * 網站 API 則用 LINE Login 的 ID token 驗證使用者。
@@ -16,6 +17,12 @@ function doPost(e) {
     body = JSON.parse((e.postData && e.postData.contents) || '{}');
   } catch (err) {
     return json_({ ok: false, status: 400, error: '格式錯誤' });
+  }
+
+  if (e.parameter.src === 'invest') {
+    const key = prop_('INVEST_PUSH_KEY');
+    if (!key || e.parameter.key !== key) return ContentService.createTextOutput('forbidden');
+    return json_(investPush_(body));
   }
 
   if (e.parameter.src === 'line') {

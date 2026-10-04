@@ -625,6 +625,64 @@ check('空列太多時自動整理', sheets.Activities.data.length < beforeRows 
 check('整理後內容正確', titles(fresh()[0]) === titles(mkTrip('small', '重來', '2026-11-10', 8)) && JSON.stringify(sheets.Activities.data.filter((r) => r[1] === 'other')) === otherBefore);
 check('別人的旅程仍然讀得到', fresh('U3')[0].days['2026-11-20'].length === 4);
 
+/* ---------- 投資日報（跟投資分析專案共用官方帳號） ---------- */
+const pushes = () => sent.filter((s) => s.url.includes('message/push'));
+function investPost(key, body) {
+  sent.length = 0;
+  ctx.__req = { parameter: { src: 'invest', key }, postData: { contents: JSON.stringify(body) } };
+  return run('doPost(__req)').s;
+}
+function investSheet(name, rowsData) {
+  ctx.__n = name;
+  const sh = run('SpreadsheetApp.openById("x").getSheetByName(__n) || SpreadsheetApp.openById("x").insertSheet(__n)');
+  sh.getRange(1, 1, 1, 1).setValues([['header']]);
+  if (rowsData.length) sh.getRange(2, 1, rowsData.length, rowsData[0].length).setValues(rowsData);
+}
+
+check('投資：沒設定金鑰時推播一律拒絕', investPost('', { text: 'x' }) === 'forbidden' && investPost('anything', { text: 'x' }) === 'forbidden');
+Object.assign(props, { INVEST_PUSH_KEY: 'pk', INVEST_BIND_CODE: 'Code1234', INVEST_SHEET_ID: 'inv', INVEST_USERS: '' });
+check('投資：金鑰錯誤拒絕', investPost('wrong', { text: 'x' }) === 'forbidden' && pushes().length === 0);
+check('投資：還沒人綁定時不推', JSON.parse(investPost('pk', { text: '日報' })).ok === false && pushes().length === 0);
+check('投資：沒綁定的人傳「選股」照舊走旅程手帖', !say('選股').text.includes('📊'));
+check('投資：我的ID 回覆自己的 userId', say('我的ID', 'U9').text.includes('U9'));
+check('投資：代碼錯誤不能綁定', say('綁定投資 Wrong999').text.includes('不正確') && props.INVEST_USERS === '');
+check('投資：代碼正確綁定成功', say('綁定投資 Code1234').text.includes('已綁定') && props.INVEST_USERS === 'U1' && props.INVEST_BIND_CODE === '');
+check('投資：代碼用過就失效', say('綁定投資 Code1234', 'U2').text.includes('已經用過') && props.INVEST_USERS === 'U1');
+
+const pushed = JSON.parse(investPost('pk', { text: '🧪 模擬交易 日報' }));
+check('投資：推播只送給綁定的人', pushed.ok && pushed.sent === 1 && pushes().length === 1 && pushes()[0].body.to === 'U1' && pushes()[0].body.messages[0].text === '🧪 模擬交易 日報');
+check('投資：空內容不推', JSON.parse(investPost('pk', { text: '  ' })).ok === false && pushes().length === 0);
+
+check('投資：還沒有資料時的回覆', say('模擬交易').text.includes('還沒有資料') && say('選股').text.includes('還沒有資料'));
+investSheet('daily_recommendations', [
+  ['2026-10-01', '1', '2330', '台積電', '70', '強烈進場訊號', '2400'],
+  ['2026-10-02', '2', '0050', '元大台灣50', '55.5', '可觀察', '180.5'],
+  ['2026-10-02', '1', '2308', '台達電', '80', '強烈進場訊號', '1885'],
+]);
+investSheet('market_trend_snapshot', [['2026-10-02', '15', '5', '56.92', '中性']]);
+const stockText = say('選股').text;
+check('投資：選股只列最新一天並依名次排序', stockText.includes('📊 選股 2026-10-02') && stockText.indexOf('2308 台達電') < stockText.indexOf('0050 元大台灣50') && !stockText.includes('台積電'), stockText);
+check('投資：選股帶氛圍', stockText.includes('中性（5/15'));
+investSheet('daily_crypto_recommendations', [['2026-10-04', '1', 'TRX', '波場幣', '53.4', '可觀察', '10.8599']]);
+check('投資：虛擬貨幣', say('虛擬貨幣').text.includes('TRX 波場幣') && say('幣').text.includes('10.8599'));
+investSheet('sim_equity', [
+  ['2026-10-04', '1000000', '0', '1000000', '0', '0', '0', '0', '0'],
+  ['2026-10-05', '600000.5', '412345', '1012345.5', '1.235', '1.235', '2', '-500', '12845.5'],
+]);
+investSheet('sim_positions', [
+  ['1', '股票', '2330', '台積電', '2026-10-02', '79.4', '2026-10-05', '2500', '79', '197781', '2300', '2750', 'open', '', '', '', '', '', ''],
+  ['2', '股票', '2317', '鴻海', '2026-09-01', '70', '2026-09-02', '250', '800', '200285', '230', '275', 'closed', '2026-09-10', '230', '停損', '183211', '-17074', '-8.52'],
+]);
+investSheet('sim_orders', [
+  ['1', 't', '股票', '2330', '台積電', 'buy', 'filled', '2026-10-02', '79.4'],
+  ['2', 't', '股票', '2383', '台光電', 'buy', 'pending', '2026-10-05', '73.3'],
+]);
+const simText = say('模擬交易').text;
+check('投資：模擬交易取最新一天的權益', simText.includes('🧪 模擬交易 2026-10-05') && simText.includes('總權益 1,012,346') && simText.includes('累計 +1.24%'), simText);
+check('投資：模擬交易列出持有、待成交、最近出場', simText.includes('2330 台積電｜2026-10-05 進 2,500') && simText.includes('2383 台光電｜73.3 分') && simText.includes('2317 鴻海｜2026-09-10 停損｜-8.52%') && simText.includes('沒有實際下單'), simText);
+check('投資：沒綁定的旅伴查不到投資資料', !say('模擬交易', 'U2').text.includes('總權益') && !say('選股', 'U2').text.includes('台達電'));
+check('投資：旅遊指令不受影響', say('說明').text.includes('旅程手帖') && say('投資').text.includes('投資日報'));
+
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');
 const path = require('path');

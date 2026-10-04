@@ -120,6 +120,7 @@ function handleText_(ctx, rawText) {
 
   if (/^(說明|幫助|help|指令|怎麼用|使用說明|功能|\?)$/i.test(text)) return say_(ctx, textMsg_(HELP_TEXT));
   if (/^(取消|算了|不用了|不要)$/.test(text)) return say_(ctx, textMsg_('好的，已取消。'));
+  if (handleInvestText_(ctx, text)) return;
   if ((m = text.match(/^(?:匯出|備份|離線版?|下載|pdf)(?:\s*(?:行程|旅程|pdf))?\s*(.*)$/i)) && text.length <= 30) return cmdExport_(ctx, m[1]);
   if (text.length <= 15 && /網站|網頁|連結|網址|link|開啟|打開/i.test(text)) return cmdSite_(ctx);
   if ((m = text.match(/^(?:新旅程|新增旅程|建立旅程)\s*([\s\S]*)$/))) return cmdNewTrip_(ctx, m[1]);
