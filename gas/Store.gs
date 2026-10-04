@@ -105,10 +105,15 @@ function str_(v, max) {
   return typeof v === 'string' ? v.slice(0, max || 500) : '';
 }
 
+// id 會被網站放進 HTML 屬性與網址，只接受英數、底線、連字號
+function cleanId_(v) {
+  return typeof v === 'string' && /^[\w-]{1,64}$/.test(v) ? v : '';
+}
+
 function sanitizeActivity_(a) {
   if (!a || typeof a.title !== 'string' || !a.title.trim()) return null;
   return {
-    id: str_(a.id, 64) || Utilities.getUuid(),
+    id: cleanId_(a.id) || Utilities.getUuid(),
     time: /^\d{2}:\d{2}$/.test(a.time) ? a.time : '',
     endTime: /^\d{2}:\d{2}$/.test(a.time) && /^\d{2}:\d{2}$/.test(a.endTime) && a.endTime >= a.time ? a.endTime : '',
     travelMin: Math.min(1440, Math.max(0, Math.round(Number(a.travelMin) || 0))),
@@ -128,6 +133,7 @@ function sanitizeTrip_(raw) {
   if (!raw || typeof raw !== 'object') return null;
   if (!isValidDate_(raw.startDate) || !isValidDate_(raw.endDate) || raw.endDate < raw.startDate) return null;
   if (daysBetween_(raw.startDate, raw.endDate) + 1 > 60) return null;
+  if (raw.id != null && raw.id !== '' && !cleanId_(raw.id)) return null;
   const valid = new Set(dateRange_(raw.startDate, raw.endDate));
   const days = {};
   for (const [d, list] of Object.entries(raw.days || {})) {
@@ -139,10 +145,10 @@ function sanitizeTrip_(raw) {
     ? raw.packing
       .filter((p) => p && typeof p.text === 'string')
       .slice(0, 300)
-      .map((p) => ({ id: str_(p.id, 64) || Utilities.getUuid(), text: str_(p.text, 80), done: !!p.done }))
+      .map((p) => ({ id: cleanId_(p.id) || Utilities.getUuid(), text: str_(p.text, 80), done: !!p.done }))
     : [];
   return {
-    id: str_(raw.id, 64) || Utilities.getUuid(),
+    id: cleanId_(raw.id) || Utilities.getUuid(),
     name: str_(raw.name, 60) || '未命名旅程',
     destination: str_(raw.destination, 60),
     startDate: raw.startDate,
@@ -377,7 +383,7 @@ function addJournal_(userId, entry) {
     tripId = t ? t.id : '';
   }
   const row = {
-    id: str_(entry.id, 64) || Utilities.getUuid(),
+    id: cleanId_(entry.id) || Utilities.getUuid(),
     userId,
     date,
     time: /^\d{2}:\d{2}$/.test(entry.time) ? entry.time : nowTime_(),

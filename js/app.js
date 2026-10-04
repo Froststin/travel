@@ -411,7 +411,7 @@ function tripCard(t) {
   const count = allActivities(t).length;
   const status = tripStatus(t);
   return `
-    <a class="trip-card" href="#/trip/${t.id}">
+    <a class="trip-card" href="#/trip/${esc(t.id)}">
       <span class="badge badge-${status.kind}">${status.text}</span>
       <h2>${esc(t.name)}</h2>
       <p class="muted">📍 ${esc(t.destination || '未設定目的地')}</p>
@@ -506,8 +506,8 @@ function activityItem(a, date, currency) {
       <div class="act-side">
         ${a.cost ? `<span class="act-cost">${showMoney(a.cost, currency)}</span>` : ''}
         <div class="act-actions no-print">
-          <button class="icon-btn" data-action="edit-activity" data-date="${date}" data-id="${a.id}" title="編輯" aria-label="編輯">✎</button>
-          <button class="icon-btn" data-action="delete-activity" data-date="${date}" data-id="${a.id}" title="刪除" aria-label="刪除">✕</button>
+          <button class="icon-btn" data-action="edit-activity" data-date="${esc(date)}" data-id="${esc(a.id)}" title="編輯" aria-label="編輯">✎</button>
+          <button class="icon-btn" data-action="delete-activity" data-date="${esc(date)}" data-id="${esc(a.id)}" title="刪除" aria-label="刪除">✕</button>
         </div>
       </div>
     </li>`;
@@ -568,7 +568,7 @@ function budgetView(t, dates) {
           }).join('')}
         </tbody>
       </table>
-      ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map(rateNote).join('；')}</p>` : ''}
+      ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
     </section>`;
 }
 
@@ -588,8 +588,8 @@ function packingView(t) {
         <ul class="packing-list">
           ${items.map((i) => `
             <li class="${i.done ? 'done' : ''}">
-              <label><input type="checkbox" data-action="toggle-pack" data-id="${i.id}" ${i.done ? 'checked' : ''}><span>${esc(i.text)}</span></label>
-              <button class="icon-btn no-print" data-action="delete-pack" data-id="${i.id}" title="刪除" aria-label="刪除">✕</button>
+              <label><input type="checkbox" data-action="toggle-pack" data-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.text)}</span></label>
+              <button class="icon-btn no-print" data-action="delete-pack" data-id="${esc(i.id)}" title="刪除" aria-label="刪除">✕</button>
             </li>`).join('')}
         </ul>` : '<p class="muted">清單是空的，可以自己新增，或加入常用物品。</p>'}
       <button class="btn no-print" data-action="pack-preset">＋ 加入常用物品</button>

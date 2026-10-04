@@ -335,6 +335,16 @@ check('API：主人用成員代號移除', api('removeMember', { tripId: shared.
 r = say('退出旅程');
 check('主人不能退出自己的旅程', r.text.includes('你是「京都」的主人'), r.text);
 
+const evilId = '"><img src=x onerror=alert(1)>';
+const mine = api('list', {}).trips[0];
+check('API：旅程 id 含特殊字元會被拒絕', api('saveTrip', { trip: { ...mine, id: evilId } }).status === 400);
+mine.days[mine.startDate] = [{ id: evilId, title: '測試' }];
+mine.packing = [{ id: evilId, text: '測試', done: false }];
+res = api('saveTrip', { trip: mine, baseUpdatedAt: mine.updatedAt });
+check('API：行程與行李的 id 含特殊字元會換成新的', res.ok && !JSON.stringify(api('list', {}).trips[0]).includes('onerror'), JSON.stringify(res));
+res = api('addJournal', { entry: { id: evilId, date: mine.startDate, text: '測試' } });
+check('API：日誌 id 含特殊字元會換成新的', res.ok && /^[\w-]+$/.test(res.entry.id), JSON.stringify(res));
+
 check('API deleteTrip', api('deleteTrip', { id: trip.id }).ok && api('list', {}).trips.length === 0);
 
 console.log(failures ? `\n${failures} 項失敗` : '\n全部通過');
