@@ -49,6 +49,10 @@ const HELP_TEXT = [
   '・成員、退出旅程、移除成員 名字',
   '',
   '【網站】輸入「網站」取得連結，可以編輯完整行程',
+  '',
+  '【匯出備份】',
+  '・匯出／匯出 京都 → 產生 PDF 連結＋網站連結',
+  '　網站打不開時還能看；建議把 PDF 下載到手機',
 ].join('\n');
 
 function handleWebhook_(body) {
@@ -104,6 +108,7 @@ function handleText_(ctx, rawText) {
 
   if (/^(說明|幫助|help|指令|怎麼用|使用說明|功能|\?)$/i.test(text)) return say_(ctx, textMsg_(HELP_TEXT));
   if (/^(取消|算了|不用了|不要)$/.test(text)) return say_(ctx, textMsg_('好的，已取消。'));
+  if ((m = text.match(/^(?:匯出|備份|離線版?|下載|pdf)(?:\s*(?:行程|旅程|pdf))?\s*(.*)$/i)) && text.length <= 30) return cmdExport_(ctx, m[1]);
   if (text.length <= 15 && /網站|網頁|連結|網址|link|開啟|打開/i.test(text)) return cmdSite_(ctx);
   if ((m = text.match(/^(?:新旅程|新增旅程|建立旅程)\s*([\s\S]*)$/))) return cmdNewTrip_(ctx, m[1]);
   if (/路線/.test(text) && text.length <= 12) return cmdRoute_(ctx, text.replace(/路線|導航/g, ''));
@@ -238,6 +243,43 @@ function cmdSite_(ctx) {
   return say_(ctx, textMsg_(lines.join('\n')));
 }
 
+/** 匯出：PDF 連結＋網站連結，再附一份純文字行程（留在聊天室裡，什麼都連不上時也看得到） */
+function cmdExport_(ctx, name) {
+  const trip = pickTrip_(ctx, name);
+  if (!trip) return say_(ctx, textMsg_('還沒有旅程可以匯出喔。'));
+  return exportTrip_(ctx, trip);
+}
+
+function exportTrip_(ctx, trip) {
+  const site = tripLiffUrl_(trip.id);
+  const overview = tripOverviewText_(trip);
+  let res;
+  try {
+    res = exportTripPdf_(ctx.userId, trip);
+  } catch (err) {
+    console.error(err && err.stack ? err.stack : err);
+    return say_(ctx, [
+      textMsg_(`⚠️ PDF 產生失敗（${err.message}），先給你網站連結和純文字版：\n🌐 ${site}`),
+      textMsg_(overview, [qUri_('開啟網站', site), qMsg_('再試一次', `匯出 ${trip.name}`), ...defaultQuick_()]),
+    ]);
+  }
+  return say_(ctx, [
+    textMsg_([
+      `📤「${trip.name}」已匯出（${res.exportedAt} 的內容）`,
+      '',
+      '📄 PDF（網站打不開也能看）：',
+      res.url,
+      '',
+      '🌐 網站（最新內容）：',
+      site,
+      '',
+      '※ PDF 是當下的備份，行程改過要再匯出一次，舊連結會失效。建議打開後下載到手機，沒網路也能看。',
+      '※ 知道 PDF 連結的人都能看，請只傳給旅伴。',
+    ].join('\n')),
+    textMsg_(overview, [qUri_('📄 開啟 PDF', res.url), qUri_('🌐 開啟網站', site), ...defaultQuick_()]),
+  ]);
+}
+
 function cmdTrips_(ctx) {
   const trips = ctx.trips;
   if (!trips.length) return say_(ctx, textMsg_('還沒有旅程喔。輸入「新旅程 京都 10/28-10/30」就能建立。'));
@@ -248,11 +290,9 @@ function cmdTrips_(ctx) {
 function cmdBudget_(ctx) {
   if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
   const trip = activeTrip_(ctx.trips, ctx.today);
-  const all = Object.values(trip.days).flat();
   const cur = trip.currency;
-  // 全部換算成台幣
-  const shopSum = (trip.shopping || []).reduce((s, x) => s + twdOrRaw_(x.price, cur), 0); // 購物清單的金額
-  const spent = all.reduce((s, a) => s + twdOrRaw_(a.cost, cur) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)), 0) + shopSum;
+  const b = budgetSummary_(trip); // 全部換算成台幣，含購物清單
+  const spent = b.spent;
   const lines = [`💰 ${trip.name} 預算`];
   if (trip.budget) {
     const remain = twdOrRaw_(trip.budget, cur) - spent;
@@ -261,18 +301,12 @@ function cmdBudget_(ctx) {
   } else {
     lines.push(`預估花費：${ntd_(spent)}（尚未設定總預算）`);
   }
-  const byCat = { shopping: shopSum };
-  all.forEach((a) => {
-    byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, cur);
-    byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
-  });
-  const cats = Object.entries(byCat).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  const cats = b.cats;
   if (cats.length) {
     lines.push('', '分類：');
     cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${ntd_(v)}`));
   }
-  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur))])].filter((c) => c && c !== 'TWD');
-  const missing = foreign.filter((c) => !rateFor_(c));
+  const { foreign, missing } = b;
   if (missing.length) lines.push('', `⚠️ 目前查不到 ${missing.join('、')} 的匯率，這些金額暫時直接當成台幣加總，數字不準，請稍後再查一次。`);
   if (foreign.length) lines.push('', `※ 金額皆換算成台幣：${foreign.map(rateText_).join('；')}`);
   return say_(ctx, textMsg_(lines.join('\n')));
@@ -667,6 +701,11 @@ function handlePostback_(ctx, data) {
     const saved = CacheService.getScriptCache().get(`pb_${p.k}`);
     if (!saved) return say_(ctx, textMsg_('這個選項已經過期了，請重新輸入一次要修改的內容。'));
     return applyEdit_(ctx, p.id, JSON.parse(saved));
+  }
+  if (p.a === 'export') {
+    const trip = ctx.trips.find((t) => t.id === p.id);
+    if (!trip) return say_(ctx, textMsg_('這個旅程已經不存在了。'));
+    return exportTrip_(ctx, trip);
   }
   if (p.a === 'trip') {
     const trip = ctx.trips.find((t) => t.id === p.id);

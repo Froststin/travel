@@ -133,6 +133,7 @@ function tripListFlex_(trips, today) {
         contents: [
           { type: 'button', style: 'primary', color: '#0f766e', height: 'sm', action: { type: 'postback', label: '看行程', data: JSON.stringify({ a: 'trip', id: t.id }), displayText: `${t.name} 的行程` } },
           { type: 'button', style: 'link', height: 'sm', action: { type: 'uri', label: '開啟網站', uri: tripLiffUrl_(t.id) } },
+          { type: 'button', style: 'link', height: 'sm', action: { type: 'postback', label: '匯出 PDF', data: JSON.stringify({ a: 'export', id: t.id }), displayText: `匯出 ${t.name}` } },
         ],
       },
     };

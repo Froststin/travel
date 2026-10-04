@@ -53,6 +53,7 @@ Object.entries(sheets).forEach(([name, sh]) => sh.getRange(1, 1, 1, 1).setValues
 const props = { SHEET_ID: 'sheet1', PHOTO_FOLDER_ID: 'folder1', WEBHOOK_KEY: 'k', CHANNEL_ACCESS_TOKEN: 'tok', ALLOWED_USERS: '' };
 const sent = [];
 const cache = new Map();
+const files = [];
 
 const ctx = {
   console,
@@ -60,6 +61,10 @@ const ctx = {
   Utilities: {
     formatDate: (d, tz, fmt) => (fmt === 'yyyy-MM-dd' ? flags.today : '14:05'),
     getUuid: () => crypto.randomUUID(),
+    newBlob: (content, type, name) => {
+      const blob = { content, type, name, getAs(t) { if (flags.failPdf) throw new Error('轉檔失敗'); return { ...blob, type: t, setName(n) { this.name = n; return this; } }; } };
+      return blob;
+    },
     computeDigest: (a, s) => [...crypto.createHash('sha256').update(s).digest()],
     base64EncodeWebSafe: (b) => Buffer.from(b).toString('base64url'),
     base64Encode: (b) => Buffer.from(b).toString('base64'),
@@ -74,8 +79,19 @@ const ctx = {
     remove(k) { cache.delete(k); },
   }) },
   DriveApp: {
-    getFolderById: () => ({ createFile: () => ({ getId: () => `file-${sent.length}` }) }),
-    getFileById: () => ({ setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) }),
+    Access: { ANYONE_WITH_LINK: 'ANYONE_WITH_LINK' },
+    Permission: { VIEW: 'VIEW' },
+    createFolder: (name) => ({ getId: () => `folder-${name}` }),
+    // 建立的檔案都記在 files，測試可以檢查內容、分享設定與是否被丟到垃圾桶
+    getFolderById: (folderId) => ({ createFile: (blob) => {
+      const file = { id: `file-${files.length}-${sent.length}`, folderId, blob, sharing: null, trashed: false,
+        getId() { return this.id; }, getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; },
+        setSharing(a, p) { this.sharing = `${a}/${p}`; return this; }, setTrashed(v) { this.trashed = v; return this; },
+        getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) };
+      files.push(file);
+      return file;
+    } }),
+    getFileById: (id) => files.find((f) => f.id === id) || { setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) },
   },
   ContentService: { createTextOutput: (s) => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
   UrlFetchApp: {
@@ -118,4 +134,4 @@ const run = (code) => vm.runInContext(code, ctx);
 run('var __clearCache = () => { for (const k in tableCache_) delete tableCache_[k]; }');
 
 
-module.exports = { ctx, run, sheets, props, sent, flags, writes, cache };
+module.exports = { ctx, run, sheets, props, sent, flags, writes, cache, files };

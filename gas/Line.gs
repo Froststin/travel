@@ -68,5 +68,5 @@ function qUri_(label, uri) {
 }
 
 function defaultQuick_() {
-  return [qMsg_('今天'), qMsg_('明天'), qMsg_('所有旅程'), qMsg_('日誌'), qUri_('開啟網站', LIFF_URL), qMsg_('說明')];
+  return [qMsg_('今天'), qMsg_('明天'), qMsg_('所有旅程'), qMsg_('日誌'), qMsg_('📤 匯出', '匯出'), qUri_('開啟網站', LIFF_URL), qMsg_('說明')];
 }

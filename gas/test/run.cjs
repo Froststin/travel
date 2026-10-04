@@ -2,7 +2,7 @@
  * 執行：node gas/test/run.cjs
  */
 const H = require('./harness.cjs');
-const { ctx, run, props, sent, flags, writes, sheets, cache } = H;
+const { ctx, run, props, sent, flags, writes, sheets, cache, files } = H;
 
 // 走和正式環境一樣的入口（doPost → ensureSchema_ → handleWebhook_）
 function hook() {
@@ -441,6 +441,34 @@ check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s
 say('不買 舊版的東西');
 api('deleteTrip', { id: kyoto.id }, 'good:U2');
 check('退出旅程後主人的購物清單不受影響', JSON.stringify(tripOf('U1').shopping) === mineBefore);
+
+/* ---------- 匯出 PDF ---------- */
+say('買 今天 匯出測試用 120');
+say('新增 今天 20:00 <b>壞標題</b> @居酒屋 $800');
+const pdfs = () => files.filter((f) => f.blob && f.blob.type === 'application/pdf');
+r = say('匯出');
+let pdf = pdfs().pop();
+check('匯出：回覆 PDF 連結、網站連結與純文字行程', r.msgs.length === 2 && r.msgs[0].text.includes(pdf.getUrl()) && r.msgs[0].text.includes('https://liff.line.me/') && r.msgs[1].text.includes('【Day 1')
+  && r.quick.some((q) => q.action.type === 'uri' && q.action.uri === pdf.getUrl()), r.text.slice(0, 300));
+check('匯出：PDF 設成知道連結的人可檢視，放在匯出資料夾', pdf.sharing === 'ANYONE_WITH_LINK/VIEW' && pdf.folderId === 'folder-旅程手帖匯出' && /^京都_.*\.pdf$/.test(pdf.blob.name), `${pdf.sharing} ${pdf.folderId} ${pdf.blob.name}`);
+const html = pdf.blob.content;
+check('匯出：內容有每日行程、預算、購物清單、行李', ['<h1>京都</h1>', 'Day 1・', 'Day 2・', '預估花費', '我的購物清單', '匯出測試用', 'NT$120'].every((x) => html.includes(x)), html.slice(0, 400));
+check('匯出：內容會跳脫 HTML', html.includes('&lt;b&gt;壞標題&lt;/b&gt;') && !html.includes('<b>壞標題</b>'));
+say('買 今天 U2私人的東西', 'U2joiner');
+r = say('匯出 京都');
+const pdf2 = pdfs().pop();
+check('再匯出一次：舊檔丟到垃圾桶、給新連結', pdf2 !== pdf && pdf.trashed === true && pdf2.trashed === false && r.msgs[0].text.includes(pdf2.getUrl()));
+check('預設快速按鈕有「匯出」', say('今天').quick.some((q) => q.action.text === '匯出'));
+r = say('所有旅程');
+const exportBtn = JSON.stringify(r.msgs).match(/\{\\"a\\":\\"export\\",\\"id\\":\\"([\w-]+)\\"\}/);
+check('旅程卡片有「匯出 PDF」按鈕，按了會匯出', exportBtn && postback({ a: 'export', id: exportBtn[1] }).text.includes('已匯出'), JSON.stringify(r.msgs).slice(0, 300));
+flags.failPdf = true;
+r = say('匯出');
+flags.failPdf = false;
+check('PDF 產生失敗時仍給網站連結與純文字行程', r.msgs[0].text.includes('PDF 產生失敗') && r.msgs[0].text.includes('https://liff.line.me/') && r.msgs[1].text.includes('【Day 1'), r.text.slice(0, 200));
+check('別人的旅程不能匯出', postback({ a: 'export', id: exportBtn[1] }, 'U9').text.includes('已經不存在'));
+say('刪除 壞標題'); postback({ a: 'del', id: shopTrip().days['2026-10-29'].find((a) => a.title.includes('壞標題')).id });
+say('不買 匯出測試用');
 
 /* ---------- 花費幣別、過長的修改內容 ---------- */
 r = say('新增 今天 15:00 龍安寺 400円');
