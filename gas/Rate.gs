@@ -128,6 +128,20 @@ function rateFor_(cur) {
   return referenceRates_()[cur] || null;
 }
 
+/**
+ * 在 LINE 上輸入的花費有寫幣別時，換算成旅程的幣別再記錄（行程花費一律以旅程幣別儲存）
+ * @return {{cost: number, note: string}} note 是要附在回覆後面的說明
+ */
+function costInCurrency_(amount, from, to) {
+  const n = Math.max(0, Number(amount) || 0);
+  const target = to || 'TWD';
+  if (!n || !from || from === target) return { cost: n, note: '' };
+  const twd = toTWD_(n, from);
+  const r = rateFor_(target);
+  if (twd == null || !r || !r.rate) return { cost: n, note: `\n⚠️ 查不到 ${from} 的匯率，先直接記成 ${n}，請到網站確認金額` };
+  return { cost: Math.round((twd / r.rate) * 100) / 100, note: `（由 ${fmtMoney_(n, from)} 換算）` };
+}
+
 /* ---------- 金額：一律以台幣為主 ---------- */
 function ntd_(n) {
   return `NT$${Math.round(Number(n) || 0).toLocaleString()}`;

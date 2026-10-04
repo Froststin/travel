@@ -59,7 +59,7 @@ function qMsg_(label, text) {
 function qPostback_(label, data, displayText) {
   return {
     type: 'action',
-    action: { type: 'postback', label: label.slice(0, 20), data: JSON.stringify(data).slice(0, 300), displayText: displayText || label },
+    action: { type: 'postback', label: label.slice(0, 20), data: JSON.stringify(data), displayText: displayText || label },
   };
 }
 

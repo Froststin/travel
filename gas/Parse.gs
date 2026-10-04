@@ -196,10 +196,16 @@ function extractTime_(text) {
 }
 
 /* ---------- 花費、地點 ---------- */
+// 幣別：NT$／台幣＝TWD、¥／円／日圓／日幣＝JPY、韓元＝KRW；只寫 $、元、塊時 currency 為空＝旅程的幣別
 function extractCost_(text) {
-  const m = text.match(/(?:NT\$|\$)\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(?:元|塊|円|日圓|日幣|台幣|韓元)/i);
+  const m = text.match(/(NT\$|\$|¥|￥)\s*(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?)\s*(元|塊|円|日圓|日幣|台幣|臺幣|韓元)/i);
   if (!m) return null;
-  return { cost: Number(m[1] || m[2]), rest: text.replace(m[0], ' ').trim() };
+  const unit = (m[1] || m[4]).toUpperCase();
+  let currency = '';
+  if (/NT\$|台幣|臺幣/.test(unit)) currency = 'TWD';
+  else if (/¥|￥|円|日圓|日幣/.test(unit)) currency = 'JPY';
+  else if (unit === '韓元') currency = 'KRW';
+  return { cost: Number(m[2] || m[3]), currency, rest: text.replace(m[0], ' ').trim() };
 }
 
 function extractLocation_(text) {

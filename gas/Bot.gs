@@ -16,6 +16,7 @@ const HELP_TEXT = [
   '・新增 明天 09:00-12:00 清水寺 移動15分',
   '・新增 明天 13:00 伏見稻荷 電車15分 車資230円',
   '　（車資寫「円／日幣」是日幣、「元／台幣」是台幣，沒寫單位當日幣）',
+  '　（花費寫「400円／¥400」會換算成旅程的幣別；只寫 $400 就是旅程的幣別）',
   '',
   '【修改／刪除】',
   '・改 清水寺 11:30（有結束時間會一起平移）',
@@ -258,6 +259,8 @@ function cmdBudget_(ctx) {
     cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${ntd_(v)}`));
   }
   const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur))])].filter((c) => c && c !== 'TWD');
+  const missing = foreign.filter((c) => !rateFor_(c));
+  if (missing.length) lines.push('', `⚠️ 目前查不到 ${missing.join('、')} 的匯率，這些金額暫時直接當成台幣加總，數字不準，請稍後再查一次。`);
   if (foreign.length) lines.push('', `※ 金額皆換算成台幣：${foreign.map(rateText_).join('；')}`);
   return say_(ctx, textMsg_(lines.join('\n')));
 }
@@ -324,12 +327,13 @@ function cmdAdd_(ctx, body) {
   const trip = ctx.trips.find((x) => x.startDate <= date && date <= x.endDate);
   if (!trip) return say_(ctx, textMsg_(`${prettyDate_(date)} 沒有旅程喔，要先建立：新旅程 名稱 ${date.slice(5).replace('-', '/')}-…`));
 
+  const cc = costInCurrency_(c ? c.cost : 0, c ? c.currency : '', trip.currency);
   const activity = {
     id: Utilities.getUuid(), time: t ? t.time : '', endTime: t ? t.endTime : '', travelMin: tr ? tr.travelMin : 0,
     travelMode: tr ? tr.travelMode : '', travelCost: tr && tr.travelCost != null ? tr.travelCost : 0,
     travelCostCurrency: tr && tr.travelCost != null ? tr.travelCostCurrency : '', title: title.slice(0, 100),
     category: guessCategory_(`${title} ${loc ? loc.location : ''}`), location: loc ? loc.location.slice(0, 200) : '',
-    mapUrl: u ? cleanUrl_(u.url) : '', cost: c ? c.cost : 0, notes: '',
+    mapUrl: u ? cleanUrl_(u.url) : '', cost: cc.cost, notes: '',
   };
   (trip.days[date] = trip.days[date] || []).push(activity);
   sortDay_(trip.days[date]);
@@ -337,7 +341,7 @@ function cmdAdd_(ctx, body) {
   const list = trip.days[date];
   const issue = scheduleIssue_(list[list.indexOf(activity) - 1], activity);
   return say_(ctx, textMsg_(
-    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`,
+    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}${cc.note}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`,
     [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/')), qPostback_('復原', { a: 'del', id: activity.id }, '復原剛才的新增'), ...defaultQuick_()],
   ));
 }
@@ -391,7 +395,7 @@ function cmdEdit_(ctx, body) {
   const t = extractTimeRange_(rest);
   if (t) { changes.time = t.time; if (t.endTime) changes.endTime = t.endTime; rest = t.rest; }
   const c = extractCost_(rest);
-  if (c) { changes.cost = c.cost; rest = c.rest; }
+  if (c) { changes.cost = c.cost; if (c.currency) changes.costCur = c.currency; rest = c.rest; }
   const loc = extractLocation_(rest);
   if (loc) { changes.location = loc.location; rest = loc.rest; }
   const d = base ? extractDate_(rest, { today: ctx.today, trips: ctx.trips, trip: base }) : null;
@@ -404,8 +408,17 @@ function cmdEdit_(ctx, body) {
   const hits = searchActivities_(ctx.trips, kw, 0.6);
   if (!hits.length) return say_(ctx, textMsg_(`找不到跟「${kw}」有關的行程。`));
   if (hits.length === 1) return applyEdit_(ctx, hits[0].activity.id, changes);
+  const ref = editRef_(changes);
   return say_(ctx, textMsg_(`找到 ${hits.length} 筆，要改哪一個？`, hits.slice(0, 12).map((h) =>
-    qPostback_(`${h.date.slice(5).replace('-', '/')} ${h.activity.title}`, { a: 'edit', id: h.activity.id, p: changes }, `修改 ${h.activity.title}`))));
+    qPostback_(`${h.date.slice(5).replace('-', '/')} ${h.activity.title}`, Object.assign({ a: 'edit', id: h.activity.id }, ref), `修改 ${h.activity.title}`))));
+}
+
+// LINE 的 postback 資料上限 300 字：修改內容太長（例如帶了地圖網址）時先放進快取，按鈕只帶代號
+function editRef_(changes) {
+  if (JSON.stringify(changes).length <= 180) return { p: changes };
+  const k = Utilities.getUuid().slice(0, 8);
+  CacheService.getScriptCache().put(`pb_${k}`, JSON.stringify(changes), 21600);
+  return { k };
 }
 
 function applyEdit_(ctx, id, changes) {
@@ -429,7 +442,12 @@ function applyEdit_(ctx, id, changes) {
     activity.travelCost = Math.max(0, Number(changes.travelCost) || 0);
     activity.travelCostCurrency = CURRENCY_CODES.includes(changes.travelCostCurrency) ? changes.travelCostCurrency : '';
   }
-  if (changes.cost != null) activity.cost = Math.max(0, Number(changes.cost) || 0);
+  let costNote = '';
+  if (changes.cost != null) {
+    const cc = costInCurrency_(changes.cost, CURRENCY_CODES.includes(changes.costCur) ? changes.costCur : '', trip.currency);
+    activity.cost = cc.cost;
+    costNote = cc.note;
+  }
   if (changes.location) activity.location = String(changes.location).slice(0, 200);
   if (changes.mapUrl && cleanUrl_(changes.mapUrl)) activity.mapUrl = cleanUrl_(changes.mapUrl);
   if (changes.date && changes.date !== date) {
@@ -443,7 +461,7 @@ function applyEdit_(ctx, id, changes) {
   sortDay_(trip.days[date]);
   saveTrip_(ctx.userId, trip);
   const issue = scheduleIssue_(trip.days[date][trip.days[date].indexOf(activity) - 1], activity);
-  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
+  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}${costNote}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
 }
 
 /* ---------- 旅遊日誌 ---------- */
@@ -501,10 +519,15 @@ function handlePostback_(ctx, data) {
   try {
     p = JSON.parse(data);
   } catch (err) {
-    return;
+    return say_(ctx, textMsg_('這個按鈕已經失效了，請重新輸入一次。'));
   }
   if (p.a === 'del') return deleteActivity_(ctx, p.id);
-  if (p.a === 'edit') return applyEdit_(ctx, p.id, p.p || {});
+  if (p.a === 'edit') {
+    if (!p.k) return applyEdit_(ctx, p.id, p.p || {});
+    const saved = CacheService.getScriptCache().get(`pb_${p.k}`);
+    if (!saved) return say_(ctx, textMsg_('這個選項已經過期了，請重新輸入一次要修改的內容。'));
+    return applyEdit_(ctx, p.id, JSON.parse(saved));
+  }
   if (p.a === 'trip') {
     const trip = ctx.trips.find((t) => t.id === p.id);
     if (!trip) return say_(ctx, textMsg_('這個旅程已經不存在了。'));

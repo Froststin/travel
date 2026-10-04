@@ -430,6 +430,8 @@ function removeMember_(ownerId, tripId, member) {
   const target = rows.find((m) => m.tripId === tripId && (m.userId === member || memberKey_(tripId, m.userId) === member));
   if (!target) return null;
   replaceRows_('Members', (m) => m === target, []);
+  // 舊邀請碼作廢，被移除的人不能用同一組再加入；下次邀請會產生新的
+  if (row.inviteCode) replaceRows_('Trips', (t) => t === row, [Object.assign({}, row, { inviteCode: '' })]);
   return target.userId;
 }
 

@@ -52,6 +52,7 @@ Object.entries(sheets).forEach(([name, sh]) => sh.getRange(1, 1, 1, 1).setValues
 
 const props = { SHEET_ID: 'sheet1', PHOTO_FOLDER_ID: 'folder1', WEBHOOK_KEY: 'k', CHANNEL_ACCESS_TOKEN: 'tok', ALLOWED_USERS: '' };
 const sent = [];
+const cache = new Map();
 
 const ctx = {
   console,
@@ -66,7 +67,12 @@ const ctx = {
   },
   SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet(n)) }) },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
-  CacheService: { getScriptCache: () => ({ get: () => null, put() {}, remove() {} }) },
+  // 只有 postback 暫存（pb_ 開頭）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
+  CacheService: { getScriptCache: () => ({
+    get: (k) => (k.startsWith('pb_') && cache.has(k) ? cache.get(k) : null),
+    put(k, v) { cache.set(k, v); },
+    remove(k) { cache.delete(k); },
+  }) },
   DriveApp: {
     getFolderById: () => ({ createFile: () => ({ getId: () => `file-${sent.length}` }) }),
     getFileById: () => ({ setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) }),
@@ -112,4 +118,4 @@ const run = (code) => vm.runInContext(code, ctx);
 run('var __clearCache = () => { for (const k in tableCache_) delete tableCache_[k]; }');
 
 
-module.exports = { ctx, run, sheets, props, sent, flags, writes };
+module.exports = { ctx, run, sheets, props, sent, flags, writes, cache };

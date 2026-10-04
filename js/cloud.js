@@ -7,12 +7,18 @@
 
 const API_URL = (window.TRAVEL_CONFIG && window.TRAVEL_CONFIG.apiUrl) || '';
 const RELOAD_FLAG = 'travel-planner:auth-reloaded';
+const UNSYNCED_KEY = 'travel-planner:unsynced';
 
 const Cloud = {
   enabled: false,
   pending: 0,
   queue: Promise.resolve(),
   photoCache: new Map(),
+  // 還沒成功存到雲端的旅程（id → 旅程）：同步失敗會自動重試，也會記在這台裝置，重新整理後補傳
+  unsynced: new Map(),
+  saving: new Map(), // id → 排隊中的存檔次數
+  retryDelay: 0,
+  retryTimer: null,
 
   async call(action, payload = {}) {
     const res = await fetch(API_URL, {
@@ -34,7 +40,7 @@ const Cloud = {
       .then(fn)
       .then(() => {
         this.pending--;
-        if (!this.pending) this.setStatus('saved');
+        if (!this.pending) this.setStatus(this.unsynced.size ? 'error' : 'saved');
       })
       .catch((err) => {
         this.pending--;
@@ -43,15 +49,88 @@ const Cloud = {
     return this.queue;
   },
 
-  saveTrip(trip) {
+  saveTrip(trip, isRetry = false) {
+    this.unsynced.set(trip.id, trip);
+    this.saving.set(trip.id, (this.saving.get(trip.id) || 0) + 1);
+    this.persistUnsynced();
     return this.enqueue(async () => {
-      const r = await this.call('saveTrip', { trip, baseUpdatedAt: trip.updatedAt || '' });
-      trip.updatedAt = r.updatedAt;
+      let saved = false;
+      try {
+        const r = await this.call('saveTrip', { trip, baseUpdatedAt: trip.updatedAt || '' });
+        trip.updatedAt = r.updatedAt;
+        saved = true;
+        this.retryDelay = 0;
+      } catch (err) {
+        throw Object.assign(err, { tripId: trip.id, quiet: isRetry });
+      } finally {
+        const left = this.saving.get(trip.id) - 1;
+        this.saving.set(trip.id, left);
+        // 後面沒有同一個旅程的存檔在排隊，才算同步完成
+        if (saved && !left && this.unsynced.get(trip.id) === trip) this.unsynced.delete(trip.id);
+        this.persistUnsynced();
+      }
     });
   },
 
   deleteTrip(id) {
+    this.unsynced.delete(id);
+    this.persistUnsynced();
     return this.enqueue(() => this.call('deleteTrip', { id }));
+  },
+
+  userKey() {
+    try {
+      return (liff.getDecodedIDToken() || {}).sub || '';
+    } catch (err) {
+      return '';
+    }
+  },
+
+  persistUnsynced() {
+    try {
+      if (!this.unsynced.size) localStorage.removeItem(UNSYNCED_KEY);
+      else localStorage.setItem(UNSYNCED_KEY, JSON.stringify({ user: this.userKey(), trips: [...this.unsynced.values()] }));
+    } catch (err) { /* 存不了就只靠自動重試 */ }
+  },
+
+  /** 登入後把上次沒同步成功的修改補傳；雲端在這期間被改過的就放棄（以雲端為準） */
+  restoreUnsynced() {
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(UNSYNCED_KEY));
+    } catch (err) { /* 忽略 */ }
+    if (!saved || !Array.isArray(saved.trips) || !saved.user || saved.user !== this.userKey()) return;
+    let dropped = 0;
+    for (const local of saved.trips) {
+      if (!local || typeof local.id !== 'string' || !local.days) continue;
+      const i = state.trips.findIndex((t) => t.id === local.id);
+      const server = state.trips[i];
+      if (server ? server.updatedAt === local.updatedAt : !local.updatedAt) {
+        if (server) state.trips[i] = Object.assign(local, { role: server.role, members: server.members });
+        else state.trips.push(local);
+        this.saveTrip(local);
+      } else {
+        dropped++;
+      }
+    }
+    if (dropped) toast('上次有未同步的修改，但雲端已經有更新的版本，已改用雲端的資料');
+    if (!this.unsynced.size) this.persistUnsynced();
+  },
+
+  scheduleRetry() {
+    if (this.retryTimer || !this.unsynced.size) return;
+    this.retryDelay = Math.min(60000, (this.retryDelay || 2500) * 2);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.retryUnsynced();
+    }, this.retryDelay);
+  },
+
+  retryUnsynced() {
+    if (!this.enabled) return;
+    for (const [id, trip] of this.unsynced) {
+      if (!this.saving.get(id)) this.saveTrip(trip, true);
+    }
   },
 
   addJournal(entry) {
@@ -101,7 +180,8 @@ const Cloud = {
       document.getElementById('site-footer').textContent = '資料已同步到雲端，LINE 官方帳號也能查詢與修改。';
       sessionStorage.removeItem(RELOAD_FLAG);
       this.setStatus('saved');
-      if (!data.trips.length && local.trips.length
+      this.restoreUnsynced();
+      if (!state.trips.length && local.trips.length
         && confirm(`雲端還沒有旅程。要把這台裝置上的 ${local.trips.length} 個旅程上傳到雲端嗎？`)) {
         for (const t of local.trips) {
           delete t.updatedAt;
@@ -128,7 +208,14 @@ const Cloud = {
     try {
       const data = await this.call('list');
       if (this.pending || document.querySelector('dialog[open]')) return;
-      state.trips = data.trips;
+      // 還沒同步成功的旅程保留這台裝置上的版本；已經存過、雲端卻沒有的代表被刪除或被移出了
+      const ids = new Set(data.trips.map((t) => t.id));
+      for (const [id, t] of this.unsynced) {
+        if (!ids.has(id) && t.updatedAt) this.unsynced.delete(id);
+      }
+      this.persistUnsynced();
+      state.trips = data.trips.map((t) => this.unsynced.get(t.id) || t)
+        .concat([...this.unsynced.values()].filter((t) => !ids.has(t.id)));
       state.journal = data.journal;
       const y = window.scrollY;
       route();
@@ -142,11 +229,16 @@ const Cloud = {
     console.warn('雲端同步錯誤', err);
     if (err.status === 401) return this.relogin();
     if (err.status === 409) {
-      toast('這個旅程剛在 LINE 上被更新，已重新載入，請再操作一次');
+      if (err.tripId) {
+        this.unsynced.delete(err.tripId);
+        this.persistUnsynced();
+      }
+      toast('這個旅程剛在其他地方被更新，已重新載入，請再操作一次');
       return this.refresh();
     }
     this.setStatus('error');
-    toast(`同步失敗：${err.message}`);
+    if (!err.quiet) toast(this.unsynced.size ? '同步失敗，修改先留在這台裝置，會自動重試' : `同步失敗：${err.message}`);
+    this.scheduleRetry();
   },
 
   relogin() {
@@ -177,7 +269,7 @@ const Cloud = {
     if (!el) return;
     el.hidden = false;
     el.dataset.state = s;
-    el.textContent = { syncing: '☁️ 同步中…', saved: '☁️ 已同步', error: '⚠️ 同步失敗' }[s] || '';
+    el.textContent = { syncing: '☁️ 同步中…', saved: '☁️ 已同步', error: this.unsynced.size ? '⚠️ 尚未同步，自動重試中' : '⚠️ 同步失敗' }[s] || '';
   },
 };
 
@@ -262,4 +354,11 @@ function openTripFromQuery() {
 // 切回網頁時重新載入，拿到在 LINE 上做的修改
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && Cloud.enabled && !Cloud.pending) Cloud.refresh();
+});
+
+// 網路恢復時馬上補傳
+window.addEventListener('online', () => {
+  clearTimeout(Cloud.retryTimer);
+  Cloud.retryTimer = null;
+  Cloud.retryUnsynced();
 });

@@ -540,3 +540,5 @@ textarea { resize: vertical; }
 .fare-input { display: flex; gap: 4px; }
 .fare-input input { flex: 1; min-width: 60px; }
 .fare-input select { flex: 0 0 auto; width: 104px; }
+
+.rate-warn { color: var(--danger); font-weight: 600; }

@@ -5,7 +5,10 @@
  * 資料結構（存在 localStorage）：
  *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, notes,
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }], createdAt } ] }
- *   activity = { id, time, title, category, location, cost, notes }
+ *   activity = { id, time, endTime, title, category, location, mapUrl, cost, notes,
+ *                travelMode, travelMin, travelCost, travelCostCurrency }  // travel* 是「從上一站過來」
+ *   cost 用旅程幣別；travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
+ * 用 LINE 登入後改以雲端為準（js/cloud.js），localStorage 只留未登入時的資料與尚未同步的修改
  * ============================================================ */
 
 const STORAGE_KEY = 'travel-planner:v1';
@@ -217,10 +220,21 @@ function toTWD(amount, cur) {
   return r && r.rate ? n * r.rate : null;
 }
 
-// 加總用：換不了就先用原數字
+// 加總用：換不了就先用原數字（畫面會用 missingRates 提醒這個總額不準）
 function twdOrRaw(amount, cur) {
   const v = toTWD(amount, cur);
   return v == null ? Number(amount) || 0 : v;
+}
+
+// 這些行程裡有金額、但還沒有匯率的幣別
+function missingRates(list, currency, budget) {
+  const used = new Set();
+  if (Number(budget)) used.add(currency);
+  for (const a of list) {
+    if (Number(a.cost)) used.add(currency);
+    if (Number(a.travelCost)) used.add(fareCurrency(a, currency));
+  }
+  return [...used].filter((c) => c && c !== 'TWD' && !(fx.rates[c] && fx.rates[c].rate));
 }
 
 // 顯示：台幣只顯示台幣；外幣顯示「NT$47（¥230）」
@@ -472,7 +486,7 @@ function planView(t, dates) {
             <h3>${prettyDate(d)}</h3>
           </div>
           <div class="day-meta">
-            ${total ? `<span class="muted">${ntd(total)}</span>` : ''}
+            ${total ? `<span class="muted"${missingRates(list, t.currency).length ? ' title="還沒取得匯率，外幣暫時直接當成台幣加總"' : ''}>${ntd(total)}${missingRates(list, t.currency).length ? '？' : ''}</span>` : ''}
             ${route ? `<a class="btn btn-sm no-print" href="${esc(route)}" target="_blank" rel="noopener" title="用 Google 地圖導航這天的所有地點">🧭 路線</a>` : ''}
             <button class="btn btn-sm btn-line no-print" data-action="share-day" data-date="${d}" title="把這天的行程分享到 LINE">LINE</button>
             <button class="btn btn-sm no-print" data-action="add-activity" data-date="${d}">＋ 新增</button>
@@ -534,7 +548,10 @@ function budgetView(t, dates) {
     .sort((a, b) => b.sum - a.sum);
   const maxCat = Math.max(1, ...byCat.map((x) => x.sum));
 
+  const missing = missingRates(all, t.currency, t.budget);
+
   return `
+    ${missing.length ? `<p class="panel rate-warn">⚠️ 還沒取得 ${esc(missing.join('、'))} 的匯率，這些金額暫時直接當成台幣加總，下面的數字不準；匯率載入後會自動更正。</p>` : ''}
     <div class="stats">
       <div class="stat"><div class="label">總預算</div><div class="value">${budget ? showMoney(t.budget, t.currency) : '未設定'}</div></div>
       <div class="stat"><div class="label">預估花費</div><div class="value">${ntd(spent)}</div></div>

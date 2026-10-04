@@ -2,7 +2,7 @@
  * 執行：node gas/test/run.cjs
  */
 const H = require('./harness.cjs');
-const { ctx, run, props, sent, flags, writes, sheets } = H;
+const { ctx, run, props, sent, flags, writes, sheets, cache } = H;
 
 // 走和正式環境一樣的入口（doPost → ensureSchema_ → handleWebhook_）
 function hook() {
@@ -65,6 +65,8 @@ check('下午三點半', P('extractTime_("下午三點半 喝咖啡").time') ===
 check('10:05', P('extractTime_("10:05 清水寺").time') === '10:05');
 check('$400', P('extractCost_("清水寺 $400").cost') === 400);
 check('500元', P('extractCost_("拉麵 500元").cost') === 500);
+check('花費幣別', P('extractCost_("清水寺 400円").currency') === 'JPY' && P('extractCost_("清水寺 ¥400").currency') === 'JPY'
+  && P('extractCost_("拉麵 NT$300").currency') === 'TWD' && P('extractCost_("清水寺 $400").currency') === '' && P('extractCost_("拉麵 500元").currency') === '');
 check('關鍵字：清水寺幾點', P('keywordOf_("清水寺幾點？")') === '清水寺');
 check('類別：吃什麼', P('queryCategory_("吃什麼").category') === 'food');
 check('猜類別：拉麵', P('guessCategory_("一蘭拉麵")') === 'food');
@@ -328,9 +330,12 @@ r = say('移除成員 Name-U2');
 check('移除成員先確認', r.text.includes('確定要把 Name-U2 移出'), r.text);
 r = postback(JSON.parse(r.quick[0].action.data));
 check('主人移除成員', r.text.includes('已將 Name-U2 移出') && say('今天', 'U2').text.includes('還沒有任何旅程'), r.text);
-say(`加入 ${code}`, 'U2');
+check('被移除後舊邀請碼失效', say(`加入 ${code}`, 'U2').text.includes('找不到邀請碼'));
+const code2 = api('invite', { tripId: shared.id }).code;
+check('重新邀請會換新的邀請碼', /^[A-Z0-9]{6}$/.test(code2) && code2 !== code, code2);
+say(`加入 ${code2}`, 'U2');
 check('API：旅伴刪除旅程＝退出', api('deleteTrip', { id: shared.id }, 'good:U2').result === 'left' && api('list', {}).trips.length === 1);
-say(`加入 ${code}`, 'U2');
+check('自己退出不會換邀請碼', say(`加入 ${code2}`, 'U2').text.includes('已加入'));
 check('API：主人用成員代號移除', api('removeMember', { tripId: shared.id, member: u2key }).ok && api('list', {}, 'good:U2').trips.length === 0);
 r = say('退出旅程');
 check('主人不能退出自己的旅程', r.text.includes('你是「京都」的主人'), r.text);
@@ -344,6 +349,24 @@ res = api('saveTrip', { trip: mine, baseUpdatedAt: mine.updatedAt });
 check('API：行程與行李的 id 含特殊字元會換成新的', res.ok && !JSON.stringify(api('list', {}).trips[0]).includes('onerror'), JSON.stringify(res));
 res = api('addJournal', { entry: { id: evilId, date: mine.startDate, text: '測試' } });
 check('API：日誌 id 含特殊字元會換成新的', res.ok && /^[\w-]+$/.test(res.entry.id), JSON.stringify(res));
+
+/* ---------- 花費幣別、過長的修改內容 ---------- */
+r = say('新增 今天 15:00 龍安寺 400円');
+check('台幣旅程輸入日幣花費會換算', r.text.includes('NT$82') && r.text.includes('由 ¥400 換算') && api('list', {}).trips[0].days['2026-10-29'].find((a) => a.title === '龍安寺').cost === 81.76, r.text);
+r = say('新增 今天 16:00 銀閣寺 $500');
+check('只寫 $ 維持旅程幣別', r.text.includes('NT$500') && !r.text.includes('換算'), r.text);
+r = say('改 龍安寺 1000日幣');
+check('修改花費也會換算', r.text.includes('NT$204') && r.text.includes('由 ¥1,000 換算'), r.text);
+say('新增 今天 17:00 抹茶店A');
+say('新增 今天 18:00 抹茶店B');
+const longUrl = `https://www.google.com/maps/place/${'x'.repeat(300)}`;
+r = say(`改 抹茶店 ${longUrl}`);
+check('多筆結果＋長網址：按鈕資料不超過 300 字', r.quick.length >= 2 && r.quick.filter((q) => q.action.type === 'postback').every((q) => q.action.data.length <= 300 && JSON.parse(q.action.data).k), JSON.stringify(r.quick));
+r = postback(JSON.parse(r.quick[0].action.data));
+check('按下按鈕後套用長網址', r.text.includes('已更新') && api('list', {}).trips[0].days['2026-10-29'].some((a) => a.mapUrl === longUrl), r.text);
+cache.clear();
+r = postback({ a: 'edit', id: 'whatever', k: 'gone' });
+check('暫存過期時會提示重新輸入', r.text.includes('已經過期'), r.text);
 
 check('API deleteTrip', api('deleteTrip', { id: trip.id }).ok && api('list', {}).trips.length === 0);
 
