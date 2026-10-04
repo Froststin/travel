@@ -451,7 +451,10 @@ function toast(msg) {
 }
 
 function download(filename, data) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  downloadBlob(filename, new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -562,7 +565,8 @@ function renderTrip(t) {
       <div class="actions no-print">
         <button class="btn btn-line" data-action="share-line">分享到 LINE</button>
         <button class="btn" data-action="edit-trip">編輯</button>
-        <button class="btn" data-action="export-trip">匯出</button>
+        <button class="btn" data-action="export-trip" title="匯出 JSON 備份檔，可以再匯入">匯出</button>
+        <button class="btn" data-action="export-static" title="匯出成單一 HTML 檔，沒有網路、網站打不開時也能看">離線網頁</button>
         <button class="btn" data-action="print">列印</button>
         <button class="btn btn-danger" data-action="delete-trip">${isTripOwner(t) ? '刪除' : '退出旅程'}</button>
       </div>
@@ -643,7 +647,8 @@ function activityItem(a, date, currency, shopItems = []) {
     </li>`;
 }
 
-function budgetView(t, dates) {
+// 預算的各項數字（全部換算成台幣），預算頁與匯出的離線網頁共用
+function budgetData(t, dates) {
   const all = allActivities(t);
   // 購物清單的金額也算進來，歸在「購物」
   const shopItems = t.shopping || [];
@@ -671,6 +676,11 @@ function budgetView(t, dates) {
   const maxCat = Math.max(1, ...byCat.map((x) => x.sum));
 
   const missing = missingRates(all, t.currency, t.budget, shopItems);
+  return { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing };
+}
+
+function budgetView(t, dates) {
+  const { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing } = budgetData(t, dates);
 
   return `
     ${missing.length ? `<p class="panel rate-warn">⚠️ 還沒取得 ${esc(missing.join('、'))} 的匯率，這些金額暫時直接當成台幣加總，下面的數字不準；匯率載入後會自動更正。</p>` : ''}
@@ -1215,6 +1225,11 @@ document.addEventListener('click', (e) => {
       break;
     case 'share-day':
       if (t) shareToLine(t, [el.dataset.date]);
+      break;
+    case 'export-static':
+      if (!t) break;
+      if (typeof exportStaticSite !== 'function') { toast('網頁有更新，請重新整理後再試一次'); break; }
+      exportStaticSite(t).catch((err) => { console.warn(err); toast(`匯出失敗：${err.message}`); });
       break;
     case 'export-trip':
       if (t) download(`${t.name}.json`, t);
