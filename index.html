@@ -100,6 +100,8 @@
       <p id="shop-multi-hint" class="form-hint muted">一次加好幾樣可以用「、」分開，例如：抹茶粉、八橋</p>
       <label>哪一天買<select name="date"></select></label>
       <label>在哪一站買<select name="activityId"></select></label>
+      <label><span id="shop-price-label">預估金額</span><input type="number" name="price" min="0" step="any" inputmode="decimal" placeholder="0"></label>
+      <p class="form-hint muted">金額會計入預算的「購物」；一次加好幾樣時，每一樣都是這個金額</p>
       <p class="form-hint muted">指定行程後，行程改到別天，這樣東西也會跟著走</p>
       <div class="form-actions">
         <button type="button" class="btn" data-action="close-dialog">取消</button>

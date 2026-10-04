@@ -307,7 +307,7 @@ function syncShopping_(trip) {
   for (const [d, list] of Object.entries(trip.days || {})) list.forEach((a) => { where[a.id] = d; });
   return (trip.shopping || []).map((s) => {
     const d = s.activityId && where[s.activityId];
-    return { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', done: !!s.done };
+    return { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done };
   });
 }
 
@@ -315,9 +315,27 @@ function shoppingOn_(trip, date) {
   return (trip.shopping || []).filter((s) => shopDate_(trip, s) === date);
 }
 
+/**
+ * 「抹茶粉 500円」「八橋 $300」「面膜 250」→ 名稱與金額；金額沒寫幣別就是旅程的幣別
+ * @return {{text: string, cost: number|null, currency: string}}
+ */
+function parseShopItem_(segment) {
+  const s = segment.replace(/\s+/g, ' ').trim();
+  const c = extractCost_(s);
+  if (c) return { text: c.rest.replace(/\s+/g, ' ').trim(), cost: c.cost, currency: c.currency };
+  const m = s.match(/^(.*\S)\s+(\d+(?:\.\d+)?)$/); // 最後空一格接數字
+  if (m) return { text: m[1].trim(), cost: Number(m[2]), currency: '' };
+  return { text: s, cost: null, currency: '' };
+}
+
+// 用「、，,」或換行分開多樣東西；先把 1,000 這種千分位逗號拿掉
+function splitShopItems_(text) {
+  return text.replace(/(\d),(?=\d{3}(?!\d))/g, '$1').split(/[、，,\n]+/).map(parseShopItem_).filter((x) => x.text);
+}
+
 function shopLine_(trip, item) {
   const a = shopActivity_(trip, item);
-  return `${item.done ? '☑' : '☐'} ${item.text}${a ? `（${a.title}）` : ''}`;
+  return `${item.done ? '☑' : '☐'} ${item.text}${Number(item.price) ? ` ${showMoney_(item.price, trip.currency)}` : ''}${a ? `（${a.title}）` : ''}`;
 }
 
 /* ---------- 新旅程：名稱＋日期範圍 ---------- */

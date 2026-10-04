@@ -390,6 +390,27 @@ say('刪除 錦市場'); postback({ a: 'del', id: nishiki.id });
 check('行程被刪掉後，東西留在原本那一天', shopDateOf('面膜') === '2026-10-29', shopDateOf('面膜'));
 function shopDateOf(text) { ctx.__t = shopTrip(); ctx.__s = ctx.__t.shopping.find((s) => s.text === text); return run('shopDate_(__t, __s)'); }
 
+/* ---------- 購物清單金額，計入預算 ---------- */
+check('購物項目解析金額', T('splitShopItems_("抹茶粉 1,000円、八橋 $300，面膜 250、牙刷")').map((x) => `${x.text}:${x.cost}:${x.currency}`).join('|') === '抹茶粉:1000:JPY|八橋:300:|面膜:250:|牙刷:null:');
+const budgetOf = () => Number((say('預算').text.match(/預估花費：NT\$([\d,]+)/) || [])[1].replace(/,/g, ''));
+const shopCat = () => Number(((say('預算').text.match(/購物 NT\$([\d,]+)/) || [])[1] || '0').replace(/,/g, ''));
+const near = (a, b) => Math.abs(a - b) <= 1; // 畫面上的金額四捨五入到整數
+const before = budgetOf();
+const shopBefore = shopCat();
+r = say('買 今天 茶碗 1,000円、和菓子 300');
+check('買：金額寫日幣會換算、沒寫幣別用旅程幣別', r.text.includes('☐ 茶碗 NT$204（由 ¥1,000 換算）') && r.text.includes('☐ 和菓子 NT$300') && r.text.includes('已計入預算')
+  && shopTrip().shopping.find((s) => s.text === '茶碗').price === 204.4 && shopTrip().shopping.find((s) => s.text === '和菓子').price === 300, r.text);
+check('購物金額計入預算與購物分類', near(budgetOf() - before, 504.4) && near(shopCat() - shopBefore, 504.4), `${before} → ${budgetOf()}，購物 ${shopBefore} → ${shopCat()}`);
+r = say('購物清單');
+check('購物清單顯示金額與合計', r.text.includes('☐ 茶碗 NT$204') && r.text.includes('預估 NT$504（已計入預算），其中已買 NT$0'), r.text);
+r = say('買到 茶碗 900円');
+check('買到時可以順便改成實際金額', r.text.includes('買到了：茶碗 NT$184（由 ¥900 換算）') && shopTrip().shopping.find((s) => s.text === '茶碗').price === 183.96 && near(budgetOf() - before, 483.96), r.text);
+check('不買之後預算扣回來', say('不買 和菓子').text.includes('拿掉：和菓子') && near(budgetOf() - before, 183.96));
+st = shopTrip();
+st.shopping.find((s) => s.text === '茶碗').price = -5;
+api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
+check('API：購物金額不合法會歸零', shopTrip().shopping.find((s) => s.text === '茶碗').price === 0);
+
 /* ---------- 花費幣別、過長的修改內容 ---------- */
 r = say('新增 今天 15:00 龍安寺 400円');
 check('台幣旅程輸入日幣花費會換算', r.text.includes('NT$82') && r.text.includes('由 ¥400 換算') && api('list', {}).trips[0].days['2026-10-29'].find((a) => a.title === '龍安寺').cost === 81.76, r.text);

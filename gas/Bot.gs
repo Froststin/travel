@@ -31,10 +31,12 @@ const HELP_TEXT = [
   '・新增或修改時貼上 Google 地圖分享連結也可以',
   '',
   '【購物清單】跟著每天的行程走',
-  '・買 明天 抹茶粉、八橋 → 記在那一天',
+  '・買 明天 抹茶粉 500円、八橋 → 記在那一天',
   '・買 面膜 @藥妝店 → 記在那個行程（行程改天會跟著走）',
+  '　（金額會計入預算的「購物」；寫 円／¥ 會換算成旅程的幣別）',
   '・購物清單、明天要買什麼 → 查看',
-  '・買到 抹茶粉、不買 八橋',
+  '・買到 抹茶粉、買到 抹茶粉 480円（順便改成實際金額）',
+  '・不買 八橋',
   '',
   '【旅遊日誌】',
   '・日誌 今天的抹茶超好喝',
@@ -249,7 +251,8 @@ function cmdBudget_(ctx) {
   const all = Object.values(trip.days).flat();
   const cur = trip.currency;
   // 全部換算成台幣
-  const spent = all.reduce((s, a) => s + twdOrRaw_(a.cost, cur) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)), 0);
+  const shopSum = (trip.shopping || []).reduce((s, x) => s + twdOrRaw_(x.price, cur), 0); // 購物清單的金額
+  const spent = all.reduce((s, a) => s + twdOrRaw_(a.cost, cur) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)), 0) + shopSum;
   const lines = [`💰 ${trip.name} 預算`];
   if (trip.budget) {
     const remain = twdOrRaw_(trip.budget, cur) - spent;
@@ -258,7 +261,7 @@ function cmdBudget_(ctx) {
   } else {
     lines.push(`預估花費：${ntd_(spent)}（尚未設定總預算）`);
   }
-  const byCat = {};
+  const byCat = { shopping: shopSum };
   all.forEach((a) => {
     byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, cur);
     byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
@@ -493,6 +496,8 @@ function cmdShopView_(ctx, rest) {
     return say_(ctx, textMsg_(`「${trip.name}」的購物清單還是空的。\n例如：\n買 明天 抹茶粉、八橋\n買 面膜 @藥妝店`, more));
   }
   const lines = [`🛒 ${trip.name} 購物清單：已買 ${all.filter((s) => s.done).length} / ${all.length}`];
+  const total = all.reduce((s, x) => s + twdOrRaw_(x.price, trip.currency), 0);
+  if (total) lines.push(`預估 ${ntd_(total)}（已計入預算），其中已買 ${ntd_(all.filter((s) => s.done).reduce((s, x) => s + twdOrRaw_(x.price, trip.currency), 0))}`);
   if (found && trip.startDate <= found.date && found.date <= trip.endDate) {
     const list = shoppingOn_(trip, found.date);
     lines.push('', `【Day ${daysBetween_(trip.startDate, found.date) + 1}・${prettyDate_(found.date)}】`);
@@ -538,15 +543,21 @@ function cmdShopAdd_(ctx, body) {
       date = d.date;
     }
   }
-  const names = [...new Set(rest.split(/[、，,\n]+/).map((s) => s.replace(/\s+/g, ' ').trim().slice(0, 80)).filter(Boolean))];
-  if (!names.length) return say_(ctx, textMsg_('要買什麼呢？例如：\n買 明天 抹茶粉、八橋\n買 面膜 @藥妝店'));
+  const parsed = splitShopItems_(rest);
+  if (!parsed.length) return say_(ctx, textMsg_('要買什麼呢？例如：\n買 明天 抹茶粉 500円、八橋\n買 面膜 @藥妝店'));
   trip.shopping = trip.shopping || [];
-  if (trip.shopping.length + names.length > MAX_SHOPPING) return say_(ctx, textMsg_(`購物清單最多 ${MAX_SHOPPING} 樣，先把買好的刪掉吧。`));
-  const items = names.map((text) => ({ id: Utilities.getUuid(), text, date, activityId, done: false }));
+  if (trip.shopping.length + parsed.length > MAX_SHOPPING) return say_(ctx, textMsg_(`購物清單最多 ${MAX_SHOPPING} 樣，先把買好的刪掉吧。`));
+  const lines = [];
+  const items = parsed.map((p) => {
+    const cc = costInCurrency_(p.cost || 0, p.currency, trip.currency);
+    const item = { id: Utilities.getUuid(), text: p.text.slice(0, 80), date, activityId, price: cc.cost, done: false };
+    lines.push(`☐ ${item.text}${item.price ? ` ${showMoney_(item.price, trip.currency)}${cc.note}` : ''}`);
+    return item;
+  });
   trip.shopping.push(...items);
   saveTrip_(ctx.userId, trip);
-  const lines = [`🛒 已加入「${trip.name}」的購物清單（${shopWhere_(trip, items[0])}）`];
-  items.forEach((s) => lines.push(`☐ ${s.text}`));
+  lines.unshift(`🛒 已加入「${trip.name}」的購物清單（${shopWhere_(trip, items[0])}）`);
+  if (items.some((s) => s.price)) lines.push('', '金額已計入預算的「購物」。');
   if (missed) lines.push('', `※ 找不到跟「${missed}」有關的行程，先${date ? '記在這一天' : '不指定日期'}。`);
   else if (!date) lines.push('', '※ 沒寫日期，先不指定。可以這樣寫：買 明天 抹茶粉、買 面膜 @藥妝店');
   return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('購物清單'), ...(date ? [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/'))] : []), ...defaultQuick_()]));
@@ -554,18 +565,28 @@ function cmdShopAdd_(ctx, body) {
 
 /** mode：'done' 標記買到、'remove' 從清單拿掉 */
 function cmdShopMark_(ctx, body, mode) {
-  const names = body.split(/[、，,\n]+/).map((s) => s.trim()).filter(Boolean);
+  const wanted = splitShopItems_(body);
   const active = ctx.trips.length ? activeTrip_(ctx.trips, ctx.today) : null;
   const changed = new Map(); // trip → 這次處理到的項目
   const missing = [];
-  for (const name of names) {
+  const notes = new Map(); // 項目 → 金額換算說明
+  for (const want of wanted) {
+    const name = want.text;
     const hit = ctx.trips
       .flatMap((trip) => (trip.shopping || []).map((item) => ({ trip, item, score: similarity_(name, item.text) })))
       .filter((x) => x.score >= 0.6 && !(changed.get(x.trip) || []).includes(x.item))
       // 分數高的優先；同分時先挑還沒買的、目前這趟旅程的
       .sort((a, b) => b.score - a.score || Number(a.item.done) - Number(b.item.done) || Number(b.trip === active) - Number(a.trip === active))[0];
     if (!hit) { missing.push(name); continue; }
-    if (mode === 'done') hit.item.done = true;
+    if (mode === 'done') {
+      hit.item.done = true;
+      // 「買到 抹茶粉 480円」：順便改成實際金額
+      if (want.cost != null) {
+        const cc = costInCurrency_(want.cost, want.currency, hit.trip.currency);
+        hit.item.price = cc.cost;
+        notes.set(hit.item, cc.note);
+      }
+    }
     changed.set(hit.trip, (changed.get(hit.trip) || []).concat([hit.item]));
   }
   if (!changed.size) return say_(ctx, textMsg_(`購物清單裡找不到「${missing.join('、')}」。輸入「購物清單」可以看全部。`, [qMsg_('購物清單'), ...defaultQuick_()]));
@@ -573,7 +594,9 @@ function cmdShopMark_(ctx, body, mode) {
   for (const [trip, items] of changed) {
     if (mode === 'remove') trip.shopping = trip.shopping.filter((s) => !items.includes(s));
     saveTrip_(ctx.userId, trip);
-    items.forEach((s) => lines.push(mode === 'remove' ? `🗑️ 已從購物清單拿掉：${s.text}` : `✅ 買到了：${s.text}`));
+    items.forEach((s) => lines.push(mode === 'remove'
+      ? `🗑️ 已從購物清單拿掉：${s.text}`
+      : `✅ 買到了：${s.text}${Number(s.price) ? ` ${showMoney_(s.price, trip.currency)}${notes.get(s) || ''}` : ''}`));
     const left = trip.shopping.filter((s) => !s.done).length;
     lines.push(left ? `「${trip.name}」還有 ${left} 樣沒買` : `「${trip.name}」的東西都買齊了 🎉`);
   }

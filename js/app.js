@@ -5,8 +5,9 @@
  * 資料結構（存在 localStorage）：
  *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, notes,
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }],
- *                shopping: [{ id, text, date, activityId, done }], createdAt } ] }
- *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走）
+ *                shopping: [{ id, text, date, activityId, price, done }], createdAt } ] }
+ *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走），
+ *             price 是預估金額（旅程幣別），計入預算的「購物」
  *   activity = { id, time, endTime, title, category, location, mapUrl, cost, notes,
  *                travelMode, travelMin, travelCost, travelCostCurrency }  // travel* 是「從上一站過來」
  *   cost 用旅程幣別；travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
@@ -233,9 +234,9 @@ function twdOrRaw(amount, cur) {
 }
 
 // 這些行程裡有金額、但還沒有匯率的幣別
-function missingRates(list, currency, budget) {
+function missingRates(list, currency, budget, shopItems = []) {
   const used = new Set();
-  if (Number(budget)) used.add(currency);
+  if (Number(budget) || shopItems.some((s) => Number(s.price))) used.add(currency);
   for (const a of list) {
     if (Number(a.cost)) used.add(currency);
     if (Number(a.travelCost)) used.add(fareCurrency(a, currency));
@@ -345,8 +346,13 @@ function syncShopping(t) {
   for (const [d, list] of Object.entries(t.days || {})) list.forEach((a) => where.set(a.id, d));
   t.shopping = (t.shopping || []).map((s) => {
     const d = s.activityId && where.get(s.activityId);
-    return { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', done: !!s.done };
+    return { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done };
   });
+}
+
+// 購物金額合計（換算成台幣）
+function shopCost(items, currency) {
+  return items.reduce((sum, s) => sum + twdOrRaw(s.price, currency), 0);
 }
 
 // 依「哪一站、哪一天」分好：byAct（行程 id → 東西）、byDay（日期 → 沒指定行程的東西）、loose（不指定日期）
@@ -368,11 +374,12 @@ function shoppingOn(t, idx, date) {
   return (t.days[date] || []).flatMap((a) => idx.byAct.get(a.id) || []).concat(idx.byDay.get(date) || []);
 }
 
-function shopItem(s, where = '') {
+function shopItem(s, currency, where = '') {
   return `
     <li class="shop-item${s.done ? ' done' : ''}">
       <label><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}</span></label>
       ${where ? `<span class="shop-where muted">${where}</span>` : ''}
+      ${Number(s.price) ? `<span class="shop-price">${showMoney(s.price, currency)}</span>` : ''}
       <span class="shop-actions no-print">
         <button class="icon-btn" data-action="edit-shop" data-id="${esc(s.id)}" title="編輯" aria-label="編輯">✎</button>
         <button class="icon-btn" data-action="delete-shop" data-id="${esc(s.id)}" title="刪除" aria-label="刪除">✕</button>
@@ -385,30 +392,34 @@ function shoppingView(t, dates) {
   const items = t.shopping || [];
   const done = items.filter((s) => s.done).length;
   const pct = items.length ? (done / items.length) * 100 : 0;
+  const total = shopCost(items, t.currency);
+  const bought = shopCost(items.filter((s) => s.done), t.currency);
   const days = dates.map((d, i) => {
     const acts = (t.days[d] || []).filter((a) => idx.byAct.has(a.id));
+    const dayTotal = shopCost(shoppingOn(t, idx, d), t.currency);
     const rest = idx.byDay.get(d) || [];
     if (!acts.length && !rest.length) return '';
     return `
       <section class="panel">
         <div class="shop-day-head">
-          <h3>Day ${i + 1}・${prettyDate(d)}</h3>
+          <h3>Day ${i + 1}・${prettyDate(d)}${dayTotal ? `<span class="muted shop-day-total">${ntd(dayTotal)}</span>` : ''}</h3>
           <button class="btn btn-sm no-print" data-action="add-shop" data-date="${d}">＋ 這天要買</button>
         </div>
         <ul class="shop-list">
-          ${acts.map((a) => idx.byAct.get(a.id).map((s) => shopItem(s, `📍 ${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}`)).join('')).join('')}
-          ${rest.map((s) => shopItem(s)).join('')}
+          ${acts.map((a) => idx.byAct.get(a.id).map((s) => shopItem(s, t.currency, `📍 ${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}`)).join('')).join('')}
+          ${rest.map((s) => shopItem(s, t.currency)).join('')}
         </ul>
       </section>`;
   }).join('');
   return `
     <section class="panel">
       <div class="shop-day-head">
-        <div class="packing-summary">已買 ${done} / ${items.length}</div>
+        <div class="packing-summary">已買 ${done} / ${items.length}${total ? `・預估 ${ntd(total)}（已買 ${ntd(bought)}）` : ''}</div>
         <button class="btn btn-primary no-print" data-action="add-shop" data-date="">＋ 新增要買的東西</button>
       </div>
       <div class="progress"><span style="width:${pct}%"></span></div>
       ${items.length ? '' : '<p class="muted shop-empty">還沒有要買的東西。可以指定哪一天、在哪一站買，每日行程裡也會跟著顯示。</p>'}
+      ${total ? '<p class="muted hint">有填金額的會計入「💰 預算」的購物分類。</p>' : ''}
       <p class="muted hint no-print">${cloudOn()
         ? '也可以在 LINE 官方帳號輸入「買 明天 抹茶粉」「買 面膜 @藥妝店」「買到 抹茶粉」。'
         : '在「每日行程」每一站的 🛒 也能直接加。'}</p>
@@ -417,7 +428,7 @@ function shoppingView(t, dates) {
     ${idx.loose.length ? `
       <section class="panel">
         <h3>不指定日期</h3>
-        <ul class="shop-list">${idx.loose.map((s) => shopItem(s)).join('')}</ul>
+        <ul class="shop-list">${idx.loose.map((s) => shopItem(s, t.currency)).join('')}</ul>
       </section>` : ''}`;
 }
 
@@ -569,9 +580,11 @@ function planView(t, dates) {
   const shop = shoppingIndex(t, dates);
   const days = dates.map((d, i) => {
     const list = t.days[d] || [];
-    const total = sumCost(list, t.currency);
+    const dayAllShop = shoppingOn(t, shop, d);
+    const total = sumCost(list, t.currency) + shopCost(dayAllShop, t.currency); // 當天花費含要買的東西
     const route = dayRouteUrl(list);
     const dayShop = shop.byDay.get(d) || [];
+    const noRate = missingRates(list, t.currency, 0, dayAllShop).length;
     return `
       <section class="day" id="day-${d}">
         <header class="day-head">
@@ -580,7 +593,7 @@ function planView(t, dates) {
             <h3>${prettyDate(d)}</h3>
           </div>
           <div class="day-meta">
-            ${total ? `<span class="muted"${missingRates(list, t.currency).length ? ' title="還沒取得匯率，外幣暫時直接當成台幣加總"' : ''}>${ntd(total)}${missingRates(list, t.currency).length ? '？' : ''}</span>` : ''}
+            ${total ? `<span class="muted"${noRate ? ' title="還沒取得匯率，外幣暫時直接當成台幣加總"' : ''}>${ntd(total)}${noRate ? '？' : ''}</span>` : ''}
             ${route ? `<a class="btn btn-sm no-print" href="${esc(route)}" target="_blank" rel="noopener" title="用 Google 地圖導航這天的所有地點">🧭 路線</a>` : ''}
             <button class="btn btn-sm btn-line no-print" data-action="share-day" data-date="${d}" title="把這天的行程分享到 LINE">LINE</button>
             <button class="btn btn-sm no-print" data-action="add-shop" data-date="${d}" title="新增這天要買的東西">🛒 要買</button>
@@ -593,7 +606,7 @@ function planView(t, dates) {
         ${dayShop.length ? `
           <div class="day-shop">
             <div class="day-shop-title">🛒 這天要買</div>
-            <ul class="shop-list">${dayShop.map((s) => shopItem(s)).join('')}</ul>
+            <ul class="shop-list">${dayShop.map((s) => shopItem(s, t.currency)).join('')}</ul>
           </div>` : ''}
       </section>`;
   }).join('');
@@ -616,7 +629,7 @@ function activityItem(a, date, currency, shopItems = []) {
             ${nav ? `<a class="act-nav no-print" href="${esc(nav)}" target="_blank" rel="noopener">🧭 導航</a>` : ''}
           </div>` : ''}
         ${a.notes ? `<p class="act-notes">${esc(a.notes)}</p>` : ''}
-        ${shopItems.length ? `<ul class="shop-list shop-inline" aria-label="在這裡要買的東西">${shopItems.map((s) => shopItem(s)).join('')}</ul>` : ''}
+        ${shopItems.length ? `<ul class="shop-list shop-inline" aria-label="在這裡要買的東西">${shopItems.map((s) => shopItem(s, currency)).join('')}</ul>` : ''}
       </div>
       <div class="act-side">
         ${a.cost ? `<span class="act-cost">${showMoney(a.cost, currency)}</span>` : ''}
@@ -631,7 +644,12 @@ function activityItem(a, date, currency, shopItems = []) {
 
 function budgetView(t, dates) {
   const all = allActivities(t);
-  const spent = sumCost(all, t.currency);
+  // 購物清單的金額也算進來，歸在「購物」
+  const shopItems = t.shopping || [];
+  const shop = shoppingIndex(t, dates);
+  const shopTotal = shopCost(shopItems, t.currency);
+  const looseShop = shopCost(shopItems, t.currency) - dates.reduce((s, d) => s + shopCost(shoppingOn(t, shop, d), t.currency), 0);
+  const spent = sumCost(all, t.currency) + shopTotal;
   const budget = twdOrRaw(t.budget, t.currency);
   const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency))])].filter((c) => c && c !== 'TWD');
   const remain = budget - spent;
@@ -644,13 +662,14 @@ function budgetView(t, dates) {
       key: k,
       // 車資一律算在「交通」
       sum: all.reduce((s, a) => s + (catKey(a) === k ? twdOrRaw(a.cost, t.currency) : 0)
-        + (k === 'transport' ? twdOrRaw(a.travelCost, fareCurrency(a, t.currency)) : 0), 0),
+        + (k === 'transport' ? twdOrRaw(a.travelCost, fareCurrency(a, t.currency)) : 0), 0)
+        + (k === 'shopping' ? shopTotal : 0),
     }))
     .filter((x) => x.sum > 0)
     .sort((a, b) => b.sum - a.sum);
   const maxCat = Math.max(1, ...byCat.map((x) => x.sum));
 
-  const missing = missingRates(all, t.currency, t.budget);
+  const missing = missingRates(all, t.currency, t.budget, shopItems);
 
   return `
     ${missing.length ? `<p class="panel rate-warn">⚠️ 還沒取得 ${esc(missing.join('、'))} 的匯率，這些金額暫時直接當成台幣加總，下面的數字不準；匯率載入後會自動更正。</p>` : ''}
@@ -683,10 +702,12 @@ function budgetView(t, dates) {
         <tbody>
           ${dates.map((d, i) => {
             const list = t.days[d] || [];
-            return `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td>${list.length}</td><td>${ntd(sumCost(list, t.currency))}</td></tr>`;
+            return `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td>${list.length}</td><td>${ntd(sumCost(list, t.currency) + shopCost(shoppingOn(t, shop, d), t.currency))}</td></tr>`;
           }).join('')}
+          ${looseShop > 0.005 ? `<tr><td>🛒 購物清單（不指定日期）</td><td>—</td><td>${ntd(looseShop)}</td></tr>` : ''}
         </tbody>
       </table>
+      ${shopTotal ? `<p class="muted hint">※ 含購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
       ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
     </section>`;
 }
@@ -978,6 +999,8 @@ function openShopDialog(preset, item) {
   const actDate = src.activityId && dates.find((d) => (t.days[d] || []).some((a) => a.id === src.activityId));
   const date = actDate || (dates.includes(src.date) ? src.date : '');
   shopForm.elements.text.value = item ? item.text : '';
+  shopForm.elements.price.value = (item && item.price) || '';
+  $('#shop-price-label').textContent = t.currency === 'TWD' ? '預估金額（NT$，選填）' : `預估金額（${t.currency}，選填，會換算成台幣）`;
   shopForm.elements.date.value = date;
   fillShopActivities(date, actDate ? src.activityId : '');
   shopDialog.showModal();
@@ -995,16 +1018,17 @@ shopForm?.addEventListener('submit', (e) => {
   const date = f.get('date') || '';
   const activityId = date ? (f.get('activityId') || '') : '';
   const raw = f.get('text').trim();
+  const price = Math.max(0, Number(f.get('price')) || 0);
   // 新增時可以用「、」一次加好幾樣；編輯時整段都是同一樣
   const names = editingShopId ? [raw.slice(0, 80)] : [...new Set(raw.split(/[、，,]+/).map((s) => s.trim().slice(0, 80)).filter(Boolean))];
   if (!names.length || !names[0]) return toast('請填寫要買什麼');
   t.shopping ||= [];
   if (editingShopId) {
     const item = t.shopping.find((s) => s.id === editingShopId);
-    if (item) Object.assign(item, { text: names[0], date, activityId });
+    if (item) Object.assign(item, { text: names[0], date, activityId, price });
   } else {
     if (t.shopping.length + names.length > MAX_SHOPPING) return toast(`購物清單最多 ${MAX_SHOPPING} 樣`);
-    t.shopping.push(...names.map((text) => ({ id: uid(), text, date, activityId, done: false })));
+    t.shopping.push(...names.map((text) => ({ id: uid(), text, date, activityId, price, done: false })));
   }
   commitTrip(t);
   shopDialog.close();
@@ -1057,6 +1081,7 @@ function normalizeTrip(raw) {
       text: str(s.text, 80).trim(),
       date: DATE_RE.test(s.date) && s.date >= raw.startDate && s.date <= raw.endDate ? s.date : '',
       activityId: newIds.get(s.activityId) || '',
+      price: Math.max(0, Number(s.price) || 0),
       done: !!s.done,
     }))
     : [];
@@ -1136,12 +1161,12 @@ function buildSampleTrip() {
   };
   // 購物清單：指定在哪一站買，或只指定哪一天
   const at = (title) => Object.values(trip.days).flat().find((a) => a.title === title).id;
-  const buy = (text, date, activityId = '') => trip.shopping.push({ id: uid(), text, date, activityId, done: false });
-  buy('御守', d(1), at('清水寺'));
-  buy('抹茶粉', d(1), at('錦市場晚餐'));
-  buy('漬物', d(1), at('錦市場晚餐'));
-  buy('八橋', d(2), at('買伴手禮'));
-  buy('藥妝（面膜、眼藥水）', d(2));
+  const buy = (text, price, date, activityId = '') => trip.shopping.push({ id: uid(), text, date, activityId, price, done: false });
+  buy('御守', 200, d(1), at('清水寺'));
+  buy('抹茶粉', 350, d(1), at('錦市場晚餐'));
+  buy('漬物', 250, d(1), at('錦市場晚餐'));
+  buy('八橋', 300, d(2), at('買伴手禮'));
+  buy('藥妝（面膜、眼藥水）', 1200, d(2));
   return trip;
 }
 

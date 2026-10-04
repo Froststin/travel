@@ -222,7 +222,7 @@ function sanitizeTrip_(raw) {
       .slice(0, 300)
       .map((p) => ({ id: cleanId_(p.id) || Utilities.getUuid(), text: str_(p.text, 80), done: !!p.done }))
     : [];
-  // 購物清單：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（要是這個旅程裡的行程）
+  // 購物清單：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（要是這個旅程裡的行程），price 是預估金額（旅程幣別）
   const actIds = new Set(Object.values(days).flat().map((a) => a.id));
   const shopping = Array.isArray(raw.shopping)
     ? raw.shopping
@@ -233,6 +233,7 @@ function sanitizeTrip_(raw) {
         text: str_(s.text, 80).trim(),
         date: valid.has(s.date) ? s.date : '',
         activityId: actIds.has(s.activityId) ? s.activityId : '',
+        price: Math.max(0, Number(s.price) || 0),
         done: !!s.done,
       }))
     : [];

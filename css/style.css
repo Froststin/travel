@@ -563,3 +563,6 @@ textarea { resize: vertical; }
 .day-shop { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; }
 .day-shop-title { font-size: .85rem; font-weight: 600; color: var(--muted); margin-bottom: 2px; }
 @media print { .shop-actions { display: none; } }
+.shop-price { flex: none; font-size: .88rem; font-weight: 600; white-space: nowrap; }
+.shop-item.done .shop-price { color: var(--muted); }
+.shop-day-total { margin-left: 8px; font-size: .85rem; font-weight: 400; }
