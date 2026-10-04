@@ -34,7 +34,8 @@
 | `js/cloud.js` | 雲端同步（LINE 登入後讀寫 Google Apps Script） |
 | `js/static.js` | 匯出靜態網站（單一 HTML 檔） |
 | `js/places.js` | 待去清單：定位、依距離分組、排入行程 |
-| `js/config.js` | 網站設定（LIFF ID、API 網址） |
+| `js/config.js` | 網站設定（LIFF ID、API 網址、版本號） |
+| `version.json` | 網站版本號，要和 `js/config.js` 的 `version` 一致；每次更新網站都加 1，已開著的網頁會自動抓新檔案 |
 | `gas/` | Google Apps Script 後端：LINE 官方帳號機器人＋網站 API（資料存 Google 試算表） |
 
 ## 注意

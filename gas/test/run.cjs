@@ -625,5 +625,12 @@ check('空列太多時自動整理', sheets.Activities.data.length < beforeRows 
 check('整理後內容正確', titles(fresh()[0]) === titles(mkTrip('small', '重來', '2026-11-10', 8)) && JSON.stringify(sheets.Activities.data.filter((r) => r[1] === 'other')) === otherBefore);
 check('別人的旅程仍然讀得到', fresh('U3')[0].days['2026-11-20'].length === 4);
 
+/* ---------- 網站版本號 ---------- */
+const fs = require('fs');
+const path = require('path');
+const root = path.join(__dirname, '..', '..');
+const cfgVersion = (fs.readFileSync(path.join(root, 'js/config.js'), 'utf8').match(/version: '(\d+)'/) || [])[1];
+check('網站版本號：js/config.js 與 version.json 一致', !!cfgVersion && cfgVersion === JSON.parse(fs.readFileSync(path.join(root, 'version.json'), 'utf8')).version, cfgVersion);
+
 console.log(failures ? `\n${failures} 項失敗` : '\n全部通過');
 process.exit(failures ? 1 : 0);

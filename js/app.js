@@ -1428,6 +1428,39 @@ function fillSelects() {
     .map(([k, c]) => `<option value="${k}">${c.icon} ${c.label}</option>`).join('');
 }
 
+/* ---------- 版本檢查 ----------
+ * GitHub Pages 會讓瀏覽器把檔案留 10 分鐘，更新後這段時間可能新舊檔案混著用（按鈕沒反應、功能不見）。
+ * 所以載入後和切回網頁時問一下 version.json（不走快取），發現有新版就把所有檔案重新抓一次再重新載入。 */
+const APP_VERSION = (window.TRAVEL_CONFIG && window.TRAVEL_CONFIG.version) || '';
+const UPDATE_KEY = 'travel-planner:updating';
+let lastUpdateCheck = 0;
+
+async function checkForUpdate() {
+  // APP_VERSION 是空的代表 config.js 還是舊檔，一樣要更新
+  if (!location.protocol.startsWith('http') || Date.now() - lastUpdateCheck < 60 * 1000) return;
+  lastUpdateCheck = Date.now();
+  try {
+    const latest = (await (await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' })).json()).version;
+    if (!latest || latest === APP_VERSION) return;
+    if (sessionStorage.getItem(UPDATE_KEY) === latest) return; // 這個分頁已經為這一版重新載入過，不要一直轉
+    const files = [location.pathname, ...[...document.querySelectorAll('script[src], link[rel="stylesheet"]')].map((el) => el.src || el.href)]
+      .filter((u) => u.startsWith('/') || u.startsWith(location.origin));
+    await Promise.all(files.map((u) => fetch(u, { cache: 'reload' }).catch(() => {})));
+    // 正在填表單或還有東西沒存上雲端時先不打斷，只提醒
+    if (document.querySelector('dialog[open]') || (cloudOn() && (Cloud.pending || Cloud.unsynced.size))) {
+      lastUpdateCheck = 0;
+      return toast('網站有新版本，重新整理後生效');
+    }
+    sessionStorage.setItem(UPDATE_KEY, latest);
+    location.reload();
+  } catch (err) {
+    console.warn('版本檢查失敗', err);
+  }
+}
+
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
+
 fillSelects();
 window.addEventListener('hashchange', route);
 route();
+checkForUpdate();
