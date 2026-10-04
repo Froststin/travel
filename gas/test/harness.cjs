@@ -5,11 +5,21 @@ const vm = require('vm');
 const crypto = require('crypto');
 
 /* ---------- 假服務 ---------- */
-function makeSheet() {
+// writes：記錄每次寫入／清空了哪幾列；flags.failWriteIn = n 時，第 n 次寫入會失敗（模擬逾時）
+const writes = [];
+function logWrite(name, op, row, count) {
+  if (flags.failWriteIn > 0 && --flags.failWriteIn === 0) throw new Error('模擬寫入失敗');
+  writes.push({ sheet: name, op, row, count });
+}
+
+function makeSheet(name) {
   const data = [];
+  let maxRows = 20; // 故意設很小，確認寫入前會先補足列數
   const sheet = {
     data,
     getLastRow: () => data.length,
+    getMaxRows: () => maxRows,
+    insertRowsAfter(after, n) { maxRows += n; },
     getRange(r, c, nr = 1, nc = 1) {
       if (typeof r === 'string') return { setNumberFormat: () => this.getRange(1, 1) };
       return {
@@ -17,10 +27,13 @@ function makeSheet() {
         setFontWeight() { return this; },
         getDisplayValues: () => Array.from({ length: nr }, (_, i) => Array.from({ length: nc }, (_, j) => String((data[r - 1 + i] || [])[c - 1 + j] ?? ''))),
         setValues(vals) {
+          if (r - 1 + vals.length > maxRows) throw new Error('範圍超出工作表的列數');
+          logWrite(name, 'set', r, vals.length);
           vals.forEach((row, i) => { data[r - 1 + i] = data[r - 1 + i] || []; row.forEach((v, j) => { data[r - 1 + i][c - 1 + j] = v; }); });
           return this;
         },
         clearContent() {
+          logWrite(name, 'clear', r, nr);
           for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) if (data[r - 1 + i]) data[r - 1 + i][c - 1 + j] = '';
           while (data.length && data[data.length - 1].every((v) => v === '')) data.pop();
           return this;
@@ -33,12 +46,12 @@ function makeSheet() {
   return sheet;
 }
 
-const sheets = { Trips: makeSheet(), Activities: makeSheet(), Journal: makeSheet() };
+const flags = { failFlex: false, today: '2026-10-29', finmindBanned: false, failWriteIn: 0 };
+const sheets = { Trips: makeSheet('Trips'), Activities: makeSheet('Activities'), Journal: makeSheet('Journal') };
 Object.entries(sheets).forEach(([name, sh]) => sh.getRange(1, 1, 1, 1).setValues([[name]]));
 
 const props = { SHEET_ID: 'sheet1', PHOTO_FOLDER_ID: 'folder1', WEBHOOK_KEY: 'k', CHANNEL_ACCESS_TOKEN: 'tok', ALLOWED_USERS: '' };
 const sent = [];
-const flags = { failFlex: false, today: '2026-10-29', finmindBanned: false };
 
 const ctx = {
   console,
@@ -51,7 +64,7 @@ const ctx = {
     base64Encode: (b) => Buffer.from(b).toString('base64'),
     DigestAlgorithm: { SHA_256: 'sha256' },
   },
-  SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet()) }) },
+  SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet(n)) }) },
   LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
   CacheService: { getScriptCache: () => ({ get: () => null, put() {}, remove() {} }) },
   DriveApp: {
@@ -99,4 +112,4 @@ const run = (code) => vm.runInContext(code, ctx);
 run('var __clearCache = () => { for (const k in tableCache_) delete tableCache_[k]; }');
 
 
-module.exports = { ctx, run, sheets, props, sent, flags };
+module.exports = { ctx, run, sheets, props, sent, flags, writes };

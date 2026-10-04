@@ -50,8 +50,11 @@ function handleApi_(body) {
       return { accepted: withLock_(() => reportRate_(body.rate)) };
 
     case 'list':
-      if (body.name) withLock_(() => setUserName_(userId, body.name));
-      return { trips: loadTrips_(userId), journal: loadJournal_(userId) };
+      // 讀取也要排隊：避免讀到別人存檔寫到一半的資料，再被網站存回去
+      return withLock_(() => {
+        if (body.name) setUserName_(userId, body.name);
+        return { trips: loadTrips_(userId), journal: loadJournal_(userId) };
+      });
 
     case 'saveTrip':
       return withLock_(() => {

@@ -2,7 +2,7 @@
  * 執行：node gas/test/run.cjs
  */
 const H = require('./harness.cjs');
-const { ctx, run, props, sent, flags } = H;
+const { ctx, run, props, sent, flags, writes, sheets } = H;
 
 // 走和正式環境一樣的入口（doPost → ensureSchema_ → handleWebhook_）
 function hook() {
@@ -346,6 +346,76 @@ res = api('addJournal', { entry: { id: evilId, date: mine.startDate, text: '測�
 check('API：日誌 id 含特殊字元會換成新的', res.ok && /^[\w-]+$/.test(res.entry.id), JSON.stringify(res));
 
 check('API deleteTrip', api('deleteTrip', { id: trip.id }).ok && api('list', {}).trips.length === 0);
+
+/* ---------- 只寫入有變動的列 ---------- */
+const mkTrip = (id, name, start, n) => ({
+  id, name, startDate: start, endDate: start,
+  days: { [start]: Array.from({ length: n }, (_, i) => ({ id: `${id}-${i}`, time: `${String(8 + (i % 12)).padStart(2, '0')}:00`, title: `${name}${i}` })) },
+  packing: [],
+});
+const titles = (t) => Object.values(t.days).flat().map((a) => a.title).sort().join(',');
+const fresh = (user = 'U1') => api('list', {}, `good:${user}`).trips;
+const save = (t, user = 'U1') => api('saveTrip', { trip: t, baseUpdatedAt: t.updatedAt || '' }, `good:${user}`);
+const actWrites = () => writes.filter((w) => w.sheet === 'Activities');
+
+check('超過工作表列數也能存（大旅程 150 筆）', save(mkTrip('big', '大', '2026-11-01', 150)).ok && save(mkTrip('small', '小', '2026-11-10', 5)).ok);
+save(mkTrip('other', '別人', '2026-11-20', 4), 'U3');
+let [big, small] = fresh();
+const otherBefore = JSON.stringify(sheets.Activities.data.filter((r) => r[1] === 'other'));
+check('重新讀取內容正確', titles(big) === titles(mkTrip('big', '大', '2026-11-01', 150)) && small.days['2026-11-10'].length === 5);
+
+writes.length = 0;
+small.days['2026-11-10'][2].title = '改過了';
+res = save(small);
+check('改一筆行程只寫入一列', res.ok && actWrites().length === 1 && actWrites()[0].count === 1 && writes.filter((w) => w.sheet === 'Trips').every((w) => w.count === 1), JSON.stringify(writes));
+small = fresh()[1];
+check('改過的內容有存進去', small.days['2026-11-10'].some((a) => a.title === '改過了'));
+
+writes.length = 0;
+small.packing = [{ id: 'p1', text: '護照', done: true }];
+res = save(small);
+check('只改行李清單不會動到行程表', res.ok && actWrites().length === 0, JSON.stringify(writes));
+
+writes.length = 0;
+small = fresh()[1];
+small.days['2026-11-10'].pop();
+small.days['2026-11-10'].push({ id: 'small-new', time: '23:00', title: '新增的' });
+small.days['2026-11-10'].push({ id: 'small-new2', time: '23:30', title: '再一個' });
+res = save(small);
+check('新增行程接在最後，不重寫整張表', res.ok && actWrites().reduce((s, w) => s + w.count, 0) <= 2, JSON.stringify(writes));
+small = fresh()[1];
+check('新增後內容正確', small.days['2026-11-10'].length === 6 && titles(small).includes('新增的') && titles(small).includes('再一個'));
+
+small.days['2026-11-10'] = small.days['2026-11-10'].slice(0, 2);
+res = save(small);
+[big, small] = fresh();
+check('刪除行程後內容正確，其他旅程不受影響', res.ok && small.days['2026-11-10'].length === 2 && big.days['2026-11-01'].length === 150);
+
+// 存檔寫到一半失敗：其他旅程的資料都還在，重新存檔可以補回來
+small.days['2026-11-10'] = mkTrip('small', '重來', '2026-11-10', 8).days['2026-11-10'];
+flags.failWriteIn = 2;
+res = save(small);
+flags.failWriteIn = 0;
+check('模擬寫入失敗會回報錯誤', res.status === 500, JSON.stringify(res));
+check('失敗後其他旅程完整無缺', fresh()[0].days['2026-11-01'].length === 150 && JSON.stringify(sheets.Activities.data.filter((r) => r[1] === 'other')) === otherBefore);
+check('失敗後版本號沒變，重新存檔成功', save(small).ok && titles(fresh()[1]) === titles(mkTrip('small', '重來', '2026-11-10', 8)));
+
+// 整表重寫（整理空列）中途失敗也不會變成空表
+ctx.__keep = run('__clearCache(), readTable_("Activities")').slice(0, 100);
+flags.failWriteIn = 2;
+let threw = false;
+try { run('writeTable_("Activities", __keep)'); } catch (err) { threw = true; }
+flags.failWriteIn = 0;
+check('整表重寫失敗時資料還在', threw && rows('Activities').length >= 100);
+save(mkTrip('big', '大', '2026-11-01', 150));
+save(fresh()[1]);
+
+// 刪掉大旅程後留下的空列會被整理掉
+const beforeRows = sheets.Activities.data.length;
+check('刪除旅程', api('deleteTrip', { id: 'big' }).ok && fresh().length === 1);
+check('空列太多時自動整理', sheets.Activities.data.length < beforeRows - 100 && sheets.Activities.data.slice(1).every((r) => r[0]), `${beforeRows} → ${sheets.Activities.data.length}`);
+check('整理後內容正確', titles(fresh()[0]) === titles(mkTrip('small', '重來', '2026-11-10', 8)) && JSON.stringify(sheets.Activities.data.filter((r) => r[1] === 'other')) === otherBefore);
+check('別人的旅程仍然讀得到', fresh('U3')[0].days['2026-11-20'].length === 4);
 
 console.log(failures ? `\n${failures} 項失敗` : '\n全部通過');
 process.exit(failures ? 1 : 0);

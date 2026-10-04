@@ -17,6 +17,8 @@ const SCHEMA_VERSION = '5';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
+const MAX_BLANK_ROWS = 100; // 中間的空列超過這個數量就整理一次
+
 const tableCache_ = {};
 
 function spreadsheet_() {
@@ -53,37 +55,109 @@ function ensureSchema_() {
   });
 }
 
+// 記住每筆資料在試算表的第幾列，之後只改那幾列（不可列舉，不會被送到網站）
+function setRowNo_(obj, rowNo) {
+  Object.defineProperty(obj, '__row', { value: rowNo, writable: true, enumerable: false, configurable: true });
+  return obj;
+}
+
 function readTable_(name) {
   if (tableCache_[name]) return tableCache_[name];
   const sh = sheet_(name);
   const cols = TABLES[name];
   const n = sh.getLastRow() - 1;
   const rows = n > 0 ? sh.getRange(2, 1, n, cols.length).getDisplayValues() : [];
-  tableCache_[name] = rows
-    .filter((r) => r[0])
-    .map((r) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
-  return tableCache_[name];
+  const out = [];
+  rows.forEach((r, i) => {
+    if (r[0]) out.push(setRowNo_(Object.fromEntries(cols.map((c, j) => [c, r[j]])), i + 2)); // 空列略過
+  });
+  tableCache_[name] = out;
+  return out;
 }
 
 function toRow_(name, obj) {
   return TABLES[name].map((c) => (obj[c] == null ? '' : String(obj[c])));
 }
 
+// 工作表列數不夠時先補足，避免寫到範圍外
+function ensureRows_(sh, lastRowNo) {
+  const max = sh.getMaxRows();
+  if (max < lastRowNo) sh.insertRowsAfter(max, lastRowNo - max + 200);
+}
+
+// 把遞增的列號切成連續的區段：fn(起始列號, 在 rowNos 裡的位置, 列數)
+function eachRun_(rowNos, fn) {
+  let i = 0;
+  while (i < rowNos.length) {
+    let j = i + 1;
+    while (j < rowNos.length && rowNos[j] === rowNos[j - 1] + 1) j++;
+    fn(rowNos[i], i, j - i);
+    i = j;
+  }
+}
+
+/**
+ * 整表重寫（只用在資料搬移與整理空列，平常的修改一律用 replaceRows_）
+ * 先寫入新資料、再清掉多出來的舊列，中途失敗也不會留下空表
+ */
 function writeTable_(name, objs) {
   const sh = sheet_(name);
   const cols = TABLES[name];
   const n = sh.getLastRow() - 1;
-  if (n > 0) sh.getRange(2, 1, n, cols.length).clearContent();
   if (objs.length) {
+    ensureRows_(sh, objs.length + 1);
     sh.getRange(2, 1, objs.length, cols.length).setNumberFormat('@').setValues(objs.map((o) => toRow_(name, o)));
   }
+  if (n > objs.length) sh.getRange(2 + objs.length, 1, n - objs.length, cols.length).clearContent();
+  objs.forEach((o, i) => setRowNo_(o, i + 2));
   tableCache_[name] = objs;
 }
 
 function appendRow_(name, obj) {
   const sh = sheet_(name);
-  sh.getRange(sh.getLastRow() + 1, 1, 1, TABLES[name].length).setNumberFormat('@').setValues([toRow_(name, obj)]);
+  const rowNo = sh.getLastRow() + 1;
+  ensureRows_(sh, rowNo);
+  sh.getRange(rowNo, 1, 1, TABLES[name].length).setNumberFormat('@').setValues([toRow_(name, obj)]);
+  setRowNo_(obj, rowNo);
   if (tableCache_[name]) tableCache_[name].push(obj);
+}
+
+/**
+ * 把符合條件的舊資料換成 newObjs，只寫入有變動的那幾列，其他列（別的旅程、別人的資料）完全不動：
+ *   內容不同的舊列就地覆寫 → 多出來的接在最後 → 用不到的舊列清空（讀取時會略過空列）
+ * newObjs 要傳新物件，不要直接修改 readTable_ 拿到的物件再傳進來（會被當成沒有變動）
+ */
+function replaceRows_(name, match, newObjs) {
+  const all = readTable_(name);
+  const old = all.filter(match);
+  const keep = all.filter((o) => !match(o));
+  const oldRowNos = old.map((o) => o.__row);
+  const sh = sheet_(name);
+  const width = TABLES[name].length;
+  const values = newObjs.map((o) => toRow_(name, o));
+  const reuse = Math.min(old.length, newObjs.length);
+
+  const changed = [];
+  for (let i = 0; i < reuse; i++) {
+    if (toRow_(name, old[i]).join('\u0000') !== values[i].join('\u0000')) changed.push(i);
+  }
+  eachRun_(changed.map((i) => oldRowNos[i]), (rowNo, at, count) => {
+    sh.getRange(rowNo, 1, count, width).setNumberFormat('@').setValues(values.slice(changed[at], changed[at] + count));
+  });
+  for (let i = 0; i < reuse; i++) setRowNo_(newObjs[i], oldRowNos[i]);
+
+  if (newObjs.length > reuse) {
+    const start = sh.getLastRow() + 1;
+    ensureRows_(sh, start + newObjs.length - reuse - 1);
+    sh.getRange(start, 1, newObjs.length - reuse, width).setNumberFormat('@').setValues(values.slice(reuse));
+    for (let i = reuse; i < newObjs.length; i++) setRowNo_(newObjs[i], start + i - reuse);
+  }
+  eachRun_(oldRowNos.slice(reuse), (rowNo, at, count) => sh.getRange(rowNo, 1, count, width).clearContent());
+
+  const rows = keep.concat(newObjs).sort((a, b) => a.__row - b.__row);
+  tableCache_[name] = rows;
+  // 清空的列累積太多時整理一次
+  if (old.length > reuse && sh.getLastRow() - 1 - rows.length > MAX_BLANK_ROWS) writeTable_(name, rows);
 }
 
 let lockHeld_ = false;
@@ -175,9 +249,7 @@ function setUserName_(userId, name) {
   const row = rows.find((x) => x.userId === userId);
   if (row && row.name === clean) return;
   if (row) {
-    row.name = clean;
-    row.updatedAt = String(Date.now());
-    writeTable_('Users', rows);
+    replaceRows_('Users', (x) => x === row, [Object.assign({}, row, { name: clean, updatedAt: String(Date.now()) })]);
   } else {
     appendRow_('Users', { userId, name: clean, updatedAt: String(Date.now()) });
   }
@@ -263,7 +335,7 @@ function loadTrips_(userId) {
     .sort((a, b) => a.startDate.localeCompare(b.startDate));
 }
 
-/** 覆寫整個旅程（含所有行程項目），回傳新的 updatedAt。主人與成員都可以 */
+/** 儲存整個旅程（含所有行程項目），只寫入這個旅程有變動的列，回傳新的 updatedAt。主人與成員都可以 */
 function saveTrip_(userId, trip) {
   const trips = readTable_('Trips');
   const existing = trips.find((t) => t.id === trip.id);
@@ -286,9 +358,7 @@ function saveTrip_(userId, trip) {
     updatedAt: now,
     inviteCode: existing ? existing.inviteCode : '',
   };
-  writeTable_('Trips', existing ? trips.map((t) => (t.id === trip.id ? row : t)) : trips.concat([row]));
-
-  const acts = readTable_('Activities').filter((a) => a.tripId !== trip.id);
+  const acts = [];
   for (const [date, list] of Object.entries(trip.days || {})) {
     for (const a of list) {
       acts.push({
@@ -299,7 +369,9 @@ function saveTrip_(userId, trip) {
       });
     }
   }
-  writeTable_('Activities', acts);
+  replaceRows_('Activities', (a) => a.tripId === trip.id, acts);
+  // 版本號最後才更新：行程寫到一半失敗時版本不變，網站重新存檔就能補回來
+  replaceRows_('Trips', (t) => t.id === trip.id, [row]);
   trip.updatedAt = now;
   return now;
 }
@@ -314,9 +386,9 @@ function deleteTrip_(userId, tripId) {
     leaveTrip_(userId, tripId);
     return 'left';
   }
-  writeTable_('Trips', readTable_('Trips').filter((t) => t.id !== tripId));
-  writeTable_('Activities', readTable_('Activities').filter((a) => a.tripId !== tripId));
-  writeTable_('Members', readTable_('Members').filter((m) => m.tripId !== tripId));
+  replaceRows_('Trips', (t) => t.id === tripId, []);
+  replaceRows_('Activities', (a) => a.tripId === tripId, []);
+  replaceRows_('Members', (m) => m.tripId === tripId, []);
   return 'deleted';
 }
 
@@ -331,8 +403,8 @@ function inviteCodeFor_(userId, tripId) {
     do {
       code = Array.from({ length: 6 }, () => INVITE_CHARS[Math.floor(Math.random() * INVITE_CHARS.length)]).join('');
     } while (used.has(code) || !/\d/.test(code) || !/[A-Z]/.test(code));
-    row.inviteCode = code;
-    writeTable_('Trips', trips);
+    replaceRows_('Trips', (t) => t === row, [Object.assign({}, row, { inviteCode: code })]);
+    return code;
   }
   return row.inviteCode;
 }
@@ -347,7 +419,7 @@ function joinTrip_(userId, code) {
 }
 
 function leaveTrip_(userId, tripId) {
-  writeTable_('Members', readTable_('Members').filter((m) => !(m.tripId === tripId && m.userId === userId)));
+  replaceRows_('Members', (m) => m.tripId === tripId && m.userId === userId, []);
 }
 
 /** 主人移除成員；member 可以是 userId 或網站用的成員代號 */
@@ -357,7 +429,7 @@ function removeMember_(ownerId, tripId, member) {
   const rows = readTable_('Members');
   const target = rows.find((m) => m.tripId === tripId && (m.userId === member || memberKey_(tripId, m.userId) === member));
   if (!target) return null;
-  writeTable_('Members', rows.filter((m) => m !== target));
+  replaceRows_('Members', (m) => m === target, []);
   return target.userId;
 }
 
@@ -404,7 +476,7 @@ function deleteJournal_(userId, id) {
   if (!row) return null;
   const trip = row.tripId ? findTripRow_(row.tripId) : null;
   if (row.userId !== userId && !(trip && trip.userId === userId)) throw apiError_(403, '只能刪除自己寫的日誌');
-  writeTable_('Journal', rows.filter((j) => j.id !== id));
+  replaceRows_('Journal', (j) => j.id === id, []);
   if (row.fileId) {
     try {
       DriveApp.getFileById(row.fileId).setTrashed(true);
