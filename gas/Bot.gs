@@ -30,6 +30,12 @@ const HELP_TEXT = [
   '・今天路線、明天路線 → 串起當天所有地點',
   '・新增或修改時貼上 Google 地圖分享連結也可以',
   '',
+  '【購物清單】跟著每天的行程走',
+  '・買 明天 抹茶粉、八橋 → 記在那一天',
+  '・買 面膜 @藥妝店 → 記在那個行程（行程改天會跟著走）',
+  '・購物清單、明天要買什麼 → 查看',
+  '・買到 抹茶粉、不買 八橋',
+  '',
   '【旅遊日誌】',
   '・日誌 今天的抹茶超好喝',
   '・直接傳照片 → 自動記到今天的日誌',
@@ -105,6 +111,10 @@ function handleText_(ctx, rawText) {
   if (/^(成員|旅伴|同行者|成員名單|有誰)$/.test(text)) return cmdMembers_(ctx);
   if ((m = text.match(/^(?:退出|離開)(?:旅程)?\s*(.*)$/))) return cmdLeave_(ctx, m[1]);
   if ((m = text.match(/^(?:移除成員|踢除|踢掉)\s*(.+)$/))) return cmdRemoveMember_(ctx, m[1]);
+  if (/購物清單|購物列表|要買什麼|買什麼|要買啥|買啥|要買的/.test(text) && text.length <= 20) return cmdShopView_(ctx, text.replace(/購物清單|購物列表|要買什麼|買什麼|要買啥|買啥|要買的(?:東西)?/g, ' '));
+  if ((m = text.match(/^(?:買到了?|買了|已買|買好了?)\s*([\s\S]+)$/))) return cmdShopMark_(ctx, m[1], 'done');
+  if ((m = text.match(/^(?:不買了?|不用買)\s*([\s\S]+)$/))) return cmdShopMark_(ctx, m[1], 'remove');
+  if ((m = text.match(/^(?:要買|記得買|想買|買)\s*[:：]?\s*([\s\S]+)$/)) && !/幾點|哪|嗎|\?/.test(text)) return cmdShopAdd_(ctx, m[1]);
   if ((m = text.match(/^(?:新增|加入|\+)\s*([\s\S]+)$/))) return cmdAdd_(ctx, m[1]);
   if ((m = text.match(/^(?:刪除|移除|刪掉)\s*([\s\S]+)$/))) return cmdDelete_(ctx, m[1]);
   if ((m = text.match(/^(?:修改|更改|改)\s*([\s\S]+)$/))) return cmdEdit_(ctx, m[1]);
@@ -291,7 +301,7 @@ function cmdNewTrip_(ctx, body) {
   const trip = {
     id: Utilities.getUuid(), name: spec.name.slice(0, 60), destination: spec.name.slice(0, 60),
     startDate: spec.startDate, endDate: spec.endDate, budget: 0, currency: 'TWD', notes: '',
-    days: {}, packing: [], createdAt: Date.now(),
+    days: {}, packing: [], shopping: [], createdAt: Date.now(),
   };
   saveTrip_(ctx.userId, trip);
   const n = dateRange_(trip.startDate, trip.endDate).length;
@@ -462,6 +472,113 @@ function applyEdit_(ctx, id, changes) {
   saveTrip_(ctx.userId, trip);
   const issue = scheduleIssue_(trip.days[date][trip.days[date].indexOf(activity) - 1], activity);
   return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}${costNote}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
+}
+
+/* ---------- 購物清單 ---------- */
+function shopWhere_(trip, item) {
+  const d = shopDate_(trip, item);
+  const a = shopActivity_(trip, item);
+  if (!d) return '不指定日期';
+  return `Day ${daysBetween_(trip.startDate, d) + 1}・${prettyDate_(d)}${a ? `・${a.title}` : ''}`;
+}
+
+function cmdShopView_(ctx, rest) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  const base = activeTrip_(ctx.trips, ctx.today);
+  const found = extractDate_(rest, { today: ctx.today, trips: ctx.trips, trip: base });
+  const trip = activeTrip_(ctx.trips, ctx.today, found && found.date);
+  const all = trip.shopping || [];
+  const more = [qUri_('在網站編輯', tripLiffUrl_(trip.id)), ...defaultQuick_()];
+  if (!all.length) {
+    return say_(ctx, textMsg_(`「${trip.name}」的購物清單還是空的。\n例如：\n買 明天 抹茶粉、八橋\n買 面膜 @藥妝店`, more));
+  }
+  const lines = [`🛒 ${trip.name} 購物清單：已買 ${all.filter((s) => s.done).length} / ${all.length}`];
+  if (found && trip.startDate <= found.date && found.date <= trip.endDate) {
+    const list = shoppingOn_(trip, found.date);
+    lines.push('', `【Day ${daysBetween_(trip.startDate, found.date) + 1}・${prettyDate_(found.date)}】`);
+    if (!list.length) lines.push('（這天沒有要買的東西）');
+    list.forEach((s) => lines.push(shopLine_(trip, s)));
+  } else {
+    for (const d of dateRange_(trip.startDate, trip.endDate)) {
+      const list = shoppingOn_(trip, d);
+      if (!list.length) continue;
+      lines.push('', `【Day ${daysBetween_(trip.startDate, d) + 1}・${prettyDate_(d)}】`);
+      list.forEach((s) => lines.push(shopLine_(trip, s)));
+    }
+    const loose = shoppingOn_(trip, '');
+    if (loose.length) {
+      lines.push('', '【不指定日期】');
+      loose.forEach((s) => lines.push(shopLine_(trip, s)));
+    }
+  }
+  return say_(ctx, textMsg_(lines.join('\n'), more));
+}
+
+function cmdShopAdd_(ctx, body) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('要先建立旅程喔，例如：新旅程 京都 10/28-10/30'));
+  const base = activeTrip_(ctx.trips, ctx.today);
+  let rest = body;
+  let trip = base;
+  let date = '';
+  let activityId = '';
+  let missed = '';
+  const loc = extractLocation_(rest);
+  if (loc) {
+    rest = loc.rest;
+    const hit = searchActivities_(ctx.trips, loc.location, 0.6)[0];
+    if (hit) { trip = hit.trip; date = hit.date; activityId = hit.activity.id; } else missed = loc.location;
+  }
+  const d = extractDate_(rest, { today: ctx.today, trips: ctx.trips, trip: base });
+  if (d) {
+    rest = d.rest;
+    if (!activityId) {
+      const t = ctx.trips.find((x) => x.startDate <= d.date && d.date <= x.endDate);
+      if (!t) return say_(ctx, textMsg_(`${prettyDate_(d.date)} 沒有旅程喔。`));
+      trip = t;
+      date = d.date;
+    }
+  }
+  const names = [...new Set(rest.split(/[、，,\n]+/).map((s) => s.replace(/\s+/g, ' ').trim().slice(0, 80)).filter(Boolean))];
+  if (!names.length) return say_(ctx, textMsg_('要買什麼呢？例如：\n買 明天 抹茶粉、八橋\n買 面膜 @藥妝店'));
+  trip.shopping = trip.shopping || [];
+  if (trip.shopping.length + names.length > MAX_SHOPPING) return say_(ctx, textMsg_(`購物清單最多 ${MAX_SHOPPING} 樣，先把買好的刪掉吧。`));
+  const items = names.map((text) => ({ id: Utilities.getUuid(), text, date, activityId, done: false }));
+  trip.shopping.push(...items);
+  saveTrip_(ctx.userId, trip);
+  const lines = [`🛒 已加入「${trip.name}」的購物清單（${shopWhere_(trip, items[0])}）`];
+  items.forEach((s) => lines.push(`☐ ${s.text}`));
+  if (missed) lines.push('', `※ 找不到跟「${missed}」有關的行程，先${date ? '記在這一天' : '不指定日期'}。`);
+  else if (!date) lines.push('', '※ 沒寫日期，先不指定。可以這樣寫：買 明天 抹茶粉、買 面膜 @藥妝店');
+  return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('購物清單'), ...(date ? [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/'))] : []), ...defaultQuick_()]));
+}
+
+/** mode：'done' 標記買到、'remove' 從清單拿掉 */
+function cmdShopMark_(ctx, body, mode) {
+  const names = body.split(/[、，,\n]+/).map((s) => s.trim()).filter(Boolean);
+  const active = ctx.trips.length ? activeTrip_(ctx.trips, ctx.today) : null;
+  const changed = new Map(); // trip → 這次處理到的項目
+  const missing = [];
+  for (const name of names) {
+    const hit = ctx.trips
+      .flatMap((trip) => (trip.shopping || []).map((item) => ({ trip, item, score: similarity_(name, item.text) })))
+      .filter((x) => x.score >= 0.6 && !(changed.get(x.trip) || []).includes(x.item))
+      // 分數高的優先；同分時先挑還沒買的、目前這趟旅程的
+      .sort((a, b) => b.score - a.score || Number(a.item.done) - Number(b.item.done) || Number(b.trip === active) - Number(a.trip === active))[0];
+    if (!hit) { missing.push(name); continue; }
+    if (mode === 'done') hit.item.done = true;
+    changed.set(hit.trip, (changed.get(hit.trip) || []).concat([hit.item]));
+  }
+  if (!changed.size) return say_(ctx, textMsg_(`購物清單裡找不到「${missing.join('、')}」。輸入「購物清單」可以看全部。`, [qMsg_('購物清單'), ...defaultQuick_()]));
+  const lines = [];
+  for (const [trip, items] of changed) {
+    if (mode === 'remove') trip.shopping = trip.shopping.filter((s) => !items.includes(s));
+    saveTrip_(ctx.userId, trip);
+    items.forEach((s) => lines.push(mode === 'remove' ? `🗑️ 已從購物清單拿掉：${s.text}` : `✅ 買到了：${s.text}`));
+    const left = trip.shopping.filter((s) => !s.done).length;
+    lines.push(left ? `「${trip.name}」還有 ${left} 樣沒買` : `「${trip.name}」的東西都買齊了 🎉`);
+  }
+  if (missing.length) lines.push('', `找不到：${missing.join('、')}`);
+  return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('購物清單'), ...defaultQuick_()]));
 }
 
 /* ---------- 旅遊日誌 ---------- */

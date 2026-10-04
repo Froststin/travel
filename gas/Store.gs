@@ -7,16 +7,17 @@
  * ============================================================ */
 
 const TABLES = {
-  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode'],
+  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping'],
   Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt'],
 };
-const SCHEMA_VERSION = '5';
+const SCHEMA_VERSION = '6';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
+const MAX_SHOPPING = 200; // 每個旅程的購物清單上限
 const MAX_BLANK_ROWS = 100; // 中間的空列超過這個數量就整理一次
 
 const tableCache_ = {};
@@ -221,6 +222,20 @@ function sanitizeTrip_(raw) {
       .slice(0, 300)
       .map((p) => ({ id: cleanId_(p.id) || Utilities.getUuid(), text: str_(p.text, 80), done: !!p.done }))
     : [];
+  // 購物清單：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（要是這個旅程裡的行程）
+  const actIds = new Set(Object.values(days).flat().map((a) => a.id));
+  const shopping = Array.isArray(raw.shopping)
+    ? raw.shopping
+      .filter((s) => s && typeof s.text === 'string' && s.text.trim())
+      .slice(0, MAX_SHOPPING)
+      .map((s) => ({
+        id: cleanId_(s.id) || Utilities.getUuid(),
+        text: str_(s.text, 80).trim(),
+        date: valid.has(s.date) ? s.date : '',
+        activityId: actIds.has(s.activityId) ? s.activityId : '',
+        done: !!s.done,
+      }))
+    : [];
   return {
     id: cleanId_(raw.id) || Utilities.getUuid(),
     name: str_(raw.name, 60) || '未命名旅程',
@@ -232,6 +247,7 @@ function sanitizeTrip_(raw) {
     notes: str_(raw.notes),
     days,
     packing,
+    shopping,
     createdAt: Number(raw.createdAt) || Date.now(),
   };
 }
@@ -301,6 +317,12 @@ function rowToTrip_(row, acts, viewerId) {
   } catch (err) {
     packing = [];
   }
+  let shopping = [];
+  try {
+    shopping = JSON.parse(row.shopping || '[]');
+  } catch (err) {
+    shopping = [];
+  }
   const members = membersOf_(row);
   return {
     id: row.id,
@@ -313,6 +335,7 @@ function rowToTrip_(row, acts, viewerId) {
     notes: row.notes,
     days,
     packing,
+    shopping,
     createdAt: Number(row.createdAt) || 0,
     updatedAt: row.updatedAt,
     role: roleIn_(viewerId, row),
@@ -357,6 +380,7 @@ function saveTrip_(userId, trip) {
     createdAt: existing ? existing.createdAt : String(trip.createdAt || now),
     updatedAt: now,
     inviteCode: existing ? existing.inviteCode : '',
+    shopping: JSON.stringify(syncShopping_(trip)),
   };
   const acts = [];
   for (const [date, list] of Object.entries(trip.days || {})) {

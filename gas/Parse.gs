@@ -280,6 +280,46 @@ function searchTrips_(trips, query) {
     .sort((a, b) => b.score - a.score);
 }
 
+/* ---------- 購物清單（跟著每日行程走） ---------- */
+// 這樣東西預計在哪一站買（行程被刪掉就回傳 null）
+function shopActivity_(trip, item) {
+  if (!item.activityId) return null;
+  for (const list of Object.values(trip.days || {})) {
+    const a = list.find((x) => x.id === item.activityId);
+    if (a) return a;
+  }
+  return null;
+}
+
+// 這樣東西歸在哪一天：有指定行程就跟著行程走（行程改到別天也跟著），否則用自己的日期；空字串＝不指定
+function shopDate_(trip, item) {
+  if (item.activityId) {
+    for (const [d, list] of Object.entries(trip.days || {})) {
+      if (list.some((a) => a.id === item.activityId)) return d;
+    }
+  }
+  return item.date && trip.startDate <= item.date && item.date <= trip.endDate ? item.date : '';
+}
+
+// 存檔前整理：有指定行程的，把日期更新成行程目前那一天；行程被刪掉的就留在最後那一天
+function syncShopping_(trip) {
+  const where = {};
+  for (const [d, list] of Object.entries(trip.days || {})) list.forEach((a) => { where[a.id] = d; });
+  return (trip.shopping || []).map((s) => {
+    const d = s.activityId && where[s.activityId];
+    return { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', done: !!s.done };
+  });
+}
+
+function shoppingOn_(trip, date) {
+  return (trip.shopping || []).filter((s) => shopDate_(trip, s) === date);
+}
+
+function shopLine_(trip, item) {
+  const a = shopActivity_(trip, item);
+  return `${item.done ? '☑' : '☐'} ${item.text}${a ? `（${a.title}）` : ''}`;
+}
+
 /* ---------- 新旅程：名稱＋日期範圍 ---------- */
 function parseTripSpec_(text, ctx) {
   const DATE = '(\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}|\\d{1,2}\\s*(?:/|月)\\s*\\d{1,2}\\s*(?:日|號)?)';

@@ -92,6 +92,22 @@
     </form>
   </dialog>
 
+  <!-- 購物清單表單 -->
+  <dialog id="shop-dialog">
+    <form id="shop-form" class="form">
+      <h2 id="shop-dialog-title">新增要買的東西</h2>
+      <label>要買什麼<input name="text" required maxlength="200" placeholder="例如：抹茶粉"></label>
+      <p id="shop-multi-hint" class="form-hint muted">一次加好幾樣可以用「、」分開，例如：抹茶粉、八橋</p>
+      <label>哪一天買<select name="date"></select></label>
+      <label>在哪一站買<select name="activityId"></select></label>
+      <p class="form-hint muted">指定行程後，行程改到別天，這樣東西也會跟著走</p>
+      <div class="form-actions">
+        <button type="button" class="btn" data-action="close-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
   <input type="file" id="import-file" accept="application/json,.json" hidden>
   <div id="toast" role="status" aria-live="polite"></div>
 

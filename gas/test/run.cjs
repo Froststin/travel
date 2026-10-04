@@ -285,7 +285,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && props.SCHEMA_VERSION === '5');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && props.SCHEMA_VERSION === '6');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -349,6 +349,46 @@ res = api('saveTrip', { trip: mine, baseUpdatedAt: mine.updatedAt });
 check('API：行程與行李的 id 含特殊字元會換成新的', res.ok && !JSON.stringify(api('list', {}).trips[0]).includes('onerror'), JSON.stringify(res));
 res = api('addJournal', { entry: { id: evilId, date: mine.startDate, text: '測試' } });
 check('API：日誌 id 含特殊字元會換成新的', res.ok && /^[\w-]+$/.test(res.entry.id), JSON.stringify(res));
+
+/* ---------- 購物清單 ---------- */
+const shopTrip = () => api('list', {}).trips[0];
+r = say('購物清單');
+check('購物清單是空的時有教學', r.text.includes('還是空的') && r.text.includes('買 明天'), r.text);
+say('新增 明天 14:00 錦市場');
+r = say('買 明天 抹茶粉、八橋');
+check('買：記在指定的那一天', r.text.includes('已加入') && r.text.includes('10/30') && shopTrip().shopping.length === 2 && shopTrip().shopping.every((s) => s.date === '2026-10-30' && !s.done), r.text);
+r = say('買 面膜 @錦市場');
+const nishiki = shopTrip().days['2026-10-30'].find((a) => a.title === '錦市場');
+check('買 @行程：記在那個行程', r.text.includes('錦市場') && shopTrip().shopping.find((s) => s.text === '面膜').activityId === nishiki.id, r.text);
+r = say('買 牙刷');
+check('沒寫日期就不指定', r.text.includes('不指定') && shopTrip().shopping.find((s) => s.text === '牙刷').date === '', r.text);
+r = say('明天');
+check('看某一天的行程會列出要買的東西', r.text.includes('🛒 要買：抹茶粉、八橋、面膜') && !r.text.includes('牙刷'), r.text);
+flags.failFlex = true;
+check('純文字版也會列出要買的東西', say('明天').text.includes('🛒 要買：抹茶粉、八橋、面膜'));
+flags.failFlex = false;
+r = say('買到 抹茶粉');
+check('買到：打勾並回報剩下幾樣', r.text.includes('買到了：抹茶粉') && r.text.includes('還有 3 樣') && shopTrip().shopping.find((s) => s.text === '抹茶粉').done, r.text);
+check('買到的不再出現在當天行程', !say('明天').text.includes('抹茶粉'));
+r = say('不買 八橋');
+check('不買：從清單拿掉', r.text.includes('拿掉：八橋') && !shopTrip().shopping.some((s) => s.text === '八橋'), r.text);
+r = say('改 錦市場 到 今天');
+r = say('明天要買什麼');
+check('行程改到別天，東西跟著走', !r.text.includes('面膜') && say('今天要買什麼').text.includes('☐ 面膜（錦市場）'), r.text);
+r = say('購物清單');
+check('購物清單依天分組', r.text.includes('已買 1 / 3') && r.text.includes('【Day 2・10/29') && r.text.includes('【不指定日期】') && r.text.includes('☑ 抹茶粉'), r.text);
+check('買到找不到的東西', say('買到 火箭').text.includes('找不到'));
+check('「買伴手禮幾點」仍是查詢', !say('買伴手禮幾點').text.includes('已加入'));
+let st = shopTrip();
+st.shopping.push({ id: evilIdShop(), text: '壞東西', date: '2099-01-01', activityId: 'nope', done: 1 }, { id: 'ok-1', text: '  ', date: '', activityId: '' });
+res = api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
+st = shopTrip();
+const bad = st.shopping.find((s) => s.text === '壞東西');
+check('API：購物清單會清理不合法的資料', res.ok && st.shopping.length === 4 && bad.date === '' && bad.activityId === '' && bad.done === true && /^[\w-]+$/.test(bad.id), JSON.stringify(st.shopping));
+function evilIdShop() { return '"><img src=x onerror=alert(1)>'; }
+say('刪除 錦市場'); postback({ a: 'del', id: nishiki.id });
+check('行程被刪掉後，東西留在原本那一天', shopDateOf('面膜') === '2026-10-29', shopDateOf('面膜'));
+function shopDateOf(text) { ctx.__t = shopTrip(); ctx.__s = ctx.__t.shopping.find((s) => s.text === text); return run('shopDate_(__t, __s)'); }
 
 /* ---------- 花費幣別、過長的修改內容 ---------- */
 r = say('新增 今天 15:00 龍安寺 400円');

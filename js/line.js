@@ -77,6 +77,7 @@ function tripShareText(t, dates) {
     `📍 ${t.destination || '未設定目的地'}`,
     `🗓️ ${prettyDate(t.startDate)} – ${prettyDate(t.endDate)}・${durationText(all.length)}`,
   ];
+  const shop = shoppingIndex(t, all);
   for (const d of dates) {
     const list = t.days[d] || [];
     lines.push('', `【Day ${all.indexOf(d) + 1}・${prettyDate(d)}】`);
@@ -89,6 +90,8 @@ function tripShareText(t, dates) {
       if (issue) lines.push(`　⚠️ ${issue}`);
       lines.push(`${timeLabel(a) || '--:--'} ${c.icon} ${a.title}${a.location ? `（${a.location}）` : ''}`);
     });
+    const toBuy = shoppingOn(t, shop, d).filter((s) => !s.done);
+    if (toBuy.length) lines.push(`🛒 要買：${toBuy.map((s) => s.text).join('、')}`);
   }
   let text = lines.join('\n');
   if (text.length > SHARE_TEXT_LIMIT) text = `${text.slice(0, SHARE_TEXT_LIMIT)}\n……（行程太長，只顯示前段）`;
