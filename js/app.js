@@ -5,7 +5,8 @@
  * 資料結構（存在 localStorage）：
  *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, notes,
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }],
- *                shopping: [{ id, text, date, activityId, price, done }], createdAt } ] }
+ *                shopping: [{ id, text, date, activityId, price, done }],
+ *                places: [...]（待去清單，見 js/places.js）, createdAt } ] }
  *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走），
  *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份
  *   activity = { id, time, endTime, title, category, location, mapUrl, cost, notes,
@@ -102,6 +103,7 @@ function cloudOn() {
 
 function commitTrip(trip) {
   syncShopping(trip);
+  if (typeof syncPlaces === 'function') syncPlaces(trip);
   saveState();
   if (cloudOn()) Cloud.saveTrip(trip);
 }
@@ -550,6 +552,7 @@ function renderTrip(t) {
   if (currentTab === 'budget') body = budgetView(t, dates);
   else if (currentTab === 'packing') body = packingView(t);
   else if (currentTab === 'shopping') body = shoppingView(t, dates);
+  else if (currentTab === 'places' && typeof placesView === 'function') body = placesView(t, dates);
   else if (currentTab === 'journal') body = journalView(t, dates);
   else body = planView(t, dates);
 
@@ -572,7 +575,7 @@ function renderTrip(t) {
       </div>
     </div>
     <nav class="tabs no-print" role="tablist">
-      ${tab('plan', '🗓️ 每日行程')}${tab('budget', '💰 預算')}${tab('shopping', '🛒 購物清單')}${tab('packing', '🧳 行李清單')}${tab('journal', '📔 日誌')}
+      ${tab('plan', '🗓️ 每日行程')}${tab('places', '📍 想去')}${tab('budget', '💰 預算')}${tab('shopping', '🛒 購物清單')}${tab('packing', '🧳 行李清單')}${tab('journal', '📔 日誌')}
     </nav>
     ${body}`;
   if (currentTab === 'journal' && cloudOn()) Cloud.loadPhotos(app);
@@ -859,7 +862,7 @@ tripForm.addEventListener('submit', (e) => {
     toast('旅程已更新');
     route();
   } else {
-    const t = { id: uid(), ...data, days: {}, packing: [], shopping: [], createdAt: Date.now() };
+    const t = { id: uid(), ...data, days: {}, packing: [], shopping: [], places: [], createdAt: Date.now() };
     state.trips.push(t);
     commitTrip(t);
     tripDialog.close();
@@ -1108,6 +1111,16 @@ function normalizeTrip(raw) {
     days,
     packing,
     shopping,
+    places: Array.isArray(raw.places)
+      ? raw.places.filter((p) => p && typeof p.name === 'string' && p.name.trim()).slice(0, 100).map((p) => {
+        const ok = p.geo === 'ok' && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)) && p.lat !== '' && p.lng !== '';
+        return {
+          id: uid(), name: str(p.name, 80).trim(), geo: ok ? 'ok' : (p.geo === 'none' ? 'none' : ''),
+          lat: ok ? Number(p.lat) : '', lng: ok ? Number(p.lng) : '', area: ok ? str(p.area, 40) : '', geoName: ok ? str(p.geoName, 80) : '',
+          activityId: newIds.get(p.activityId) || '',
+        };
+      })
+      : [],
     createdAt: Date.now(),
   };
 }
@@ -1320,6 +1333,29 @@ document.addEventListener('click', (e) => {
       }
       break;
     }
+    case 'organize-places':
+      if (t) organizePlaces(t.id);
+      break;
+    case 'edit-place': {
+      const p = t?.places?.find((x) => x.id === el.dataset.id);
+      const name = p && (prompt('地點名稱（改了會重新定位）', p.name) || '').trim().slice(0, 80);
+      if (p && name && name !== p.name) {
+        Object.assign(p, { name, geo: '', lat: '', lng: '', area: '', geoName: '' });
+        commitTrip(t);
+        renderTrip(t);
+        toast('已改名，按「整理」重新定位');
+      }
+      break;
+    }
+    case 'delete-place': {
+      const p = t?.places?.find((x) => x.id === el.dataset.id);
+      if (p && confirm(`把「${p.name}」從待去清單拿掉？${placeDate(t, p) ? '\n（已經排進行程的那一站不會被刪掉）' : ''}`)) {
+        t.places = t.places.filter((x) => x.id !== p.id);
+        commitTrip(t);
+        renderTrip(t);
+      }
+      break;
+    }
     case 'line-login':
       lineLogin();
       break;
@@ -1364,6 +1400,13 @@ document.addEventListener('submit', (e) => {
     if (cloudOn()) Cloud.addJournal(entry);
     renderTrip(t);
     toast('已記到旅遊日誌');
+    return;
+  }
+  if (e.target.id === 'places-form') {
+    e.preventDefault();
+    const t = currentTrip();
+    const raw = e.target.elements.namedItem('name').value.trim();
+    if (t && raw) addPlaces(t, raw);
     return;
   }
   if (e.target.id !== 'packing-form') return;

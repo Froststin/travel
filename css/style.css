@@ -566,3 +566,16 @@ textarea { resize: vertical; }
 .shop-price { flex: none; font-size: .88rem; font-weight: 600; white-space: nowrap; }
 .shop-item.done .shop-price { color: var(--muted); }
 .shop-day-total { margin-left: 8px; font-size: .85rem; font-weight: 400; }
+
+/* 待去清單 */
+.place-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.place-item:last-child { border-bottom: 0; }
+.place-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.place-name { font-weight: 600; overflow-wrap: anywhere; }
+.place-geo { font-size: .8rem; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-geo:hover { text-decoration: underline; }
+.place-pick { flex: none; max-width: 9.5em; padding: 4px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: .85rem; }
+.place-done { flex: none; white-space: nowrap; }
+.place-group-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.place-progress { margin: 8px 0 0; font-size: .9rem; font-weight: 600; color: var(--primary); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }

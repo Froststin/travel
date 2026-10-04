@@ -304,7 +304,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Shopping && props.SCHEMA_VERSION === '7');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && props.SCHEMA_VERSION === '8');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -453,13 +453,41 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '7');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '8');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
 say('不買 舊版的東西');
 api('deleteTrip', { id: kyoto.id }, 'good:U2');
 check('退出旅程後主人的購物清單不受影響', JSON.stringify(tripOf('U1').shopping) === mineBefore);
+
+/* ---------- 待去清單 ---------- */
+r = say('待去清單');
+check('待去清單是空的時有教學', r.text.includes('還是空的') && r.text.includes('想去 '), r.text);
+r = say('想去 淺草寺、晴空塔，上野動物園');
+check('想去：一次加好幾個', r.text.includes('已加入') && shopTrip().places.map((p) => p.name).join() === '淺草寺,晴空塔,上野動物園' && shopTrip().places.every((p) => p.geo === '' && p.lat === ''), r.text);
+r = say('想去 淺草寺、築地市場');
+check('想去：重複的不會再加', r.text.includes('已經有的：淺草寺') && shopTrip().places.length === 4, r.text);
+check('「想去哪」仍是查詢', !say('明天想去哪').text.includes('已加入'));
+check('旅伴看得到同一份待去清單', tripOf('U1').places.length === 4 && say('待去清單').text.includes('・ 築地市場'));
+// 網站整理後存回定位結果，並把其中一個排進行程
+st = shopTrip();
+const day2 = st.days['2026-10-29'];
+Object.assign(st.places[0], { geo: 'ok', lat: 35.7134031, lng: 139.7955261, area: '臺東區', geoName: '淺草寺', activityId: day2[0].id });
+Object.assign(st.places[2], { geo: 'ok', lat: 35.7163, lng: 139.7714, area: '臺東區', geoName: '上野動物園' });
+Object.assign(st.places[1], { geo: 'none' });
+Object.assign(st.places[3], { geo: 'ok', lat: 999, lng: 139, area: '壞資料', activityId: 'nope' });
+res = api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
+st = shopTrip();
+check('API：待去清單存回定位結果並清理不合法的資料', res.ok && st.places[0].geo === 'ok' && st.places[0].lat === 35.713403 && st.places[0].activityId === day2[0].id
+  && st.places[1].geo === 'none' && st.places[3].geo === '' && st.places[3].lat === '' && st.places[3].area === '' && st.places[3].activityId === '', JSON.stringify(st.places));
+r = say('待去清單');
+check('待去清單：依區域分組並標示已排入', r.text.includes('【臺東區】') && r.text.includes('✅ 淺草寺（已排入 Day 2）') && r.text.includes('・ 上野動物園') && r.text.includes('【還沒整理】') && r.text.includes('4 個，已排入行程 1 個'), r.text);
+r = say('不去 晴空塔、火星');
+check('不去：拿掉並回報找不到的', r.text.includes('拿掉：晴空塔') && r.text.includes('找不到：火星') && shopTrip().places.length === 3, r.text);
+st = shopTrip();
+st.places = [];
+api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
 
 /* ---------- 匯出 PDF ---------- */
 say('買 今天 匯出測試用 120');

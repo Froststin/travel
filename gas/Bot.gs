@@ -30,6 +30,11 @@ const HELP_TEXT = [
   '・今天路線、明天路線 → 串起當天所有地點',
   '・新增或修改時貼上 Google 地圖分享連結也可以',
   '',
+  '【待去清單】想去但還沒排進行程的地方',
+  '・想去 淺草寺、晴空塔 → 加進清單',
+  '・待去清單 → 查看（到網站按「整理」會把順路的分在一起）',
+  '・不去 晴空塔',
+  '',
   '【購物清單】跟著每天的行程走；每個人各自一份，旅伴看不到',
   '・買 明天 抹茶粉 500円、八橋 → 記在那一天',
   '・買 面膜 @藥妝店 → 記在那個行程（行程改天會跟著走）',
@@ -118,6 +123,9 @@ function handleText_(ctx, rawText) {
   if (/^(成員|旅伴|同行者|成員名單|有誰)$/.test(text)) return cmdMembers_(ctx);
   if ((m = text.match(/^(?:退出|離開)(?:旅程)?\s*(.*)$/))) return cmdLeave_(ctx, m[1]);
   if ((m = text.match(/^(?:移除成員|踢除|踢掉)\s*(.+)$/))) return cmdRemoveMember_(ctx, m[1]);
+  if (/^(?:待去清單|想去清單|待去|想去的地方|想去哪裡?|口袋名單)$/.test(text)) return cmdPlacesView_(ctx);
+  if ((m = text.match(/^不去了?\s*([\s\S]+)$/))) return cmdPlacesRemove_(ctx, m[1]);
+  if ((m = text.match(/^想去\s*[:：]?\s*([\s\S]+)$/)) && !/哪|嗎|什麼|\?/.test(text)) return cmdPlacesAdd_(ctx, m[1]);
   if (/購物清單|購物列表|要買什麼|買什麼|要買啥|買啥|要買的/.test(text) && text.length <= 20) return cmdShopView_(ctx, text.replace(/購物清單|購物列表|要買什麼|買什麼|要買啥|買啥|要買的(?:東西)?/g, ' '));
   if ((m = text.match(/^(?:買到了?|買了|已買|買好了?)\s*([\s\S]+)$/))) return cmdShopMark_(ctx, m[1], 'done');
   if ((m = text.match(/^(?:不買了?|不用買)\s*([\s\S]+)$/))) return cmdShopMark_(ctx, m[1], 'remove');
@@ -338,7 +346,7 @@ function cmdNewTrip_(ctx, body) {
   const trip = {
     id: Utilities.getUuid(), name: spec.name.slice(0, 60), destination: spec.name.slice(0, 60),
     startDate: spec.startDate, endDate: spec.endDate, budget: 0, currency: 'TWD', notes: '',
-    days: {}, packing: [], shopping: [], createdAt: Date.now(),
+    days: {}, packing: [], shopping: [], places: [], createdAt: Date.now(),
   };
   saveTrip_(ctx.userId, trip);
   const n = dateRange_(trip.startDate, trip.endDate).length;
@@ -509,6 +517,79 @@ function applyEdit_(ctx, id, changes) {
   saveTrip_(ctx.userId, trip);
   const issue = scheduleIssue_(trip.days[date][trip.days[date].indexOf(activity) - 1], activity);
   return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}${costNote}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
+}
+
+/* ---------- 待去清單 ---------- */
+function placeScheduled_(trip, place) {
+  if (!place.activityId) return '';
+  for (const [d, list] of Object.entries(trip.days || {})) {
+    if (list.some((a) => a.id === place.activityId)) return d;
+  }
+  return '';
+}
+
+function cmdPlacesView_(ctx) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  const trip = activeTrip_(ctx.trips, ctx.today);
+  const places = trip.places || [];
+  const more = [qUri_('到網站整理', tripLiffUrl_(trip.id)), ...defaultQuick_()];
+  if (!places.length) return say_(ctx, textMsg_(`「${trip.name}」的待去清單還是空的。\n例如：想去 淺草寺、晴空塔`, more));
+  const line = (p) => {
+    const d = placeScheduled_(trip, p);
+    return `${d ? '✅' : '・'} ${p.name}${d ? `（已排入 Day ${daysBetween_(trip.startDate, d) + 1}）` : ''}`;
+  };
+  const lines = [`📍 ${trip.name} 待去清單：${places.length} 個，已排入行程 ${places.filter((p) => placeScheduled_(trip, p)).length} 個`];
+  // 已經在網站整理過的，依所在的區分組
+  const areas = [...new Set(places.filter((p) => p.geo === 'ok' && p.area).map((p) => p.area))];
+  areas.forEach((area) => {
+    lines.push('', `【${area}】`);
+    places.filter((p) => p.geo === 'ok' && p.area === area).forEach((p) => lines.push(line(p)));
+  });
+  const rest = places.filter((p) => !(p.geo === 'ok' && p.area));
+  if (rest.length) {
+    lines.push('', areas.length ? '【還沒整理】' : '');
+    rest.forEach((p) => lines.push(line(p)));
+  }
+  lines.push('', '到網站的「想去」分頁按「整理」，會依距離把順路的地點分在一起，還能直接排進某一天。');
+  return say_(ctx, textMsg_(lines.filter((l, i) => !(l === '' && lines[i - 1] === '')).join('\n'), more));
+}
+
+function cmdPlacesAdd_(ctx, body) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('要先建立旅程喔，例如：新旅程 京都 10/28-10/30'));
+  const trip = activeTrip_(ctx.trips, ctx.today);
+  trip.places = trip.places || [];
+  const have = new Set(trip.places.map((p) => p.name));
+  const names = [...new Set(body.split(/[、，,\n]+/).map((s) => s.replace(/\s+/g, ' ').trim().slice(0, 80)).filter(Boolean))];
+  const fresh = names.filter((n) => !have.has(n));
+  if (!names.length) return say_(ctx, textMsg_('想去哪裡呢？例如：想去 淺草寺、晴空塔'));
+  if (trip.places.length + fresh.length > MAX_PLACES) return say_(ctx, textMsg_(`待去清單最多 ${MAX_PLACES} 個地方。`));
+  fresh.forEach((name) => trip.places.push({ id: Utilities.getUuid(), name, geo: '', lat: '', lng: '', area: '', geoName: '', activityId: '' }));
+  if (fresh.length) saveTrip_(ctx.userId, trip);
+  const lines = [fresh.length ? `📍 已加入「${trip.name}」的待去清單：${fresh.join('、')}` : '這些地方都已經在待去清單裡了。'];
+  if (names.length > fresh.length && fresh.length) lines.push(`（已經有的：${names.filter((n) => have.has(n)).join('、')}）`);
+  lines.push(`目前共 ${trip.places.length} 個。到網站按「整理」可以把順路的分在一起。`);
+  return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('待去清單'), qUri_('到網站整理', tripLiffUrl_(trip.id)), ...defaultQuick_()]));
+}
+
+function cmdPlacesRemove_(ctx, body) {
+  const names = body.split(/[、，,\n]+/).map((s) => s.trim()).filter(Boolean);
+  const trip = ctx.trips.length ? activeTrip_(ctx.trips, ctx.today) : null;
+  const removed = [];
+  const missing = [];
+  for (const name of names) {
+    const hit = ((trip && trip.places) || [])
+      .map((p) => ({ p, score: similarity_(name, p.name) }))
+      .filter((x) => x.score >= 0.6 && !removed.includes(x.p))
+      .sort((a, b) => b.score - a.score)[0];
+    if (hit) removed.push(hit.p); else missing.push(name);
+  }
+  if (!removed.length) return say_(ctx, textMsg_(`待去清單裡找不到「${missing.join('、')}」。輸入「待去清單」可以看全部。`, [qMsg_('待去清單'), ...defaultQuick_()]));
+  trip.places = trip.places.filter((p) => !removed.includes(p));
+  saveTrip_(ctx.userId, trip);
+  const lines = [`🗑️ 已從待去清單拿掉：${removed.map((p) => p.name).join('、')}`];
+  if (removed.some((p) => placeScheduled_(trip, p))) lines.push('（已經排進行程的那一站不會被刪掉）');
+  if (missing.length) lines.push(`找不到：${missing.join('、')}`);
+  return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('待去清單'), ...defaultQuick_()]));
 }
 
 /* ---------- 購物清單 ---------- */

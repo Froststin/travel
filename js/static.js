@@ -157,8 +157,21 @@ function buildStaticHtml(t, photos = new Map()) {
           </div></li>`).join('')}</ul>`).join('')}
     </section>` : '';
 
+  // 待去清單裡還沒排進行程的地方（整理過的依順路分組）
+  const openPlaces = typeof placeGroups === 'function' ? (t.places || []).filter((p) => !placeDate(t, p)) : [];
+  const pg = openPlaces.length ? placeGroups(openPlaces) : null;
+  const placesHtml = pg ? `
+    <section id="places">
+      <h2>📍 想去（還沒排進行程）</h2>
+      <ul class="check">
+        ${pg.groups.map((g) => `<li><b>${esc(g.label)}一帶</b>：${g.items.map((p) => `<a href="${esc(mapUrl(p.name))}">${esc(p.name)}</a>`).join('、')}</li>`).join('')}
+        ${[...pg.pending, ...pg.missing].length ? `<li>${pg.groups.length ? '<b>其他</b>：' : ''}${[...pg.pending, ...pg.missing].map((p) => `<a href="${esc(mapUrl(p.name))}">${esc(p.name)}</a>`).join('、')}</li>` : ''}
+      </ul>
+    </section>` : '';
+
   const nav = [
     ...dates.map((d, i) => `<a href="#day-${i + 1}">Day ${i + 1}</a>`),
+    placesHtml ? '<a href="#places">📍 想去</a>' : '',
     '<a href="#budget">💰 預算</a>',
     shopping ? '<a href="#shopping">🛒 購物</a>' : '',
     packing ? '<a href="#packing">🧳 行李</a>' : '',
@@ -182,7 +195,7 @@ function buildStaticHtml(t, photos = new Map()) {
   ${t.notes ? `<p>${esc(t.notes).replace(/\n/g, '<br>')}</p>` : ''}
   <p class="notice">這是 ${exportedAt} 匯出的離線版本，不需要網路就能看（地圖連結除外），之後的修改不會出現在這裡。<br>最新內容：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>
   <nav>${nav}</nav>
-  ${days}${budget}${shopping}${packing}${journalHtml}
+  ${days}${placesHtml}${budget}${shopping}${packing}${journalHtml}
   <footer>旅程手帖・${exportedAt} 匯出</footer>
 </main>
 </body>

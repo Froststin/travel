@@ -8,18 +8,19 @@
  * ============================================================ */
 
 const TABLES = {
-  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping'],
+  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places'],
   Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt'],
   Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done'],
 };
-const SCHEMA_VERSION = '7';
+const SCHEMA_VERSION = '8';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
 const MAX_SHOPPING = 200; // 每個旅程的購物清單上限
+const MAX_PLACES = 100; // 每個旅程的待去清單上限
 const MAX_BLANK_ROWS = 100; // 中間的空列超過這個數量就整理一次
 
 const tableCache_ = {};
@@ -260,6 +261,7 @@ function sanitizeTrip_(raw) {
         done: !!s.done,
       }))
     : [];
+  const places = sanitizePlaces_(raw.places, actIds);
   return {
     id: cleanId_(raw.id) || Utilities.getUuid(),
     name: str_(raw.name, 60) || '未命名旅程',
@@ -272,8 +274,36 @@ function sanitizeTrip_(raw) {
     days,
     packing,
     shopping,
+    places,
     createdAt: Number(raw.createdAt) || Date.now(),
   };
+}
+
+/* ---------- 待去清單（整個旅程共用） ---------- */
+/**
+ * 想去但還沒排進行程的地方。geo：''＝還沒定位、'ok'＝已定位（lat/lng/area/geoName 有值）、'none'＝找不到
+ * activityId：已排入行程時指向那個行程，行程被刪掉就清空
+ */
+function sanitizePlaces_(list, actIds) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((p) => p && typeof p.name === 'string' && p.name.trim())
+    .slice(0, MAX_PLACES)
+    .map((p) => {
+      const lat = Number(p.lat);
+      const lng = Number(p.lng);
+      const ok = p.geo === 'ok' && p.lat !== '' && p.lng !== '' && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+      return {
+        id: cleanId_(p.id) || Utilities.getUuid(),
+        name: str_(p.name, 80).trim(),
+        geo: ok ? 'ok' : (p.geo === 'none' ? 'none' : ''),
+        lat: ok ? Math.round(lat * 1e6) / 1e6 : '',
+        lng: ok ? Math.round(lng * 1e6) / 1e6 : '',
+        area: ok ? str_(p.area, 40) : '',
+        geoName: ok ? str_(p.geoName, 80) : '',
+        activityId: actIds.has(p.activityId) ? p.activityId : '',
+      };
+    });
 }
 
 /* ---------- 購物清單（每個人各自一份） ---------- */
@@ -356,6 +386,12 @@ function rowToTrip_(row, acts, viewerId) {
     packing = [];
   }
   const shopping = loadShopping_(row.id, viewerId); // 只有自己的
+  let places = [];
+  try {
+    places = JSON.parse(row.places || '[]');
+  } catch (err) {
+    places = [];
+  }
   const members = membersOf_(row);
   return {
     id: row.id,
@@ -369,6 +405,7 @@ function rowToTrip_(row, acts, viewerId) {
     days,
     packing,
     shopping,
+    places,
     createdAt: Number(row.createdAt) || 0,
     updatedAt: row.updatedAt,
     role: roleIn_(viewerId, row),
@@ -414,6 +451,7 @@ function saveTrip_(userId, trip) {
     updatedAt: now,
     inviteCode: existing ? existing.inviteCode : '',
     shopping: '', // 舊欄位，已改存 Shopping 工作表
+    places: JSON.stringify(sanitizePlaces_(trip.places, new Set(Object.values(trip.days || {}).flat().map((a) => a.id)))),
   };
   // 購物清單只換掉存檔這個人自己的，旅伴的不動
   replaceRows_('Shopping', (s) => s.tripId === trip.id && s.userId === userId, syncShopping_(trip).map((s) => shopRow_(trip.id, userId, s)));
