@@ -173,6 +173,8 @@ const Cloud = {
     this.setStatus('syncing');
     app.innerHTML = '<p class="loading">☁️ 正在從雲端載入旅程……</p>';
     try {
+      // 憑證已經過期就不用白跑一趟，直接換新的
+      if (this.tokenExpired()) throw Object.assign(new Error('登入已過期'), { status: 401 });
       const data = await this.listWithRetry({ name: await this.profileName() });
       const local = state;
       this.enabled = true;
@@ -255,14 +257,30 @@ const Cloud = {
     this.scheduleRetry();
   },
 
-  relogin() {
-    if (!liff.isInClient()) return liff.login({ redirectUri: location.href });
-    if (!sessionStorage.getItem(RELOAD_FLAG)) {
-      sessionStorage.setItem(RELOAD_FLAG, '1');
-      return location.reload();
+  // LINE 的 ID token 只有 1 小時有效，但 LIFF 在一般瀏覽器會一直留著舊的；過期就要先登出再登入才會換新
+  tokenExpired() {
+    try {
+      const exp = (liff.getDecodedIDToken() || {}).exp;
+      return !exp || exp * 1000 < Date.now() + 60 * 1000;
+    } catch (err) {
+      return true;
     }
+  },
+
+  /** 重新取得登入憑證。每個分頁只自動試一次（成功載入後會歸零），避免一直跳去登入 */
+  relogin() {
+    const tried = sessionStorage.getItem(RELOAD_FLAG);
+    if (!tried) {
+      sessionStorage.setItem(RELOAD_FLAG, '1');
+      if (liff.isInClient()) return location.reload(); // LINE 內建瀏覽器：重新開啟就會拿到新的
+      if (liff.isLoggedIn()) liff.logout();            // 一般瀏覽器：不先登出的話，登入後拿到的還是舊的
+      return liff.login({ redirectUri: location.href });
+    }
+    this.enabled = false;
     this.setStatus('error');
-    toast('登入驗證失敗，請關閉網頁後重新開啟');
+    const btn = document.getElementById('login-btn');
+    if (btn && !liff.isInClient()) btn.hidden = false;
+    toast(liff.isInClient() ? '登入驗證失敗，請關閉網頁後重新開啟' : '登入驗證失敗，請按右上角「LINE 登入同步」再登入一次');
   },
 
   async loadPhotos(root) {

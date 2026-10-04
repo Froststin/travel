@@ -61,8 +61,12 @@ function settleLocal() {
 }
 
 function lineLogin() {
-  if (liffReady) liff.login({ redirectUri: location.href });
-  else toast('LINE 登入目前無法使用，請稍後再試');
+  if (!liffReady) return toast('LINE 登入目前無法使用，請稍後再試');
+  try {
+    sessionStorage.removeItem(RELOAD_FLAG); // 使用者自己按的，登入後可以再自動試一次
+  } catch { /* 忽略 */ }
+  if (liff.isLoggedIn()) liff.logout(); // 清掉舊的（可能已過期的）憑證，登入後才會拿到新的
+  liff.login({ redirectUri: location.href });
 }
 
 function canUsePicker() {
