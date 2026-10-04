@@ -566,7 +566,7 @@ function renderTrip(t) {
         <button class="btn btn-line" data-action="share-line">分享到 LINE</button>
         <button class="btn" data-action="edit-trip">編輯</button>
         <button class="btn" data-action="export-trip" title="匯出 JSON 備份檔，可以再匯入">匯出</button>
-        <button class="btn" data-action="export-static" title="匯出成單一 HTML 檔，沒有網路、網站打不開時也能看">離線網頁</button>
+        <button class="btn" data-action="export-static" title="匯出成單一 HTML 檔，沒有網路、網站打不開時也能看">匯出靜態網站</button>
         <button class="btn" data-action="print">列印</button>
         <button class="btn btn-danger" data-action="delete-trip">${isTripOwner(t) ? '刪除' : '退出旅程'}</button>
       </div>
@@ -647,7 +647,7 @@ function activityItem(a, date, currency, shopItems = []) {
     </li>`;
 }
 
-// 預算的各項數字（全部換算成台幣），預算頁與匯出的離線網頁共用
+// 預算的各項數字（全部換算成台幣），預算頁與匯出的靜態網站共用
 function budgetData(t, dates) {
   const all = allActivities(t);
   // 購物清單的金額也算進來，歸在「購物」

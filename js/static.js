@@ -216,7 +216,7 @@ async function staticPhotos(t) {
 }
 
 async function exportStaticSite(t) {
-  toast('正在產生離線網頁……');
+  toast('正在產生靜態網站……');
   const html = buildStaticHtml(t, await staticPhotos(t));
   const name = `${t.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || '旅程'}.html`;
   const inLine = typeof liffReady !== 'undefined' && liffReady && liff.isInClient();
@@ -235,5 +235,5 @@ async function exportStaticSite(t) {
     }
   }
   downloadBlob(name, new Blob([html], { type: 'text/html;charset=utf-8' }));
-  toast(inLine ? '如果沒有開始下載，請點右上角選單「以預設瀏覽器開啟」後再匯出一次' : '已匯出離線網頁，用瀏覽器打開就能看');
+  toast(inLine ? '如果沒有開始下載，請點右上角選單「以預設瀏覽器開啟」後再匯出一次' : '已匯出靜態網站，用瀏覽器打開就能看');
 }
