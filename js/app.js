@@ -5,10 +5,11 @@
  * 資料結構（存在 localStorage）：
  *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, notes,
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }],
- *                shopping: [{ id, text, date, activityId, price, done }],
+ *                shopping: [{ id, text, date, activityId, price, done, note, image | fileId }],
  *                places: [...]（待去清單，見 js/places.js）, createdAt } ] }
  *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走），
- *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份
+ *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份；
+ *             note 是備註（數量、顏色、注意事項）；照片見 js/shopphoto.js
  *   activity = { id, time, endTime, title, category, location, mapUrl, cost, notes,
  *                travelMode, travelMin, travelCost, travelCostCurrency }  // travel* 是「從上一站過來」
  *   cost 用旅程幣別；travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
@@ -348,7 +349,9 @@ function syncShopping(t) {
   for (const [d, list] of Object.entries(t.days || {})) list.forEach((a) => where.set(a.id, d));
   t.shopping = (t.shopping || []).map((s) => {
     const d = s.activityId && where.get(s.activityId);
-    return { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done };
+    const out = { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done, note: s.note || '', fileId: s.fileId || '' };
+    if (s.image) out.image = s.image; // 還沒上傳到雲端的照片
+    return out;
   });
 }
 
@@ -376,16 +379,49 @@ function shoppingOn(t, idx, date) {
   return (t.days[date] || []).flatMap((a) => idx.byAct.get(a.id) || []).concat(idx.byDay.get(date) || []);
 }
 
+// 照片：已經有圖就直接顯示；只有雲端的檔案 id 時先留空，畫面畫好後由 ShopPhotos.load 補上
+function shopImg(s, cls) {
+  const photos = typeof ShopPhotos !== 'undefined' ? ShopPhotos : null;
+  const src = photos ? photos.src(s) : (s.image || '');
+  if (!src && !(s.fileId && photos)) return '';
+  return `<button type="button" class="${cls}" data-action="view-shop-photo" data-id="${esc(s.id)}" title="看大圖" aria-label="看 ${esc(s.text)} 的照片">
+    <img ${src ? `src="${esc(src)}"` : `data-shop-file="${esc(s.fileId)}"`} alt="" loading="lazy"></button>`;
+}
+
+// 每日行程裡用的精簡版（一列）
 function shopItem(s, currency, where = '') {
   return `
     <li class="shop-item${s.done ? ' done' : ''}">
-      <label><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}</span></label>
+      ${shopImg(s, 'shop-thumb')}
+      <label><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}${s.note ? `<small class="shop-note">${esc(s.note)}</small>` : ''}</span></label>
       ${where ? `<span class="shop-where muted">${where}</span>` : ''}
       ${Number(s.price) ? `<span class="shop-price">${showMoney(s.price, currency)}</span>` : ''}
       <span class="shop-actions no-print">
         <button class="icon-btn" data-action="edit-shop" data-id="${esc(s.id)}" title="編輯" aria-label="編輯">✎</button>
         <button class="icon-btn" data-action="delete-shop" data-id="${esc(s.id)}" title="刪除" aria-label="刪除">✕</button>
       </span>
+    </li>`;
+}
+
+// 購物清單分頁用的卡片：照片、勾選、名稱、備註與金額可以直接改
+function shopCard(s, currency, where = '') {
+  const twd = Number(s.price) && currency !== 'TWD' ? toTWD(s.price, currency) : null;
+  return `
+    <li class="shop-card${s.done ? ' done' : ''}">
+      <div class="shop-photo">
+        ${shopImg(s, 'shop-photo-btn') || `<button type="button" class="shop-photo-add no-print" data-action="pick-shop-photo" data-id="${esc(s.id)}">＋ 加照片</button>`}
+        <span class="shop-card-actions no-print">
+          <button class="icon-btn" data-action="edit-shop" data-id="${esc(s.id)}" title="編輯（改日期、在哪買、換照片）" aria-label="編輯">✎</button>
+          <button class="icon-btn" data-action="delete-shop" data-id="${esc(s.id)}" title="刪除" aria-label="刪除">✕</button>
+        </span>
+      </div>
+      <label class="shop-card-name"><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}</span></label>
+      ${where ? `<div class="shop-where muted">${where}</div>` : ''}
+      <input class="shop-card-input" data-change="shop-note" data-id="${esc(s.id)}" value="${esc(s.note || '')}" maxlength="200" placeholder="數量／顏色／備註…" aria-label="${esc(s.text)} 的備註">
+      <div class="shop-card-price">
+        <input class="shop-card-input" type="number" min="0" step="any" inputmode="decimal" data-change="shop-price" data-id="${esc(s.id)}" value="${Number(s.price) || ''}" placeholder="預估／購買金額" aria-label="${esc(s.text)} 的金額（${esc(currency)}）">
+        ${currency !== 'TWD' ? `<span class="muted">${esc(currency)}${twd != null ? ` ≈ ${ntd(twd)}` : ''}</span>` : ''}
+      </div>
     </li>`;
 }
 
@@ -407,9 +443,9 @@ function shoppingView(t, dates) {
           <h3>Day ${i + 1}・${prettyDate(d)}${dayTotal ? `<span class="muted shop-day-total">${ntd(dayTotal)}</span>` : ''}</h3>
           <button class="btn btn-sm no-print" data-action="add-shop" data-date="${d}">＋ 這天要買</button>
         </div>
-        <ul class="shop-list">
-          ${acts.map((a) => idx.byAct.get(a.id).map((s) => shopItem(s, t.currency, `📍 ${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}`)).join('')).join('')}
-          ${rest.map((s) => shopItem(s, t.currency)).join('')}
+        <ul class="shop-grid">
+          ${acts.map((a) => idx.byAct.get(a.id).map((s) => shopCard(s, t.currency, `📍 ${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}`)).join('')).join('')}
+          ${rest.map((s) => shopCard(s, t.currency)).join('')}
         </ul>
       </section>`;
   }).join('');
@@ -421,7 +457,7 @@ function shoppingView(t, dates) {
       </div>
       <div class="progress"><span style="width:${pct}%"></span></div>
       ${items.length ? '' : '<p class="muted shop-empty">還沒有要買的東西。可以指定哪一天、在哪一站買，每日行程裡也會跟著顯示。</p>'}
-      ${total ? '<p class="muted hint">有填金額的會計入「💰 預算」的購物分類。</p>' : ''}
+      ${items.length ? '<p class="muted hint">卡片上的備註和金額可以直接改；點「＋ 加照片」放上商品照片，點照片可以看大圖。有填金額的會計入「💰 預算」的購物分類。</p>' : ''}
       ${cloudOn() && Array.isArray(t.members) && t.members.length > 1 ? '<p class="muted hint">🔒 購物清單是你自己的，旅伴看不到；預算裡的購物金額也只算你自己的。</p>' : ''}
       <p class="muted hint no-print">${cloudOn()
         ? '也可以在 LINE 官方帳號輸入「買 明天 抹茶粉」「買 面膜 @藥妝店」「買到 抹茶粉」。'
@@ -431,7 +467,7 @@ function shoppingView(t, dates) {
     ${idx.loose.length ? `
       <section class="panel">
         <h3>不指定日期</h3>
-        <ul class="shop-list">${idx.loose.map((s) => shopItem(s, t.currency)).join('')}</ul>
+        <ul class="shop-grid">${idx.loose.map((s) => shopCard(s, t.currency)).join('')}</ul>
       </section>` : ''}`;
 }
 
@@ -579,6 +615,7 @@ function renderTrip(t) {
     </nav>
     ${body}`;
   if (currentTab === 'journal' && cloudOn()) Cloud.loadPhotos(app);
+  if (typeof ShopPhotos !== 'undefined') ShopPhotos.load(app);
 }
 
 function planView(t, dates) {
@@ -996,6 +1033,76 @@ function fillShopActivities(date, selected) {
   shopForm.elements.activityId.disabled = !list.length;
 }
 
+// 表單裡的照片：image＝這次新選的（還沒存）、removed＝按了移除、item＝正在編輯的項目
+let shopDialogPhoto = { image: '', removed: false, item: null };
+let shopPhotoTarget = '';   // 選照片是給誰用的：'dialog' 或購物項目的 id
+const shopPhotoFile = $('#shop-photo-file');
+const photoDialog = $('#photo-dialog');
+
+function updateShopPhotoPreview() {
+  const img = $('#shop-photo-preview');
+  if (!img) return;
+  const it = shopDialogPhoto.item;
+  const src = shopDialogPhoto.image || (!shopDialogPhoto.removed && it && typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(it) : '');
+  const has = !!src || (!shopDialogPhoto.removed && !!(it && it.fileId));
+  img.hidden = !src;
+  if (src) img.src = src; else img.removeAttribute('src');
+  $('#shop-photo-remove').hidden = !has;
+}
+
+// 把照片放到某個購物項目上（換照片時舊的雲端檔案會在存檔後由後端丟掉）
+function setShopPhoto(item, dataUrl) {
+  item.image = dataUrl;
+  item.fileId = '';
+}
+
+shopPhotoFile?.addEventListener('change', async () => {
+  const file = shopPhotoFile.files[0];
+  shopPhotoFile.value = '';
+  if (!file) return;
+  try {
+    const dataUrl = await shopImageFromFile(file);
+    if (shopPhotoTarget === 'dialog') {
+      shopDialogPhoto.image = dataUrl;
+      shopDialogPhoto.removed = false;
+      return updateShopPhotoPreview();
+    }
+    const t = currentTrip();
+    const item = t && (t.shopping || []).find((s) => s.id === shopPhotoTarget);
+    if (!item) return;
+    setShopPhoto(item, dataUrl);
+    commitTrip(t);
+    renderTrip(t);
+    toast('已加上照片');
+  } catch (err) {
+    toast(err.message || '照片處理失敗');
+  }
+});
+
+photoDialog?.addEventListener('click', () => photoDialog.close());
+
+// 卡片上直接改備註、金額。改完不馬上重畫，免得正要點下一格時游標跑掉；離開輸入框後再更新合計
+let shopNeedsRender = false;
+document.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-change="shop-note"], [data-change="shop-price"]');
+  const t = currentTrip();
+  const item = el && t && (t.shopping || []).find((s) => s.id === el.dataset.id);
+  if (!item) return;
+  if (el.dataset.change === 'shop-note') item.note = el.value.trim().slice(0, 200);
+  else item.price = Math.max(0, Number(el.value) || 0);
+  commitTrip(t);
+  shopNeedsRender = true;
+});
+document.addEventListener('focusout', () => {
+  setTimeout(() => {
+    const t = currentTrip();
+    if (!shopNeedsRender || !t || document.querySelector('dialog[open]')) return;
+    if (document.activeElement && document.activeElement.closest('.shop-card-input')) return; // 還在填下一格
+    shopNeedsRender = false;
+    if (currentTab === 'shopping') renderTrip(t);
+  }, 0);
+});
+
 // preset：{ date, activityId } 新增時的預設位置；item：要編輯的項目
 function openShopDialog(preset, item) {
   const t = currentTrip();
@@ -1014,6 +1121,9 @@ function openShopDialog(preset, item) {
   const date = actDate || (dates.includes(src.date) ? src.date : '');
   shopForm.elements.text.value = item ? item.text : '';
   shopForm.elements.price.value = (item && item.price) || '';
+  if (shopForm.elements.note) shopForm.elements.note.value = (item && item.note) || '';
+  shopDialogPhoto = { image: '', removed: false, item: item || null };
+  updateShopPhotoPreview();
   $('#shop-price-label').textContent = t.currency === 'TWD' ? '預估金額（NT$，選填）' : `預估金額（${t.currency}，選填，會換算成台幣）`;
   shopForm.elements.date.value = date;
   fillShopActivities(date, actDate ? src.activityId : '');
@@ -1033,16 +1143,23 @@ shopForm?.addEventListener('submit', (e) => {
   const activityId = date ? (f.get('activityId') || '') : '';
   const raw = f.get('text').trim();
   const price = Math.max(0, Number(f.get('price')) || 0);
+  const note = (f.get('note') || '').trim().slice(0, 200);
   // 新增時可以用「、」一次加好幾樣；編輯時整段都是同一樣
   const names = editingShopId ? [raw.slice(0, 80)] : [...new Set(raw.split(/[、，,]+/).map((s) => s.trim().slice(0, 80)).filter(Boolean))];
   if (!names.length || !names[0]) return toast('請填寫要買什麼');
   t.shopping ||= [];
   if (editingShopId) {
     const item = t.shopping.find((s) => s.id === editingShopId);
-    if (item) Object.assign(item, { text: names[0], date, activityId, price });
+    if (item) {
+      Object.assign(item, { text: names[0], date, activityId, price, note });
+      if (shopDialogPhoto.image) setShopPhoto(item, shopDialogPhoto.image);
+      else if (shopDialogPhoto.removed) { delete item.image; item.fileId = ''; }
+    }
   } else {
     if (t.shopping.length + names.length > MAX_SHOPPING) return toast(`購物清單最多 ${MAX_SHOPPING} 樣`);
-    t.shopping.push(...names.map((text) => ({ id: uid(), text, date, activityId, price, done: false })));
+    const added = names.map((text) => ({ id: uid(), text, date, activityId, price, done: false, note, fileId: '' }));
+    if (shopDialogPhoto.image) setShopPhoto(added[0], shopDialogPhoto.image); // 照片只放第一樣
+    t.shopping.push(...added);
   }
   commitTrip(t);
   shopDialog.close();
@@ -1096,6 +1213,9 @@ function normalizeTrip(raw) {
       date: DATE_RE.test(s.date) && s.date >= raw.startDate && s.date <= raw.endDate ? s.date : '',
       activityId: newIds.get(s.activityId) || '',
       price: Math.max(0, Number(s.price) || 0),
+      note: str(s.note, 200).trim(),
+      fileId: '', // 雲端的照片是別的帳號或別的旅程的，匯入時不沿用
+      ...(typeof s.image === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(s.image) && s.image.length < 600000 ? { image: s.image } : {}),
       done: !!s.done,
     }))
     : [];
@@ -1185,12 +1305,12 @@ function buildSampleTrip() {
   };
   // 購物清單：指定在哪一站買，或只指定哪一天
   const at = (title) => Object.values(trip.days).flat().find((a) => a.title === title).id;
-  const buy = (text, price, date, activityId = '') => trip.shopping.push({ id: uid(), text, date, activityId, price, done: false });
-  buy('御守', 200, d(1), at('清水寺'));
-  buy('抹茶粉', 350, d(1), at('錦市場晚餐'));
+  const buy = (text, price, date, activityId = '', note = '') => trip.shopping.push({ id: uid(), text, date, activityId, price, done: false, note, fileId: '' });
+  buy('御守', 200, d(1), at('清水寺'), '交通安全 ×2');
+  buy('抹茶粉', 350, d(1), at('錦市場晚餐'), '要無糖的');
   buy('漬物', 250, d(1), at('錦市場晚餐'));
-  buy('八橋', 300, d(2), at('買伴手禮'));
-  buy('藥妝（面膜、眼藥水）', 1200, d(2));
+  buy('八橋', 300, d(2), at('買伴手禮'), '生八橋，肉桂口味 ×3 盒');
+  buy('藥妝（面膜、眼藥水）', 1200, d(2), '', '記得帶護照免稅');
   return trip;
 }
 
@@ -1307,6 +1427,30 @@ document.addEventListener('click', (e) => {
         renderTrip(t);
       }
       break;
+    case 'pick-shop-photo':
+      shopPhotoTarget = el.dataset.id;
+      shopPhotoFile?.click();
+      break;
+    case 'shop-dialog-pick':
+      shopPhotoTarget = 'dialog';
+      shopPhotoFile?.click();
+      break;
+    case 'shop-dialog-remove-photo':
+      shopDialogPhoto.image = '';
+      shopDialogPhoto.removed = true;
+      updateShopPhotoPreview();
+      break;
+    case 'view-shop-photo': {
+      const item = t?.shopping?.find((x) => x.id === el.dataset.id);
+      const src = item && typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(item) : '';
+      if (src && photoDialog) {
+        $('#photo-dialog-img').src = src;
+        photoDialog.showModal();
+      } else if (item) {
+        toast('照片還在載入，請稍等一下');
+      }
+      break;
+    }
     case 'add-shop':
       openShopDialog({ date: el.dataset.date || '', activityId: el.dataset.activity || '' }, null);
       break;

@@ -69,6 +69,7 @@ const ctx = {
     computeDigest: (a, s) => [...crypto.createHash('sha256').update(s).digest()],
     base64EncodeWebSafe: (b) => Buffer.from(b).toString('base64url'),
     base64Encode: (b) => Buffer.from(b).toString('base64'),
+    base64Decode: (s) => [...Buffer.from(s, 'base64')],
     DigestAlgorithm: { SHA_256: 'sha256' },
   },
   SpreadsheetApp: { openById: () => ({ getSheetByName: (n) => sheets[n] || null, insertSheet: (n) => (sheets[n] = makeSheet(n)) }) },
@@ -77,9 +78,9 @@ const ctx = {
     waitLock() { if (flags.lockBusy) throw new Error('Lock timeout'); lockLog.push('lock'); },
     releaseLock() { lockLog.push('unlock'); },
   }) },
-  // 只有 postback 暫存（pb_ 開頭）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
+  // 只有 postback 暫存（pb_）與照片上傳紀錄（up_）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
   CacheService: { getScriptCache: () => ({
-    get: (k) => (k.startsWith('pb_') && cache.has(k) ? cache.get(k) : null),
+    get: (k) => (/^(pb_|up_)/.test(k) && cache.has(k) ? cache.get(k) : null),
     put(k, v) { cache.set(k, v); },
     remove(k) { cache.delete(k); },
   }) },
@@ -89,7 +90,7 @@ const ctx = {
     createFolder: (name) => ({ getId: () => `folder-${name}` }),
     // 建立的檔案都記在 files，測試可以檢查內容、分享設定與是否被丟到垃圾桶
     getFolderById: (folderId) => ({ createFile: (blob) => {
-      const file = { id: `file-${files.length}-${sent.length}`, folderId, blob, sharing: null, trashed: false,
+      const file = { id: `drivefile-${files.length}-${sent.length}`, folderId, blob, sharing: null, trashed: false,
         getId() { return this.id; }, getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; },
         setSharing(a, p) { this.sharing = `${a}/${p}`; return this; }, setTrashed(v) { this.trashed = v; return this; },
         getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) };

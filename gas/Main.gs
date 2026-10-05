@@ -108,6 +108,12 @@ function handleApi_(body) {
         return {};
       });
 
+    case 'uploadShopImage':
+      return { fileId: uploadShopImage_(userId, body.dataUrl) };
+
+    case 'shopPhotos':
+      return { photos: shopPhotos_(userId, body.fileIds) };
+
     case 'photo': {
       const row = readTable_('Journal').find((j) => j.fileId && j.fileId === body.fileId);
       if (!row || !canSeeJournal_(userId, row)) throw apiError_(404, '找不到照片');

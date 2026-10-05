@@ -307,7 +307,10 @@ function syncShopping_(trip) {
   for (const [d, list] of Object.entries(trip.days || {})) list.forEach((a) => { where[a.id] = d; });
   return (trip.shopping || []).map((s) => {
     const d = s.activityId && where[s.activityId];
-    return { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done };
+    return {
+      id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done,
+      note: s.note || '', fileId: s.fileId || '',
+    };
   });
 }
 
@@ -335,7 +338,7 @@ function splitShopItems_(text) {
 
 function shopLine_(trip, item) {
   const a = shopActivity_(trip, item);
-  return `${item.done ? '☑' : '☐'} ${item.text}${Number(item.price) ? ` ${showMoney_(item.price, trip.currency)}` : ''}${a ? `（${a.title}）` : ''}`;
+  return `${item.done ? '☑' : '☐'} ${item.text}${item.fileId ? ' 📷' : ''}${Number(item.price) ? ` ${showMoney_(item.price, trip.currency)}` : ''}${a ? `（${a.title}）` : ''}${item.note ? `\n　　📝 ${item.note}` : ''}`;
 }
 
 /* ---------- 新旅程：名稱＋日期範圍 ---------- */

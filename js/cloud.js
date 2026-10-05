@@ -56,6 +56,7 @@ const Cloud = {
     return this.enqueue(async () => {
       let saved = false;
       try {
+        await this.uploadShopImages(trip);
         const r = await this.call('saveTrip', { trip, baseUpdatedAt: trip.updatedAt || '' });
         trip.updatedAt = r.updatedAt;
         saved = true;
@@ -70,6 +71,20 @@ const Cloud = {
         this.persistUnsynced();
       }
     });
+  },
+
+  /** 購物清單裡還沒上傳的照片（item.image）先傳到雲端，換成檔案 id 再存檔 */
+  async uploadShopImages(trip) {
+    for (const s of (trip.shopping || []).filter((x) => x.image && !x.fileId)) {
+      const { fileId } = await this.call('uploadShopImage', { dataUrl: s.image });
+      if (typeof ShopPhotos !== 'undefined') ShopPhotos.remember(fileId, s.image);
+      // 上傳期間清單可能被改過（物件換新的），用 id 和圖片內容找回同一筆
+      const cur = (trip.shopping || []).find((x) => x.id === s.id && x.image === s.image);
+      if (cur) {
+        cur.fileId = fileId;
+        delete cur.image;
+      }
+    }
   },
 
   deleteTrip(id) {

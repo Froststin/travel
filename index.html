@@ -100,8 +100,17 @@
       <p id="shop-multi-hint" class="form-hint muted">一次加好幾樣可以用「、」分開，例如：抹茶粉、八橋</p>
       <label>哪一天買<select name="date"></select></label>
       <label>在哪一站買<select name="activityId"></select></label>
+      <label>備註<input name="note" maxlength="200" placeholder="數量／顏色／注意事項……"></label>
       <label><span id="shop-price-label">預估金額</span><input type="number" name="price" min="0" step="any" inputmode="decimal" placeholder="0"></label>
-      <p class="form-hint muted">金額會計入預算的「購物」；一次加好幾樣時，每一樣都是這個金額</p>
+      <div class="shop-photo-field">
+        <span>照片</span>
+        <div class="shop-photo-row">
+          <img id="shop-photo-preview" alt="照片預覽" hidden>
+          <button type="button" class="btn btn-sm" data-action="shop-dialog-pick">選照片</button>
+          <button type="button" class="btn btn-sm" id="shop-photo-remove" data-action="shop-dialog-remove-photo" hidden>移除照片</button>
+        </div>
+      </div>
+      <p class="form-hint muted">金額會計入預算的「購物」。一次加好幾樣時，備註和金額每一樣都一樣，照片只會放在第一樣</p>
       <p class="form-hint muted">指定行程後，行程改到別天，這樣東西也會跟著走</p>
       <div class="form-actions">
         <button type="button" class="btn" data-action="close-dialog">取消</button>
@@ -125,11 +134,16 @@
     </form>
   </dialog>
 
+  <!-- 購物清單：選照片、看大圖 -->
+  <input type="file" id="shop-photo-file" accept="image/*" hidden>
+  <dialog id="photo-dialog" class="photo-dialog"><img id="photo-dialog-img" alt="照片"></dialog>
+
   <input type="file" id="import-file" accept="application/json,.json" hidden>
   <div id="toast" role="status" aria-live="polite"></div>
 
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/shopphoto.js"></script>
   <script src="js/cloud.js"></script>
   <script src="js/static.js"></script>
   <script src="js/places.js"></script>

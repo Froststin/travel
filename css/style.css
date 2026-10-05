@@ -579,3 +579,35 @@ textarea { resize: vertical; }
 .place-group-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .place-progress { margin: 8px 0 0; font-size: .9rem; font-weight: 600; color: var(--primary); }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
+
+/* 購物清單：卡片、照片、備註 */
+.shop-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.shop-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); min-width: 0; }
+.shop-card.done { opacity: .6; }
+.shop-card.done .shop-card-name span { text-decoration: line-through; }
+.shop-photo { position: relative; aspect-ratio: 4 / 3; border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.shop-photo-btn, .shop-photo-add { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer; font: inherit; color: var(--muted); }
+.shop-photo-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shop-photo-add { border: 1.5px dashed var(--border); border-radius: 10px; font-size: .9rem; }
+.shop-photo-add:hover { color: var(--primary); border-color: var(--primary); }
+.shop-photo.failed::after { content: '照片讀不到'; position: absolute; inset: 0; display: grid; place-items: center; font-size: .8rem; color: var(--muted); }
+.shop-card-actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; background: color-mix(in srgb, var(--surface) 82%, transparent); border-radius: 999px; }
+.shop-card-name { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-weight: 600; }
+.shop-card-name input { flex: none; width: 20px; height: 20px; margin-top: 2px; accent-color: var(--cat-shopping); }
+.shop-card-name span { overflow-wrap: anywhere; }
+.shop-card .shop-where { max-width: 100%; }
+.shop-card-input { width: 100%; min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg, transparent); color: var(--text); font: inherit; font-size: .9rem; }
+.shop-card-price { display: flex; align-items: center; gap: 6px; font-size: .8rem; }
+.shop-card-price input { text-align: right; }
+.shop-card-price span { flex: none; white-space: nowrap; }
+.shop-thumb { flex: none; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--surface-2); cursor: pointer; }
+.shop-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shop-thumb.failed { display: none; }
+.shop-note { display: block; font-size: .82rem; font-weight: 400; color: var(--muted); text-decoration: none; }
+.shop-photo-field { display: flex; flex-direction: column; gap: 6px; font-size: .9rem; }
+.shop-photo-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#shop-photo-preview { width: 96px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+.photo-dialog { padding: 0; border: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
+.photo-dialog::backdrop { background: rgba(0, 0, 0, .8); }
+.photo-dialog img { display: block; max-width: 96vw; max-height: 92vh; border-radius: 10px; cursor: zoom-out; }
+@media print { .shop-card-input { border: 0; padding: 0; } .shop-card-input::placeholder { color: transparent; } }

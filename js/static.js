@@ -48,12 +48,19 @@ td.num, th.num { text-align:right; white-space:nowrap; }
 .journal li { display:flex; gap:12px; padding:8px 0; border-top:1px dashed var(--line); }
 .journal li:first-child { border-top:0; }
 .journal img { max-width:100%; border-radius:10px; }
+.shopimg { display:block; width:120px; max-width:40%; border-radius:8px; margin:4px 0; }
 footer { margin-top:24px; text-align:center; font-size:.85rem; color:var(--muted); }
 @media print { body { background:#fff; } section { break-inside:avoid; border-color:#ccc; } nav { display:none; } a { color:inherit; text-decoration:none; } }
 `;
 
+// 購物項目的照片（匯出前已經用 ShopPhotos.fetch 準備好的才放得進來）
+function staticShopImg(s) {
+  const src = typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(s) : (s.image || '');
+  return src ? `<img class="shopimg" src="${esc(src)}" alt="">` : '';
+}
+
 function staticShopItems(items, currency) {
-  return items.map((s) => `<li>${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${Number(s.price) ? ` <span class="muted small">${showMoney(s.price, currency)}</span>` : ''}</li>`).join('');
+  return items.map((s) => `<li>${staticShopImg(s)}${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${Number(s.price) ? ` <span class="muted small">${showMoney(s.price, currency)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</li>`).join('');
 }
 
 /**
@@ -205,7 +212,7 @@ function buildStaticHtml(t, photos = new Map()) {
 function staticShopRow(t, s, dayLabel) {
   const a = s.activityId && Object.values(t.days).flat().find((x) => x.id === s.activityId);
   return `<tr><td class="small muted" style="white-space:nowrap">${dayLabel}</td>
-    <td>${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${a ? ` <span class="small muted">📍 ${esc(a.title)}</span>` : ''}</td>
+    <td>${staticShopImg(s)}${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${a ? ` <span class="small muted">📍 ${esc(a.title)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</td>
     <td class="num">${Number(s.price) ? showMoney(s.price, t.currency) : ''}</td></tr>`;
 }
 
@@ -230,6 +237,7 @@ async function staticPhotos(t) {
 
 async function exportStaticSite(t) {
   toast('正在產生靜態網站……');
+  if (typeof ShopPhotos !== 'undefined') await ShopPhotos.fetch((t.shopping || []).map((s) => s.fileId));
   const html = buildStaticHtml(t, await staticPhotos(t));
   const name = `${t.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || '旅程'}.html`;
   const inLine = typeof liffReady !== 'undefined' && liffReady && liff.isInClient();

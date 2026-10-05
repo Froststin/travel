@@ -39,7 +39,7 @@ const HELP_TEXT = [
   '・買 明天 抹茶粉 500円、八橋 → 記在那一天',
   '・買 面膜 @藥妝店 → 記在那個行程（行程改天會跟著走）',
   '　（金額會計入預算的「購物」；寫 円／¥ 會換算成旅程的幣別）',
-  '・購物清單、明天要買什麼 → 查看',
+  '・購物清單、明天要買什麼 → 查看（照片和備註到網站上加）',
   '・買到 抹茶粉、買到 抹茶粉 480円（順便改成實際金額）',
   '・不買 八橋',
   '',
@@ -673,7 +673,7 @@ function cmdShopAdd_(ctx, body) {
   const lines = [];
   const items = parsed.map((p) => {
     const cc = costInCurrency_(p.cost || 0, p.currency, trip.currency);
-    const item = { id: Utilities.getUuid(), text: p.text.slice(0, 80), date, activityId, price: cc.cost, done: false };
+    const item = { id: Utilities.getUuid(), text: p.text.slice(0, 80), date, activityId, price: cc.cost, done: false, note: '', fileId: '' };
     lines.push(`☐ ${item.text}${item.price ? ` ${showMoney_(item.price, trip.currency)}${cc.note}` : ''}`);
     return item;
   });

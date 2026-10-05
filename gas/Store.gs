@@ -13,9 +13,9 @@ const TABLES = {
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt'],
-  Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done'],
+  Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done', 'note', 'fileId'],
 };
-const SCHEMA_VERSION = '8';
+const SCHEMA_VERSION = '9';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
@@ -262,6 +262,8 @@ function sanitizeTrip_(raw) {
         date: valid.has(s.date) ? s.date : '',
         activityId: actIds.has(s.activityId) ? s.activityId : '',
         price: Math.max(0, Number(s.price) || 0),
+        note: str_(s.note, 200).trim(),
+        fileId: cleanFileId_(s.fileId), // 是不是自己上傳的照片，存檔時（saveTrip_）才檢查
         done: !!s.done,
       }))
     : [];
@@ -317,13 +319,80 @@ function shopRow_(tripId, userId, s) {
   return {
     id: s.id, tripId, userId, text: str_(s.text, 80).trim(), date: isValidDate_(s.date) ? s.date : '',
     activityId: cleanId_(s.activityId), price: Math.max(0, Number(s.price) || 0), done: s.done ? '1' : '',
+    note: str_(s.note, 200).trim(), fileId: cleanFileId_(s.fileId),
   };
 }
 
 function loadShopping_(tripId, userId) {
   return readTable_('Shopping')
     .filter((s) => s.tripId === tripId && s.userId === userId)
-    .map((s) => ({ id: s.id, text: s.text, date: s.date, activityId: s.activityId, price: Number(s.price) || 0, done: s.done === '1' }));
+    .map((s) => ({
+      id: s.id, text: s.text, date: s.date, activityId: s.activityId, price: Number(s.price) || 0, done: s.done === '1',
+      note: s.note || '', fileId: s.fileId || '',
+    }));
+}
+
+/* ---------- 購物清單的照片（存在 Google 雲端硬碟，只有上傳的人讀得到） ---------- */
+const MAX_SHOP_IMAGE_CHARS = 2800000; // data URL 的長度上限，約 2 MB 的圖
+
+function cleanFileId_(v) {
+  return typeof v === 'string' && /^[\w-]{10,100}$/.test(v) ? v : '';
+}
+
+function shopFolder_() {
+  let id = prop_('SHOP_FOLDER_ID');
+  if (!id) {
+    id = DriveApp.createFolder('旅程手帖購物清單照片').getId();
+    PropertiesService.getScriptProperties().setProperty('SHOP_FOLDER_ID', id);
+  }
+  return DriveApp.getFolderById(id);
+}
+
+/** 這個人可以用的照片：已經存在自己購物清單裡的，或是 6 小時內自己剛上傳、還沒存檔的 */
+function ownsShopFile_(userId, fileId, mine) {
+  if (!fileId) return false;
+  if (mine.has(fileId)) return true;
+  return CacheService.getScriptCache().get(`up_${fileId}`) === userId;
+}
+
+function myShopFiles_(userId) {
+  return new Set(readTable_('Shopping').filter((s) => s.userId === userId && s.fileId).map((s) => s.fileId));
+}
+
+/** 上傳一張照片（網站先縮小成 JPEG 再傳），回傳檔案 id；之後存檔時把 id 記在購物項目上 */
+function uploadShopImage_(userId, dataUrl) {
+  const m = typeof dataUrl === 'string' && dataUrl.length <= MAX_SHOP_IMAGE_CHARS && /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+  if (!m) throw apiError_(400, '照片格式不對或檔案太大');
+  const blob = Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], `shop_${Date.now()}.${m[1].split('/')[1]}`);
+  const id = shopFolder_().createFile(blob).getId();
+  CacheService.getScriptCache().put(`up_${id}`, userId, 21600);
+  return id;
+}
+
+/** 一次讀幾張照片（最多 6 張），只回傳自己的 */
+function shopPhotos_(userId, fileIds) {
+  const mine = myShopFiles_(userId);
+  const out = {};
+  for (const id of (Array.isArray(fileIds) ? fileIds : []).slice(0, 6).map(cleanFileId_)) {
+    if (!ownsShopFile_(userId, id, mine)) continue;
+    try {
+      const blob = DriveApp.getFileById(id).getBlob();
+      out[id] = `data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}`;
+    } catch (err) {
+      console.warn(`讀取購物照片失敗：${id}`, err);
+    }
+  }
+  return out;
+}
+
+function trashFiles_(ids) {
+  for (const id of ids) {
+    try {
+      DriveApp.getFileById(id).setTrashed(true);
+    } catch (err) {
+      console.warn(`刪除照片失敗：${id}`, err);
+    }
+  }
 }
 
 /* ---------- 使用者名稱 ---------- */
@@ -459,8 +528,17 @@ function saveTrip_(userId, trip) {
     shopping: '', // 舊欄位，已改存 Shopping 工作表
     places: JSON.stringify(sanitizePlaces_(trip.places, new Set(Object.values(trip.days || {}).flat().map((a) => a.id)))),
   };
-  // 購物清單只換掉存檔這個人自己的，旅伴的不動
-  replaceRows_('Shopping', (s) => s.tripId === trip.id && s.userId === userId, syncShopping_(trip).map((s) => shopRow_(trip.id, userId, s)));
+  // 購物清單只換掉存檔這個人自己的，旅伴的不動；照片只能用自己上傳的
+  const mineFiles = myShopFiles_(userId);
+  const before = readTable_('Shopping').filter((s) => s.tripId === trip.id && s.userId === userId && s.fileId).map((s) => s.fileId);
+  const shopRows = syncShopping_(trip).map((s) => {
+    const r = shopRow_(trip.id, userId, s);
+    if (!ownsShopFile_(userId, r.fileId, mineFiles)) r.fileId = '';
+    return r;
+  });
+  replaceRows_('Shopping', (s) => s.tripId === trip.id && s.userId === userId, shopRows);
+  const kept = new Set(shopRows.map((r) => r.fileId));
+  trashFiles_(before.filter((id) => !kept.has(id))); // 被換掉或跟著項目刪掉的照片
   const acts = [];
   for (const [date, list] of Object.entries(trip.days || {})) {
     for (const a of list) {
@@ -492,6 +570,7 @@ function deleteTrip_(userId, tripId) {
   replaceRows_('Trips', (t) => t.id === tripId, []);
   replaceRows_('Activities', (a) => a.tripId === tripId, []);
   replaceRows_('Members', (m) => m.tripId === tripId, []);
+  trashFiles_(readTable_('Shopping').filter((s) => s.tripId === tripId && s.fileId).map((s) => s.fileId));
   replaceRows_('Shopping', (s) => s.tripId === tripId, []);
   return 'deleted';
 }

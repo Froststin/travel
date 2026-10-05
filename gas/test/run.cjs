@@ -312,7 +312,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && props.SCHEMA_VERSION === '8');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && props.SCHEMA_VERSION === '9');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -461,13 +461,48 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '8');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '9');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
 say('不買 舊版的東西');
 api('deleteTrip', { id: kyoto.id }, 'good:U2');
 check('退出旅程後主人的購物清單不受影響', JSON.stringify(tripOf('U1').shopping) === mineBefore);
+
+/* ---------- 購物清單的照片與備註 ---------- */
+const png = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+check('上傳照片需要登入', api('uploadShopImage', { dataUrl: png }, '').status === 401);
+check('不是圖片或太大的不能上傳', api('uploadShopImage', { dataUrl: 'data:text/html;base64,PGI+' }).status === 400 && api('uploadShopImage', { dataUrl: `data:image/jpeg;base64,${'A'.repeat(2900000)}` }).status === 400);
+res = api('uploadShopImage', { dataUrl: png });
+const shopFile = res.fileId;
+check('上傳照片：存進購物照片資料夾並回傳檔案 id', res.ok && files.some((f) => f.id === shopFile && f.folderId === 'folder-旅程手帖購物清單照片' && f.sharing === null), JSON.stringify(res));
+say('買 今天 眉筆 1200');
+st = shopTrip();
+Object.assign(st.shopping.find((s) => s.text === '眉筆'), { note: '  深咖 ×2，記得比價  ', fileId: shopFile });
+res = api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
+let brow = shopTrip().shopping.find((s) => s.text === '眉筆');
+check('存檔：備註與照片跟著購物項目', res.ok && brow.note === '深咖 ×2，記得比價' && brow.fileId === shopFile, JSON.stringify(brow));
+check('讀照片：只拿得到自己的', api('shopPhotos', { fileIds: [shopFile, 'not-mine-000000'] }).photos[shopFile].startsWith('data:image/jpeg;base64,') && Object.keys(api('shopPhotos', { fileIds: [shopFile] }, 'good:U3').photos).length === 0);
+r = say('購物清單');
+check('LINE 的購物清單顯示備註與照片記號', r.text.includes('眉筆 📷 NT$1,200') && r.text.includes('📝 深咖 ×2，記得比價'), r.text);
+r = say('買到 眉筆');
+check('LINE 操作後備註與照片還在', shopTrip().shopping.find((s) => s.text === '眉筆').fileId === shopFile && shopTrip().shopping.find((s) => s.text === '眉筆').note === '深咖 ×2，記得比價');
+// 別人拿我的檔案 id 來用：存不進去，也讀不到
+const u3trip = mkTripForPhoto();
+function mkTripForPhoto() { return { id: 'u3-photo', name: 'U3 的', startDate: '2026-12-01', endDate: '2026-12-02', days: {}, packing: [], shopping: [{ id: 'x1', text: '偷照片', fileId: shopFile, note: 'n' }] }; }
+api('saveTrip', { trip: u3trip }, 'good:U3');
+const u3item = api('list', {}, 'good:U3').trips.find((t) => t.id === 'u3-photo').shopping[0];
+check('不能把別人的照片掛到自己的清單', u3item.fileId === '' && u3item.note === 'n' && Object.keys(api('shopPhotos', { fileIds: [shopFile] }, 'good:U3').photos).length === 0, JSON.stringify(u3item));
+api('deleteTrip', { id: 'u3-photo' }, 'good:U3');
+check('別人刪旅程不會動到我的照片', files.find((f) => f.id === shopFile).trashed === false);
+// 換照片、刪項目：舊照片丟到垃圾桶
+const shopFile2 = api('uploadShopImage', { dataUrl: png }).fileId;
+st = shopTrip();
+st.shopping.find((s) => s.text === '眉筆').fileId = shopFile2;
+api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
+check('換照片：舊的丟到垃圾桶', files.find((f) => f.id === shopFile).trashed === true && files.find((f) => f.id === shopFile2).trashed === false && shopTrip().shopping.find((s) => s.text === '眉筆').fileId === shopFile2);
+say('不買 眉筆');
+check('刪掉項目：照片也丟到垃圾桶', files.find((f) => f.id === shopFile2).trashed === true);
 
 /* ---------- 待去清單 ---------- */
 r = say('待去清單');
