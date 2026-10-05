@@ -342,6 +342,7 @@ function cleanFileId_(v) {
 /**
  * 取得存檔用的雲端硬碟資料夾。資料夾是用 id 記的（指令碼屬性 propKey），所以在雲端硬碟改名、搬到別的資料夾都沒關係；
  * 還沒建立、被丟到垃圾桶或永久刪除時，重新建一個同名的，之後的檔案存到新的資料夾。
+ * 新資料夾建在「旅程手帖資料」試算表所在的資料夾裡（例如使用者整理到「旅遊」），找不到才建在雲端硬碟最上層。
  */
 function driveFolder_(propKey, name) {
   const id = prop_(propKey);
@@ -353,9 +354,21 @@ function driveFolder_(propKey, name) {
       console.warn(`找不到資料夾 ${propKey}（${id}），重新建立`, err);
     }
   }
-  const folder = DriveApp.createFolder(name);
+  const folder = (homeFolder_() || DriveApp).createFolder(name);
   PropertiesService.getScriptProperties().setProperty(propKey, folder.getId());
   return folder;
+}
+
+/** 試算表所在的資料夾；試算表在最上層、在垃圾桶裡或查不到時回傳 null */
+function homeFolder_() {
+  try {
+    const parents = DriveApp.getFileById(prop_('SHEET_ID')).getParents();
+    const parent = parents.hasNext() ? parents.next() : null;
+    return parent && !parent.isTrashed() ? parent : null;
+  } catch (err) {
+    console.warn('查不到試算表所在的資料夾，新資料夾改建在最上層', err);
+    return null;
+  }
 }
 
 function shopFolder_() {

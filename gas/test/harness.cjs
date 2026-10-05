@@ -57,10 +57,18 @@ const files = [];
 const lockLog = [];
 
 const folderSeq = {};
+const folderParents = {}; // 資料夾 id → 建在哪個資料夾裡（空字串＝最上層）
+function newFolder(name, parentId) {
+  const n = (folderSeq[name] = (folderSeq[name] || 0) + 1);
+  const id = n === 1 ? `folder-${name}` : `folder-${name}-${n}`;
+  folderParents[id] = parentId;
+  return makeFolder(id);
+}
 // 建立的檔案都記在 files，測試可以檢查內容、放在哪個資料夾、分享設定與是否被丟到垃圾桶
 function makeFolder(folderId) {
   return {
     getId: () => folderId,
+    createFolder: (name) => newFolder(name, folderId),
     isTrashed: () => (flags.trashedFolders || []).includes(folderId),
     createFile: (blob) => {
       const file = { id: `drivefile-${files.length}-${sent.length}`, folderId, blob, sharing: null, trashed: false,
@@ -105,16 +113,21 @@ const ctx = {
     Access: { ANYONE_WITH_LINK: 'ANYONE_WITH_LINK' },
     Permission: { VIEW: 'VIEW' },
     // 第一次建立的資料夾 id 是 folder-<名稱>，同名再建一次是 folder-<名稱>-2……
-    createFolder: (name) => {
-      const n = (folderSeq[name] = (folderSeq[name] || 0) + 1);
-      return makeFolder(n === 1 ? `folder-${name}` : `folder-${name}-${n}`);
-    },
+    createFolder: (name) => newFolder(name, ''),
     // flags.missingFolders：模擬資料夾被永久刪除；flags.trashedFolders：模擬被丟到垃圾桶
     getFolderById: (folderId) => {
       if ((flags.missingFolders || []).includes(folderId)) throw new Error('No item with the given ID could be found');
       return makeFolder(folderId);
     },
-    getFileById: (id) => files.find((f) => f.id === id) || { setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) },
+    // flags.sheetParent：試算表所在的資料夾 id（空＝在雲端硬碟最上層）；flags.sheetMissing：查不到試算表
+    getFileById: (id) => {
+      if (id === props.SHEET_ID) {
+        if (flags.sheetMissing) throw new Error('No item with the given ID could be found');
+        const list = flags.sheetParent ? [makeFolder(flags.sheetParent)] : [];
+        return { getParents: () => ({ hasNext: () => list.length > 0, next: () => list.shift() }) };
+      }
+      return files.find((f) => f.id === id) || { setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) };
+    },
   },
   ContentService: { createTextOutput: (s) => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
   UrlFetchApp: {
@@ -169,4 +182,4 @@ const run = (code) => vm.runInContext(code, ctx);
 run('var __clearCache = () => { for (const k in tableCache_) delete tableCache_[k]; }');
 
 
-module.exports = { ctx, run, sheets, props, sent, flags, writes, cache, files, lockLog };
+module.exports = { ctx, run, sheets, props, sent, flags, writes, cache, files, lockLog, folderParents };

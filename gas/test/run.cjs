@@ -521,6 +521,19 @@ run('__clearCache()'); hook();
 check('日誌照片的資料夾被刪除：自動建新的，照片照常記錄', lastReply().text.includes('已把 1 張照片') && lastFolder() === 'folder-旅程手帖日誌照片' && props.PHOTO_FOLDER_ID === 'folder-旅程手帖日誌照片', `${lastReply().text} ${lastFolder()}`);
 r = say('匯出');
 check('匯出的資料夾被刪除：自動建新的，照常匯出', r.text.includes('已匯出') && lastFolder() === 'folder-旅程手帖匯出' && props.EXPORT_FOLDER_ID === 'folder-旅程手帖匯出', `${r.text.slice(0, 60)} ${lastFolder()}`);
+// 新建的資料夾放在試算表所在的資料夾裡（使用者把東西整理到「旅遊」）
+check('試算表在最上層時，新資料夾也建在最上層', H.folderParents['folder-旅程手帖購物清單照片-3'] === '');
+flags.sheetParent = 'travel-folder';
+flags.missingFolders.push('folder-旅程手帖購物清單照片-3');
+res = api('uploadShopImage', { dataUrl: png });
+check('試算表在「旅遊」裡：新資料夾建在同一個資料夾', res.ok && lastFolder() === 'folder-旅程手帖購物清單照片-4' && H.folderParents['folder-旅程手帖購物清單照片-4'] === 'travel-folder', `${lastFolder()} in ${H.folderParents[lastFolder()]}`);
+flags.trashedFolders = ['travel-folder']; flags.missingFolders.push('folder-旅程手帖購物清單照片-4');
+res = api('uploadShopImage', { dataUrl: png });
+check('「旅遊」資料夾在垃圾桶裡：改建在最上層', res.ok && H.folderParents[lastFolder()] === '', `${lastFolder()} in ${H.folderParents[lastFolder()]}`);
+flags.sheetMissing = true; flags.missingFolders.push(lastFolder());
+res = api('uploadShopImage', { dataUrl: png });
+check('查不到試算表的位置：改建在最上層，上傳照常成功', res.ok && H.folderParents[lastFolder()] === '', JSON.stringify(res));
+flags.sheetMissing = false; flags.sheetParent = '';
 flags.trashedFolders = []; flags.missingFolders = [];
 api('deleteJournal', { id: api('list', {}).journal.filter((j) => j.type === 'image').pop().id });
 
