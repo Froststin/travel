@@ -32,9 +32,7 @@ function setup() {
     });
     props.setProperty('SHEET_ID', ss.getId());
   }
-  if (!prop_('PHOTO_FOLDER_ID')) {
-    props.setProperty('PHOTO_FOLDER_ID', DriveApp.createFolder('旅程手帖日誌照片').getId());
-  }
+  driveFolder_('PHOTO_FOLDER_ID', '旅程手帖日誌照片');
   if (!prop_('WEBHOOK_KEY')) {
     props.setProperty('WEBHOOK_KEY', Utilities.getUuid().replace(/-/g, ''));
   }

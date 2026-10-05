@@ -115,13 +115,7 @@ function shopRowHtml_(trip, s, dayLabel) {
 }
 
 function exportFolder_() {
-  const props = PropertiesService.getScriptProperties();
-  let id = prop_('EXPORT_FOLDER_ID');
-  if (!id) {
-    id = DriveApp.createFolder('旅程手帖匯出').getId();
-    props.setProperty('EXPORT_FOLDER_ID', id);
-  }
-  return DriveApp.getFolderById(id);
+  return driveFolder_('EXPORT_FOLDER_ID', '旅程手帖匯出');
 }
 
 /**

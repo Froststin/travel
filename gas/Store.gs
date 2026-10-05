@@ -339,13 +339,27 @@ function cleanFileId_(v) {
   return typeof v === 'string' && /^[\w-]{10,100}$/.test(v) ? v : '';
 }
 
-function shopFolder_() {
-  let id = prop_('SHOP_FOLDER_ID');
-  if (!id) {
-    id = DriveApp.createFolder('旅程手帖購物清單照片').getId();
-    PropertiesService.getScriptProperties().setProperty('SHOP_FOLDER_ID', id);
+/**
+ * 取得存檔用的雲端硬碟資料夾。資料夾是用 id 記的（指令碼屬性 propKey），所以在雲端硬碟改名、搬到別的資料夾都沒關係；
+ * 還沒建立、被丟到垃圾桶或永久刪除時，重新建一個同名的，之後的檔案存到新的資料夾。
+ */
+function driveFolder_(propKey, name) {
+  const id = prop_(propKey);
+  if (id) {
+    try {
+      const folder = DriveApp.getFolderById(id);
+      if (!folder.isTrashed()) return folder;
+    } catch (err) {
+      console.warn(`找不到資料夾 ${propKey}（${id}），重新建立`, err);
+    }
   }
-  return DriveApp.getFolderById(id);
+  const folder = DriveApp.createFolder(name);
+  PropertiesService.getScriptProperties().setProperty(propKey, folder.getId());
+  return folder;
+}
+
+function shopFolder_() {
+  return driveFolder_('SHOP_FOLDER_ID', '旅程手帖購物清單照片');
 }
 
 /** 這個人可以用的照片：已經存在自己購物清單裡的，或是 6 小時內自己剛上傳、還沒存檔的 */

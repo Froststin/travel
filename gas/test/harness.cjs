@@ -56,6 +56,23 @@ const cache = new Map();
 const files = [];
 const lockLog = [];
 
+const folderSeq = {};
+// 建立的檔案都記在 files，測試可以檢查內容、放在哪個資料夾、分享設定與是否被丟到垃圾桶
+function makeFolder(folderId) {
+  return {
+    getId: () => folderId,
+    isTrashed: () => (flags.trashedFolders || []).includes(folderId),
+    createFile: (blob) => {
+      const file = { id: `drivefile-${files.length}-${sent.length}`, folderId, blob, sharing: null, trashed: false,
+        getId() { return this.id; }, getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; },
+        setSharing(a, p) { this.sharing = `${a}/${p}`; return this; }, setTrashed(v) { this.trashed = v; return this; },
+        getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) };
+      files.push(file);
+      return file;
+    },
+  };
+}
+
 const ctx = {
   console,
   PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props[k] ?? null, setProperty: (k, v) => { props[k] = v; } }) },
@@ -87,16 +104,16 @@ const ctx = {
   DriveApp: {
     Access: { ANYONE_WITH_LINK: 'ANYONE_WITH_LINK' },
     Permission: { VIEW: 'VIEW' },
-    createFolder: (name) => ({ getId: () => `folder-${name}` }),
-    // 建立的檔案都記在 files，測試可以檢查內容、分享設定與是否被丟到垃圾桶
-    getFolderById: (folderId) => ({ createFile: (blob) => {
-      const file = { id: `drivefile-${files.length}-${sent.length}`, folderId, blob, sharing: null, trashed: false,
-        getId() { return this.id; }, getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; },
-        setSharing(a, p) { this.sharing = `${a}/${p}`; return this; }, setTrashed(v) { this.trashed = v; return this; },
-        getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) };
-      files.push(file);
-      return file;
-    } }),
+    // 第一次建立的資料夾 id 是 folder-<名稱>，同名再建一次是 folder-<名稱>-2……
+    createFolder: (name) => {
+      const n = (folderSeq[name] = (folderSeq[name] || 0) + 1);
+      return makeFolder(n === 1 ? `folder-${name}` : `folder-${name}-${n}`);
+    },
+    // flags.missingFolders：模擬資料夾被永久刪除；flags.trashedFolders：模擬被丟到垃圾桶
+    getFolderById: (folderId) => {
+      if ((flags.missingFolders || []).includes(folderId)) throw new Error('No item with the given ID could be found');
+      return makeFolder(folderId);
+    },
     getFileById: (id) => files.find((f) => f.id === id) || { setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) },
   },
   ContentService: { createTextOutput: (s) => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },

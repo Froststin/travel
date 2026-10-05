@@ -765,7 +765,7 @@ function cmdJournalView_(ctx, arg) {
 
 function handleImage_(ctx, message) {
   const set = message.imageSet;
-  const folder = DriveApp.getFolderById(prop_('PHOTO_FOLDER_ID'));
+  const folder = driveFolder_('PHOTO_FOLDER_ID', '旅程手帖日誌照片');
   const blob = getMessageContent_(message.id);
   const date = ctx.today;
   const ext = (blob.getContentType() || 'image/jpeg').split('/')[1] || 'jpg';

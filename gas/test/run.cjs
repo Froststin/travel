@@ -504,6 +504,26 @@ check('換照片：舊的丟到垃圾桶', files.find((f) => f.id === shopFile).
 say('不買 眉筆');
 check('刪掉項目：照片也丟到垃圾桶', files.find((f) => f.id === shopFile2).trashed === true);
 
+/* ---------- 雲端硬碟的資料夾被搬動、丟掉或刪除 ---------- */
+const lastFolder = () => files[files.length - 1].folderId;
+api('uploadShopImage', { dataUrl: png });
+check('資料夾還在（改名或搬位置不影響 id）：繼續存到同一個', lastFolder() === 'folder-旅程手帖購物清單照片' && props.SHOP_FOLDER_ID === 'folder-旅程手帖購物清單照片');
+flags.trashedFolders = ['folder-旅程手帖購物清單照片'];
+res = api('uploadShopImage', { dataUrl: png });
+check('資料夾被丟到垃圾桶：自動建新的，上傳照常成功', res.ok && lastFolder() === 'folder-旅程手帖購物清單照片-2' && props.SHOP_FOLDER_ID === 'folder-旅程手帖購物清單照片-2', `${JSON.stringify(res)} ${lastFolder()}`);
+flags.missingFolders = ['folder-旅程手帖購物清單照片-2', 'folder1', 'old-export-folder'];
+props.EXPORT_FOLDER_ID = 'old-export-folder';
+res = api('uploadShopImage', { dataUrl: png });
+check('資料夾被永久刪除：自動建新的，上傳照常成功', res.ok && lastFolder() === 'folder-旅程手帖購物清單照片-3', `${JSON.stringify(res)} ${lastFolder()}`);
+sent.length = 0;
+ctx.__ev = { events: [{ type: 'message', replyToken: 'r', source: { userId: 'U1' }, message: { type: 'image', id: 'm-folder' } }] };
+run('__clearCache()'); hook();
+check('日誌照片的資料夾被刪除：自動建新的，照片照常記錄', lastReply().text.includes('已把 1 張照片') && lastFolder() === 'folder-旅程手帖日誌照片' && props.PHOTO_FOLDER_ID === 'folder-旅程手帖日誌照片', `${lastReply().text} ${lastFolder()}`);
+r = say('匯出');
+check('匯出的資料夾被刪除：自動建新的，照常匯出', r.text.includes('已匯出') && lastFolder() === 'folder-旅程手帖匯出' && props.EXPORT_FOLDER_ID === 'folder-旅程手帖匯出', `${r.text.slice(0, 60)} ${lastFolder()}`);
+flags.trashedFolders = []; flags.missingFolders = [];
+api('deleteJournal', { id: api('list', {}).journal.filter((j) => j.type === 'image').pop().id });
+
 /* ---------- 待去清單 ---------- */
 r = say('待去清單');
 check('待去清單是空的時有教學', r.text.includes('還是空的') && r.text.includes('想去 '), r.text);
