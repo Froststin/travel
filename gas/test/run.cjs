@@ -708,7 +708,7 @@ const pushed = JSON.parse(investPost('pk', { text: '🧪 模擬交易 日報' })
 check('投資：推播只送給綁定的人', pushed.ok && pushed.sent === 1 && pushes().length === 1 && pushes()[0].body.to === 'U1' && pushes()[0].body.messages[0].text === '🧪 模擬交易 日報');
 check('投資：空內容不推', JSON.parse(investPost('pk', { text: '  ' })).ok === false && pushes().length === 0);
 
-check('投資：還沒有資料時的回覆', say('模擬交易').text.includes('還沒有資料') && say('選股').text.includes('還沒有資料'));
+check('投資：還沒有資料時的回覆', say('報酬率').text.includes('還沒有資料') && say('持股').text.includes('還沒有資料') && say('交易紀錄').text.includes('還沒有任何委託') && say('準確率').text.includes('還沒有資料') && say('選股').text.includes('還沒有資料') && say('投資').msgs[0].type === 'flex');
 investSheet('daily_recommendations', [
   ['2026-10-01', '1', '2330', '台積電', '70', '強烈進場訊號', '2400'],
   ['2026-10-02', '2', '0050', '元大台灣50', '55.5', '可觀察', '180.5'],
@@ -722,21 +722,63 @@ investSheet('daily_crypto_recommendations', [['2026-10-04', '1', 'TRX', '波場�
 check('投資：虛擬貨幣', say('虛擬貨幣').text.includes('TRX 波場幣') && say('幣').text.includes('10.8599'));
 investSheet('sim_equity', [
   ['2026-10-04', '1000000', '0', '1000000', '0', '0', '0', '0', '0'],
-  ['2026-10-05', '600000.5', '412345', '1012345.5', '1.235', '1.235', '2', '-500', '12845.5'],
+  ['2026-10-05', '204518.05', '808070', '1012588.05', '1.259', '1.259', '2', '-17074', '12588.05'],
 ]);
 investSheet('sim_positions', [
-  ['1', '股票', '2330', '台積電', '2026-10-02', '79.4', '2026-10-05', '2500', '79', '197781', '2300', '2750', 'open', '', '', '', '', '', ''],
+  ['1', '股票', '2330', '台積電', '2026-10-02', '79.4', '2026-10-05', '2550', '78', '199183.43', '2346', '2805', 'open', '', '', '', '', '', ''],
   ['2', '股票', '2317', '鴻海', '2026-09-01', '70', '2026-09-02', '250', '800', '200285', '230', '275', 'closed', '2026-09-10', '230', '停損', '183211', '-17074', '-8.52'],
+  ['3', '虛擬貨幣', 'BTC', '比特幣', '2026-10-04', '70', '2026-10-05', '3000000', '0.06656', '199979.52', '2760000', '3300000', 'open', '', '', '', '', '', ''],
 ]);
 investSheet('sim_orders', [
-  ['1', 't', '股票', '2330', '台積電', 'buy', 'filled', '2026-10-02', '79.4'],
-  ['2', 't', '股票', '2383', '台光電', 'buy', 'pending', '2026-10-05', '73.3'],
+  ['1', 't', '股票', '2317', '鴻海', 'buy', 'filled', '2026-09-01', '70', '2026-09-02', '250', '800', '200000', '285', 'BUY 訊號', '2'],
+  ['2', 't', '股票', '2317', '鴻海', 'sell', 'filled', '2026-09-01', '70', '2026-09-10', '230', '800', '184000', '789', '停損', '2'],
+  ['3', 't', '股票', '2330', '台積電', 'buy', 'filled', '2026-10-02', '79.4', '2026-10-05', '2550', '78', '198900', '283.43', 'BUY 訊號', '1'],
+  ['4', 't', '股票', '2454', '聯發科', 'buy', 'pending', '2026-10-05', '66.2', '', '', '', '', '', 'BUY 訊號', ''],
+  ['5', 't', '股票', '2603', '長榮', 'buy', 'cancelled', '2026-10-02', '60', '2026-10-05', '200', '', '', '', '現金不足，取消', ''],
 ]);
-const simText = say('模擬交易').text;
-check('投資：模擬交易取最新一天的權益', simText.includes('🧪 模擬交易 2026-10-05') && simText.includes('總權益 1,012,346') && simText.includes('累計 +1.24%'), simText);
-check('投資：模擬交易列出持有、待成交、最近出場', simText.includes('2330 台積電｜2026-10-05 進 2,500') && simText.includes('2383 台光電｜73.3 分') && simText.includes('2317 鴻海｜2026-09-10 停損｜-8.52%') && simText.includes('沒有實際下單'), simText);
-check('投資：沒綁定的旅伴查不到投資資料', !say('模擬交易', 'U2').text.includes('總權益') && !say('選股', 'U2').text.includes('台達電'));
-check('投資：旅遊指令不受影響', say('說明').text.includes('旅程手帖') && say('投資').text.includes('投資日報'));
+investSheet('sim_holdings', [
+  ['latest', '2026-10-05', '虛擬貨幣', 'BTC', '比特幣', '2026-10-05', '3000000', '0.06656', '199979.52', '2950000', '196352', '-3922.05', '-1.96', '2760000', '3300000', '1'],
+  ['latest', '2026-10-05', '股票', '2330', '台積電', '2026-10-05', '2550', '78', '199183.43', '2600', '202800', '2714.17', '1.36', '2346', '2805', '1'],
+]);
+investSheet('sim_accuracy', [
+  ['latest', '2026-10-05', '訊號數', '', '58', '', ''],
+  ['latest', '2026-10-05', 'BUY', 't5', '12', '66.7', '1.85'],
+  ['latest', '2026-10-05', 'BUY', 't20', '0', '', ''],
+  ['latest', '2026-10-05', 'SKIP', 't5', '20', '40', '-0.5'],
+  ['latest', '2026-10-05', '方向', 't5', '32', '62.5', ''],
+]);
+
+const investMenu = say('投資');
+const inv_menuButtons = JSON.stringify(investMenu.msgs[0].contents);
+check('投資：選單是 Flex 卡片，六個按鈕都在', investMenu.msgs[0].type === 'flex' && ['持股', '交易紀錄', '報酬率', '準確率', '選股', '虛擬貨幣'].every((t) => inv_menuButtons.includes(`"text":"${t}"`)), inv_menuButtons);
+check('投資：選單帶目前權益與報酬率', investMenu.text.includes('總權益 1,012,588') && investMenu.text.includes('累計 +1.26%'));
+check('投資：每則回覆下方都有投資按鈕', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '虛擬貨幣', '投資'].every((t) => { const q = say(t).quick.map((i) => i.action.text); return q.includes('持股') && q.includes('報酬率') && q.includes('投資'); }));
+
+const inv_hold = say('持股').text;
+check('投資：持股清單依市值排序、帶每檔收益率', inv_hold.includes('📂 模擬持股 2026-10-05（2 檔）') && inv_hold.indexOf('2330 台積電') < inv_hold.indexOf('BTC 比特幣') && inv_hold.includes('收益率 +1.36%（+2,714）') && inv_hold.includes('收益率 -1.96%（-3,922）'), inv_hold);
+check('投資：持股清單有股數、進場價、現價、停損停利', inv_hold.includes('78 股｜進 2,550 → 現 2,600') && inv_hold.includes('0.06656｜進 3,000,000 → 現 2,950,000') && inv_hold.includes('10/5 進場，持有 1 天') && inv_hold.includes('停損 2,346／停利 2,805'), inv_hold);
+check('投資：持股清單有合計未實現、待成交與現金', inv_hold.includes('持股市值 808,070') && inv_hold.includes('未實現 -1,208（-0.30%）') && inv_hold.includes('2454 聯發科｜66.2 分') && inv_hold.includes('現金 204,518'), inv_hold);
+check('投資：「現股清單」「庫存」是同一個功能', say('現股清單').text === inv_hold && say('庫存').text === inv_hold);
+
+const inv_trades = say('交易紀錄').text;
+check('投資：交易紀錄由新到舊', inv_trades.includes('成交 3 筆') && inv_trades.indexOf('10/5 🟢 買進 2330 台積電') < inv_trades.indexOf('9/10 📤 賣出 2317 鴻海') && inv_trades.indexOf('9/10 📤 賣出') < inv_trades.indexOf('9/2 🟢 買進 2317'), inv_trades);
+check('投資：賣出帶出場原因與損益', inv_trades.includes('800 股 @ 230｜金額 184,000') && inv_trades.includes('停損｜損益 -17,074（-8.52%）'), inv_trades);
+check('投資：交易紀錄列出取消與待成交', inv_trades.includes('取消 1 筆（現金不足）：2603 長榮') && inv_trades.includes('2454 聯發科｜66.2 分'), inv_trades);
+check('投資：「模擬交易」顯示交易紀錄', say('模擬交易').text === inv_trades);
+
+const inv_ret = say('報酬率').text;
+check('投資：報酬率', inv_ret.includes('📈 投資報酬率 2026-10-05') && inv_ret.includes('總權益 1,012,588（起始 1,000,000）') && inv_ret.includes('累計報酬率 +1.26%') && inv_ret.includes('當日報酬率 +1.26%') && inv_ret.includes('未實現損益 +12,588'), inv_ret);
+check('投資：報酬率帶已出場統計與近幾日', inv_ret.includes('已出場 1 筆｜勝率 0%｜平均 -8.52%') && inv_ret.indexOf('10/5　1,012,588') < inv_ret.indexOf('10/4　1,000,000'), inv_ret);
+check('投資：「收益率」「投資報酬率」同一個功能', say('收益率').text === inv_ret && say('投資報酬率').text === inv_ret);
+
+const inv_accText = say('準確率').text;
+check('投資：準確率', inv_accText.includes('累計記錄 58 筆訊號') && inv_accText.includes('5 日：66.7%（12 筆，平均 +1.85%）') && inv_accText.includes('20 日：—') && inv_accText.includes('5 日 62.5%（32 筆）'), inv_accText);
+check('投資：準確率樣本不足時提醒', inv_accText.includes('只有 12 筆走完 5 個交易日'));
+
+const inv_dailyPush = JSON.parse(investPost('pk', { text: '🧪 模擬交易 2026-10-05' }));
+check('投資：每日推播下方帶投資按鈕', inv_dailyPush.ok && pushes()[0].body.messages[0].quickReply.items.some((i) => i.action.text === '持股'));
+check('投資：沒綁定的旅伴查不到投資資料', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '投資'].every((t) => { const r = say(t, 'U2'); return !/總權益|台積電|投資選單|模擬持股/.test(r.text); }));
+check('投資：旅遊指令不受影響', say('說明').text.includes('旅程手帖') && say('今天').quick.some((i) => i.action.text === '所有旅程'));
 
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');
