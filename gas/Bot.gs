@@ -81,6 +81,9 @@ function handleEvent_(ev) {
     return;
   }
 
+  // 圖文選單切換分頁（旅遊 ⇄ 投資）也會送 postback 過來，不需要回應
+  if (ev.type === 'postback' && /^invest-menu:/.test((ev.postback && ev.postback.data) || '')) return;
+
   withLock_(() => ensureUserName_(userId));
   if (ev.type === 'follow') {
     reply_(ev.replyToken, textMsg_(`歡迎使用旅程手帖！\n\n${HELP_TEXT}`, defaultQuick_()));

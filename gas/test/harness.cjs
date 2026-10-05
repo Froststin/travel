@@ -105,7 +105,7 @@ const ctx = {
   }) },
   // 只有 postback 暫存（pb_）與照片上傳紀錄（up_）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
   CacheService: { getScriptCache: () => ({
-    get: (k) => (/^(pb_|up_)/.test(k) && cache.has(k) ? cache.get(k) : null),
+    get: (k) => (/^(pb_|up_|invest_rid_)/.test(k) && cache.has(k) ? cache.get(k) : null),
     put(k, v) { cache.set(k, v); },
     remove(k) { cache.delete(k); },
   }) },

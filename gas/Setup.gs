@@ -48,6 +48,19 @@ function setup() {
   else console.warn('尚未設定 CHANNEL_ACCESS_TOKEN（專案設定 → 指令碼屬性），圖文選單稍後再建立');
 }
 
+/** 旅遊選單的七個按鈕（上排 3、下排 4）；投資分頁選單的「旅遊」分頁也用同一份 */
+function travelMenuActions_() {
+  return [
+    { type: 'message', text: '今天' },
+    { type: 'message', text: '明天' },
+    { type: 'message', text: '所有旅程' },
+    { type: 'message', text: '日誌' },
+    { type: 'uri', uri: LIFF_URL },
+    { type: 'message', text: '匯出' },
+    { type: 'message', text: '說明' },
+  ];
+}
+
 function setupRichMenu() {
   // 上排 3 格、下排 4 格
   const top = (col) => ({ x: [0, 833, 1667][col], y: 0, width: col === 1 ? 834 : 833, height: 843 });
@@ -60,15 +73,7 @@ function setupRichMenu() {
     selected: true,
     name: '旅程手帖選單',
     chatBarText: '旅程選單',
-    areas: [
-      { bounds: top(0), action: { type: 'message', text: '今天' } },
-      { bounds: top(1), action: { type: 'message', text: '明天' } },
-      { bounds: top(2), action: { type: 'message', text: '所有旅程' } },
-      { bounds: bottom(0), action: { type: 'message', text: '日誌' } },
-      { bounds: bottom(1), action: { type: 'uri', uri: LIFF_URL } },
-      { bounds: bottom(2), action: { type: 'message', text: '匯出' } },
-      { bounds: bottom(3), action: { type: 'message', text: '說明' } },
-    ],
+    areas: [top(0), top(1), top(2), bottom(0), bottom(1), bottom(2), bottom(3)].map((bounds, i) => ({ bounds, action: travelMenuActions_()[i] })),
   };
   const res = lineApi_('richmenu', menu);
   if (res.getResponseCode() !== 200) throw new Error(`建立圖文選單失敗：${res.getContentText()}`);
@@ -90,6 +95,7 @@ function setupRichMenu() {
 
   // 刪除舊的選單
   const list = JSON.parse(lineApi_('richmenu/list', null, 'get').getContentText()).richmenus || [];
-  list.filter((m) => m.richMenuId !== id).forEach((m) => lineApi_(`richmenu/${m.richMenuId}`, null, 'delete'));
+  const keep = investMenuIds_().concat(id); // 投資分頁選單由 Invest.gs 管理，不要刪
+  list.filter((m) => !keep.includes(m.richMenuId)).forEach((m) => lineApi_(`richmenu/${m.richMenuId}`, null, 'delete'));
   console.log(`圖文選單已建立：${id}`);
 }

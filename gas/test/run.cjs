@@ -707,6 +707,13 @@ function investSheet(name, rowsData) {
   if (rowsData.length) sh.getRange(2, 1, rowsData.length, rowsData[0].length).setValues(rowsData);
 }
 
+// Flex 被 LINE 拒絕時會改回純文字：用這個取得文字版內容
+function sayText(text, user = 'U1') {
+  flags.failFlex = true;
+  try { return say(text, user); } finally { flags.failFlex = false; }
+}
+const flexOf = (text, user = 'U1') => { const r = say(text, user); return { type: r.msgs[0] && r.msgs[0].type, json: JSON.stringify(r.msgs[0] || {}), alt: (r.msgs[0] || {}).altText || '', quick: r.quick }; };
+
 check('投資：沒設定金鑰時推播一律拒絕', investPost('', { text: 'x' }) === 'forbidden' && investPost('anything', { text: 'x' }) === 'forbidden');
 Object.assign(props, { INVEST_PUSH_KEY: 'pk', INVEST_BIND_CODE: 'Code1234', INVEST_SHEET_ID: 'inv', INVEST_USERS: '' });
 check('投資：金鑰錯誤拒絕', investPost('wrong', { text: 'x' }) === 'forbidden' && pushes().length === 0);
@@ -717,22 +724,45 @@ check('投資：代碼錯誤不能綁定', say('綁定投資 Wrong999').text.inc
 check('投資：代碼正確綁定成功', say('綁定投資 Code1234').text.includes('已綁定') && props.INVEST_USERS === 'U1' && props.INVEST_BIND_CODE === '');
 check('投資：代碼用過就失效', say('綁定投資 Code1234', 'U2').text.includes('已經用過') && props.INVEST_USERS === 'U1');
 
+/* 圖文選單：綁定的人換成「旅遊｜投資」雙分頁 */
+check('投資選單：沒有人綁定前不建立', !props.INVEST_MENU_VERSION || props.INVEST_USERS !== '');
+sent.length = 0;
+props.INVEST_MENU_VERSION = '';
+props.INVEST_MENU_TRIED_AT = '';
+run('__clearCache()');
+ctx.__ev = { events: [{ type: 'message', replyToken: 'r', source: { userId: 'U1' }, message: { type: 'text', text: '說明' } }] };
+hook();
+const tabMenus = menuCreates().map((s) => s.body);
+check('投資選單：自動建立兩張分頁選單', tabMenus.length === 2 && tabMenus[0].areas.length === 9 && tabMenus[1].areas.length === 8 && props.INVEST_MENU_VERSION === '1' && props.INVEST_MENU_IDS.split(',').length === 2, JSON.stringify(tabMenus.map((m) => m && m.areas.length)));
+check('投資選單：每張最上面是「旅遊｜投資」分頁切換', tabMenus.every((m) => m.areas[0].action.type === 'richmenuswitch' && m.areas[0].action.richMenuAliasId === 'invest-tab-travel' && m.areas[1].action.richMenuAliasId === 'invest-tab-invest' && m.areas[0].bounds.width === 1250 && m.areas[1].bounds.x === 1250));
+check('投資選單：旅遊分頁保留原本七個按鈕', tabMenus[0].areas.slice(2).map((a) => a.action.text || a.action.type).join() === '今天,明天,所有旅程,日誌,uri,匯出,說明' && tabMenus[0].areas[2].bounds.y === 250 && tabMenus[0].areas[8].bounds.y + tabMenus[0].areas[8].bounds.height === 1686);
+check('投資選單：投資分頁六個按鈕', tabMenus[1].areas.slice(2).map((a) => a.action.text).join() === '持股,交易紀錄,報酬率,準確率,選股,虛擬貨幣' && tabMenus[1].areas.every((a) => a.bounds.x + a.bounds.width <= 2500 && a.bounds.y + a.bounds.height <= 1686));
+check('投資選單：只換綁定的人的選單，沒有改預設選單', sent.some((s) => new RegExp(`user/U1/richmenu/${props.INVEST_MENU_IDS.split(',')[0]}$`).test(s.url)) && !sent.some((s) => /user\/all\/richmenu/.test(s.url)));
+sent.length = 0;
+hook();
+check('投資選單：已是最新版就不再重建', menuCreates().length === 0);
+sent.length = 0;
+ctx.__ev = { events: [{ type: 'postback', replyToken: 'r', source: { userId: 'U1' }, postback: { data: 'invest-menu:invest', params: { newRichMenuAliasId: 'invest-tab-invest', status: 'SUCCESS' } } }] };
+hook();
+check('投資選單：切換分頁不會回覆訊息', sent.filter((s) => s.url.includes('message/reply')).length === 0);
+
 const pushed = JSON.parse(investPost('pk', { text: '🧪 模擬交易 日報' }));
 check('投資：推播只送給綁定的人', pushed.ok && pushed.sent === 1 && pushes().length === 1 && pushes()[0].body.to === 'U1' && pushes()[0].body.messages[0].text === '🧪 模擬交易 日報');
 check('投資：空內容不推', JSON.parse(investPost('pk', { text: '  ' })).ok === false && pushes().length === 0);
 
-check('投資：還沒有資料時的回覆', say('報酬率').text.includes('還沒有資料') && say('持股').text.includes('還沒有資料') && say('交易紀錄').text.includes('還沒有任何委託') && say('準確率').text.includes('還沒有資料') && say('選股').text.includes('還沒有資料') && say('投資').msgs[0].type === 'flex');
+check('投資：還沒有資料時的回覆', sayText('報酬率').text.includes('還沒有資料') && sayText('持股').text.includes('還沒有資料') && sayText('交易紀錄').text.includes('還沒有任何委託') && sayText('準確率').text.includes('還沒有資料') && sayText('選股').text.includes('還沒有資料') && say('投資').msgs[0].type === 'flex');
+check('投資：還沒有資料時卡片也能顯示', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '虛擬貨幣'].every((t) => { const f = flexOf(t); return f.type === 'flex' && !f.json.includes('"text":""'); }));
 investSheet('daily_recommendations', [
   ['2026-10-01', '1', '2330', '台積電', '70', '強烈進場訊號', '2400'],
   ['2026-10-02', '2', '0050', '元大台灣50', '55.5', '可觀察', '180.5'],
   ['2026-10-02', '1', '2308', '台達電', '80', '強烈進場訊號', '1885'],
 ]);
 investSheet('market_trend_snapshot', [['2026-10-02', '15', '5', '56.92', '中性']]);
-const stockText = say('選股').text;
+const stockText = sayText('選股').text;
 check('投資：選股只列最新一天並依名次排序', stockText.includes('📊 選股 2026-10-02') && stockText.indexOf('2308 台達電') < stockText.indexOf('0050 元大台灣50') && !stockText.includes('台積電'), stockText);
 check('投資：選股帶氛圍', stockText.includes('中性（5/15'));
 investSheet('daily_crypto_recommendations', [['2026-10-04', '1', 'TRX', '波場幣', '53.4', '可觀察', '10.8599']]);
-check('投資：虛擬貨幣', say('虛擬貨幣').text.includes('TRX 波場幣') && say('幣').text.includes('10.8599'));
+check('投資：虛擬貨幣', sayText('虛擬貨幣').text.includes('TRX 波場幣') && sayText('幣').text.includes('10.8599'));
 investSheet('sim_equity', [
   ['2026-10-04', '1000000', '0', '1000000', '0', '0', '0', '0', '0'],
   ['2026-10-05', '204518.05', '808070', '1012588.05', '1.259', '1.259', '2', '-17074', '12588.05'],
@@ -767,30 +797,69 @@ check('投資：選單是 Flex 卡片，六個按鈕都在', investMenu.msgs[0].
 check('投資：選單帶目前權益與報酬率', investMenu.text.includes('總權益 1,012,588') && investMenu.text.includes('累計 +1.26%'));
 check('投資：每則回覆下方都有投資按鈕', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '虛擬貨幣', '投資'].every((t) => { const q = say(t).quick.map((i) => i.action.text); return q.includes('持股') && q.includes('報酬率') && q.includes('投資'); }));
 
-const inv_hold = say('持股').text;
+const inv_hold = sayText('持股').text;
 check('投資：持股清單依市值排序、帶每檔收益率', inv_hold.includes('📂 模擬持股 2026-10-05（2 檔）') && inv_hold.indexOf('2330 台積電') < inv_hold.indexOf('BTC 比特幣') && inv_hold.includes('收益率 +1.36%（+2,714）') && inv_hold.includes('收益率 -1.96%（-3,922）'), inv_hold);
 check('投資：持股清單有股數、進場價、現價、停損停利', inv_hold.includes('78 股｜進 2,550 → 現 2,600') && inv_hold.includes('0.06656｜進 3,000,000 → 現 2,950,000') && inv_hold.includes('10/5 進場，持有 1 天') && inv_hold.includes('停損 2,346／停利 2,805'), inv_hold);
 check('投資：持股清單有合計未實現、待成交與現金', inv_hold.includes('持股市值 808,070') && inv_hold.includes('未實現 -1,208（-0.30%）') && inv_hold.includes('2454 聯發科｜66.2 分') && inv_hold.includes('現金 204,518'), inv_hold);
-check('投資：「現股清單」「庫存」是同一個功能', say('現股清單').text === inv_hold && say('庫存').text === inv_hold);
+check('投資：「現股清單」「庫存」是同一個功能', sayText('現股清單').text === inv_hold && sayText('庫存').text === inv_hold);
 
-const inv_trades = say('交易紀錄').text;
+const inv_trades = sayText('交易紀錄').text;
 check('投資：交易紀錄由新到舊', inv_trades.includes('成交 3 筆') && inv_trades.indexOf('10/5 🟢 買進 2330 台積電') < inv_trades.indexOf('9/10 📤 賣出 2317 鴻海') && inv_trades.indexOf('9/10 📤 賣出') < inv_trades.indexOf('9/2 🟢 買進 2317'), inv_trades);
 check('投資：賣出帶出場原因與損益', inv_trades.includes('800 股 @ 230｜金額 184,000') && inv_trades.includes('停損｜損益 -17,074（-8.52%）'), inv_trades);
 check('投資：交易紀錄列出取消與待成交', inv_trades.includes('取消 1 筆（現金不足）：2603 長榮') && inv_trades.includes('2454 聯發科｜66.2 分'), inv_trades);
-check('投資：「模擬交易」顯示交易紀錄', say('模擬交易').text === inv_trades);
+check('投資：「模擬交易」顯示交易紀錄', sayText('模擬交易').text === inv_trades);
 
-const inv_ret = say('報酬率').text;
+const inv_ret = sayText('報酬率').text;
 check('投資：報酬率', inv_ret.includes('📈 投資報酬率 2026-10-05') && inv_ret.includes('總權益 1,012,588（起始 1,000,000）') && inv_ret.includes('累計報酬率 +1.26%') && inv_ret.includes('當日報酬率 +1.26%') && inv_ret.includes('未實現損益 +12,588'), inv_ret);
 check('投資：報酬率帶已出場統計與近幾日', inv_ret.includes('已出場 1 筆｜勝率 0%｜平均 -8.52%') && inv_ret.indexOf('10/5　1,012,588') < inv_ret.indexOf('10/4　1,000,000'), inv_ret);
-check('投資：「收益率」「投資報酬率」同一個功能', say('收益率').text === inv_ret && say('投資報酬率').text === inv_ret);
+check('投資：「收益率」「投資報酬率」同一個功能', sayText('收益率').text === inv_ret && sayText('投資報酬率').text === inv_ret);
 
-const inv_accText = say('準確率').text;
+const inv_accText = sayText('準確率').text;
 check('投資：準確率', inv_accText.includes('累計記錄 58 筆訊號') && inv_accText.includes('5 日：66.7%（12 筆，平均 +1.85%）') && inv_accText.includes('20 日：—') && inv_accText.includes('5 日 62.5%（32 筆）'), inv_accText);
 check('投資：準確率樣本不足時提醒', inv_accText.includes('只有 12 筆走完 5 個交易日'));
 
+/* 表格卡片（Flex）：賺錢紅色、賠錢綠色 */
+const UP = '#D62F2F', DOWN = '#1E9E4A';
+const cell = (json, text) => { const m = json.match(new RegExp(`\\{"type":"text","text":"${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^}]*\\}`)); return m ? m[0] : ''; };
+const fHold = flexOf('持股');
+check('投資卡片：持股損益表是 Flex、帶按鈕', fHold.type === 'flex' && fHold.alt.includes('持股損益表') && fHold.quick.some((i) => i.action.text === '報酬率'));
+check('投資卡片：持股賺錢紅色、賠錢綠色', cell(fHold.json, '+1.36%').includes(UP) && cell(fHold.json, '+2,714').includes(UP) && cell(fHold.json, '-1.96%').includes(DOWN) && cell(fHold.json, '-3,922').includes(DOWN), cell(fHold.json, '+1.36%') + cell(fHold.json, '-1.96%'));
+check('投資卡片：持股有表頭、合計與橫條', ['標的', '現價', '損益', '收益率', '持股市值', '未實現損益'].every((h) => fHold.json.includes(`"text":"${h}"`)) && cell(fHold.json, '-1,208（-0.30%）').includes(DOWN) && fHold.json.includes('"width":"100%"') && fHold.json.includes('"width":"69%"'), fHold.json.slice(0, 600));
+check('投資卡片：持股依市值排序', fHold.json.indexOf('台積電 2330') < fHold.json.indexOf('比特幣 BTC'));
+const fRet = flexOf('報酬率');
+check('投資卡片：報酬率大字上色', cell(fRet.json, '+1.26%').includes(UP) && cell(fRet.json, '+1.26%').includes('"size":"xxl"') && fRet.json.includes('"text":"1,012,588"') && fRet.json.includes('"text":"1,000,000"'), cell(fRet.json, '+1.26%'));
+check('投資卡片：已實現虧損綠色、未實現獲利紅色', cell(fRet.json, '-17,074').includes(DOWN) && cell(fRet.json, '+12,588').includes(UP));
+check('投資卡片：每日損益表由新到舊', fRet.json.includes('每日損益表') && fRet.json.indexOf('"text":"10/5"') < fRet.json.indexOf('"text":"10/4"') && fRet.json.includes('"text":"當日損益"'));
+const fTrades = flexOf('交易紀錄');
+check('投資卡片：已實現損益表', fTrades.json.includes('已實現損益表') && cell(fTrades.json, '-8.52%').includes(DOWN) && cell(fTrades.json, '停損').includes(DOWN) && fTrades.json.includes('合計 1 筆｜勝率 0%'), fTrades.json.slice(0, 500));
+check('投資卡片：成交紀錄買進紅、賣出綠', cell(fTrades.json, '買進').includes(UP) && cell(fTrades.json, '賣出').includes(DOWN) && fTrades.json.includes('待成交：聯發科 2454') && fTrades.json.includes('現金不足取消 1 筆：長榮 2603'));
+const fAcc = flexOf('準確率');
+check('投資卡片：準確率五成以上紅、以下綠', cell(fAcc.json, '66.7%').includes(UP) && cell(fAcc.json, '40%').includes(DOWN) && cell(fAcc.json, '62.5%').includes(UP) && fAcc.json.includes('"text":"+1.85%（12）"') && fAcc.json.includes('只有 12 筆走完 5 個交易日'), cell(fAcc.json, '66.7%') + cell(fAcc.json, '40%'));
+const fStock = flexOf('選股');
+check('投資卡片：選股表', fStock.type === 'flex' && fStock.json.indexOf('1. 台達電 2308') < fStock.json.indexOf('2. 元大台灣50 0050') && cell(fStock.json, '強烈進場訊號').includes(UP) && cell(fStock.json, '可觀察').includes('#E08A00') && fStock.json.includes('中性（5/15'));
+check('投資卡片：虛擬貨幣表', flexOf('虛擬貨幣').json.includes('1. 波場幣 TRX'));
+check('投資卡片：所有文字都不是空字串（LINE 不接受空文字）', [fHold, fRet, fTrades, fAcc, fStock].every((f) => !f.json.includes('"text":""')));
+
+sent.length = 0;
+const validated = JSON.parse(investPost('pk', { text: '日報', views: ['returns', 'holdings', 'nope'], validate: true }));
+check('投資：validate 只檢查格式、不推播', validated.ok && validated.validated === 3 && sent.some((s) => s.url.includes('message/validate/push')) && pushes().length === 0);
+const withCards = JSON.parse(investPost('pk', { text: '🧪 日報', views: ['returns', 'holdings'] }));
+const cardMsgs = pushes()[0] ? pushes()[0].body.messages : [];
+check('投資：每日推播可以附表格卡片', withCards.ok && withCards.cards === 2 && cardMsgs.length === 3 && cardMsgs[0].type === 'text' && cardMsgs[1].type === 'flex' && cardMsgs[2].altText.includes('持股損益表') && !!cardMsgs[2].quickReply);
+flags.failFlex = true;
+const degraded = JSON.parse(investPost('pk', { text: '🧪 日報', views: ['returns'] }));
+flags.failFlex = false;
+check('投資：卡片被 LINE 拒絕時至少把文字送到', degraded.ok && degraded.cards === 0 && pushes().filter((p) => p.body.messages.length === 1 && p.body.messages[0].text === '🧪 日報').length === 1);
+
+cache.clear();
+const firstTry = JSON.parse(investPost('pk', { text: '重試測試', rid: 'abcdef0123456789' }));
+const firstPushes = pushes().length;
+const secondTry = JSON.parse(investPost('pk', { text: '重試測試', rid: 'abcdef0123456789' }));
+check('投資：同一個 rid 重試不會推兩次', firstTry.ok && firstPushes === 1 && secondTry.ok && secondTry.duplicate === true && pushes().length === 0);
+
 const inv_dailyPush = JSON.parse(investPost('pk', { text: '🧪 模擬交易 2026-10-05' }));
 check('投資：每日推播下方帶投資按鈕', inv_dailyPush.ok && pushes()[0].body.messages[0].quickReply.items.some((i) => i.action.text === '持股'));
-check('投資：沒綁定的旅伴查不到投資資料', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '投資'].every((t) => { const r = say(t, 'U2'); return !/總權益|台積電|投資選單|模擬持股/.test(r.text); }));
+check('投資：沒綁定的旅伴查不到投資資料', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '投資'].every((t) => { const r = say(t, 'U2'); return !/總權益|台積電|投資選單|模擬持股|持股損益表/.test(r.text); }));
 check('投資：旅遊指令不受影響', say('說明').text.includes('旅程手帖') && say('今天').quick.some((i) => i.action.text === '所有旅程'));
 
 /* ---------- 網站版本號 ---------- */

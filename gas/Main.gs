@@ -22,7 +22,8 @@ function doPost(e) {
   if (e.parameter.src === 'invest') {
     const key = prop_('INVEST_PUSH_KEY');
     if (!key || e.parameter.key !== key) return ContentService.createTextOutput('forbidden');
-    return json_(investPush_(body));
+    ensureInvestMenu_();
+    return json_(Object.assign(investPush_(body), { menu: prop_('INVEST_MENU_VERSION') }));
   }
 
   if (e.parameter.src === 'line') {
@@ -30,6 +31,7 @@ function doPost(e) {
     if (!key || e.parameter.key !== key) return ContentService.createTextOutput('forbidden');
     ensureSchema_();
     ensureRichMenu_();
+    ensureInvestMenu_();
     handleWebhook_(body);
     return ContentService.createTextOutput('ok');
   }
