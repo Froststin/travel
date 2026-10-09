@@ -28,12 +28,18 @@ const INVEST_TABLES = {
     'fill_date', 'price', 'qty', 'amount', 'fee', 'reason', 'position_id'],
   sim_positions: ['id', 'asset_type', 'code', 'name', 'signal_date', 'signal_score', 'entry_date', 'entry_price',
     'qty', 'cost', 'stop_price', 'target_price', 'status', 'exit_date', 'exit_price', 'exit_reason', 'proceeds', 'pnl', 'pnl_pct'],
-  sim_equity: ['date', 'cash', 'market_value', 'equity', 'daily_return_pct', 'total_return_pct', 'open_positions',
+  sim_equity: ['date', 'account', 'cash', 'market_value', 'equity', 'daily_return_pct', 'total_return_pct', 'open_positions',
     'realized_pnl', 'unrealized_pnl'],
   sim_holdings: ['snapshot', 'date', 'asset_type', 'code', 'name', 'entry_date', 'entry_price', 'qty', 'cost',
     'last_price', 'market_value', 'pnl', 'pnl_pct', 'stop_price', 'target_price', 'bars_held'],
-  sim_accuracy: ['snapshot', 'date', 'kind', 'horizon', 'n', 'win', 'avg'],
+  sim_accuracy: ['snapshot', 'date', 'account', 'kind', 'horizon', 'n', 'win', 'avg'],
+  sim_params: ['date', 'account', 'params_json', 'reason', 'metrics_json', 'created_at'],
 };
+
+// 模擬交易有兩個獨立帳戶（各自的資金、報酬率、參數）；sim_equity 另有一列「合計」
+const INVEST_ACCOUNTS = ['股票', '虛擬貨幣'];
+// 還沒優化過的帳戶用這組預設參數（要跟投資分析 stock_reco/config.py 的 CONFIG 一致）
+const INVEST_DEFAULT_PARAMS = { min_tech_score_for_signal: 60, target_return: 0.1, stop_loss: 0.08, hold_days: 20 };
 
 // 選單：[按鈕文字, 送出的訊息]
 const INVEST_MENU = [
@@ -49,7 +55,7 @@ function investQuick_() {
 /** 選單卡片：留在聊天室裡，隨時可以回來點 */
 function investMenuFlex_() {
   const button = ([label, text]) => ({ type: 'button', style: 'secondary', height: 'sm', margin: 'sm', action: { type: 'message', label, text } });
-  const eq = investRows_('sim_equity').sort((x, y) => (x.date < y.date ? -1 : 1)).pop();
+  const eq = investEquity_().pop();
   const summary = eq
     ? `總權益 ${investNum_(eq.equity)}｜累計 ${investSigned_(eq.total_return_pct)}%`
     : '排程跑過一次之後才會有資料';
@@ -69,6 +75,29 @@ function investMenuFlex_() {
 
 function investSay_(ctx, text) {
   say_(ctx, textMsg_(text, investQuick_()));
+}
+
+/** 某個帳戶（預設「合計」）的每日權益，由舊到新 */
+function investEquity_(account) {
+  const name = account || '合計';
+  return investRows_('sim_equity').filter((e) => e.account === name).sort((x, y) => (x.date < y.date ? -1 : 1));
+}
+
+/** 某個帳戶目前的策略參數，以及上次優化的日期與原因 */
+function investParams_(account) {
+  const row = investRows_('sim_params').filter((r) => r.account === account)
+    .sort((x, y) => (x.date + x.created_at < y.date + y.created_at ? -1 : 1)).pop();
+  let values = INVEST_DEFAULT_PARAMS;
+  try {
+    if (row) values = Object.assign({}, INVEST_DEFAULT_PARAMS, JSON.parse(row.params_json || '{}'));
+  } catch (err) {
+    values = INVEST_DEFAULT_PARAMS;
+  }
+  const pct = (v) => `${Math.round(Number(v) * 100)}%`;
+  return {
+    text: `進場技術分 ≥ ${values.min_tech_score_for_signal}｜停利 +${pct(values.target_return)}｜停損 -${pct(values.stop_loss)}｜最長 ${values.hold_days} 天`,
+    note: row ? `${investMd_(row.date)} 檢查：${row.reason}` : '預設參數，還沒有優化過',
+  };
 }
 
 function investUsers_() {
@@ -197,18 +226,30 @@ function investPendingLines_() {
   return ['', '⏳ 待成交（下一個交易日開盤買進）'].concat(pending.map((o) => `${o.code} ${o.name}｜${investNum_(o.signal_score, 1)} 分`));
 }
 
+/** 目前持股：先依帳戶（股票在前），同帳戶內依市值由大到小 */
+function investHoldings_() {
+  return investRows_('sim_holdings').sort((x, y) =>
+    (INVEST_ACCOUNTS.indexOf(x.asset_type) - INVEST_ACCOUNTS.indexOf(y.asset_type)) || (Number(y.market_value) - Number(x.market_value)));
+}
+
+function investAccountCash_(account) {
+  const row = investEquity_(account).pop();
+  return row ? `${account}帳戶｜權益 ${investMoney_(row.equity)}｜現金 ${investMoney_(row.cash)}` : `${account}帳戶`;
+}
+
 /** 目前模擬持股與每檔收益率 */
 function investHoldingsText_() {
-  const eq = investLatest_(investRows_('sim_equity'));
+  const eq = investEquity_().pop();
   if (!eq) return '📂 模擬持股\n還沒有資料，排程跑過一次之後才會有。';
-  const holdings = investRows_('sim_holdings').sort((x, y) => Number(y.market_value) - Number(x.market_value));
+  const holdings = investHoldings_();
   const lines = [`📂 模擬持股 ${eq.date}（${holdings.length} 檔）`];
   if (!holdings.length) lines.push('目前沒有持股。');
   else {
     const cost = holdings.reduce((sum, h) => sum + Number(h.cost), 0);
     const pnl = holdings.reduce((sum, h) => sum + Number(h.pnl), 0);
     lines.push(`持股市值 ${investNum_(eq.market_value)}`, `未實現 ${investMoney_(pnl, true)}（${investSigned_(cost ? (pnl / cost) * 100 : 0)}%）`);
-    holdings.forEach((h) => lines.push(
+    holdings.forEach((h, i) => lines.push(
+      ...(i === 0 || holdings[i - 1].asset_type !== h.asset_type ? ['', `【${investAccountCash_(h.asset_type)}】`] : []),
       '',
       `${Number(h.pnl) >= 0 ? '🟢' : '🔴'} ${h.code} ${h.name}`,
       `　收益率 ${investSigned_(h.pnl_pct)}%（${investMoney_(h.pnl, true)}）`,
@@ -243,7 +284,7 @@ function investTradesText_() {
 
 /** 投資報酬率：總權益、累計／當日報酬率、已出場交易統計、近幾日走勢 */
 function investReturnText_() {
-  const history = investRows_('sim_equity').sort((x, y) => (x.date < y.date ? -1 : 1));
+  const history = investEquity_();
   const eq = history[history.length - 1];
   if (!eq) return '📈 投資報酬率\n還沒有資料，排程跑過一次之後才會有。';
   const initial = Number(eq.equity) / (1 + Number(eq.total_return_pct) / 100);
@@ -252,6 +293,11 @@ function investReturnText_() {
     `總權益 ${investNum_(eq.equity)}（起始 ${investNum_(Math.round(initial / 1000) * 1000)}）`,
     `累計報酬率 ${investSigned_(eq.total_return_pct)}%`,
     `當日報酬率 ${investSigned_(eq.daily_return_pct)}%`,
+    '',
+    ...INVEST_ACCOUNTS.map((a) => {
+      const r = investEquity_(a).pop();
+      return r ? `【${a}】權益 ${investMoney_(r.equity)}｜累計 ${investSigned_(r.total_return_pct)}%｜當日 ${investSigned_(r.daily_return_pct)}%` : `【${a}】還沒有資料`;
+    }),
     '',
     `現金 ${investNum_(eq.cash)}`,
     `持股市值 ${investNum_(eq.market_value)}（${eq.open_positions} 檔）`,
@@ -271,24 +317,28 @@ function investReturnText_() {
   return lines.concat(['', '⚠️ 純模擬，沒有實際下單']).join('\n');
 }
 
-/** 模型準確率：各種訊號之後實際漲跌 */
+/** 某個帳戶的準確率查詢函式：get(kind, horizon) */
+function investAccuracyOf_(rows, account) {
+  return (kind, horizon) => rows.find((r) => r.account === account && r.kind === kind && r.horizon === horizon) || { n: '0', win: '', avg: '' };
+}
+
+/** 模型準確率：各種訊號之後實際漲跌，兩個帳戶分開看 */
 function investAccuracyText_() {
   const rows = investRows_('sim_accuracy');
   if (!rows.length) return '🎯 模型準確率\n還沒有資料，排程跑過一次之後才會有。';
-  const get = (kind, horizon) => rows.find((r) => r.kind === kind && r.horizon === horizon) || { n: '0', win: '', avg: '' };
   const cell = (r) => (r.win === '' ? '—' : `${r.win}%（${r.n} 筆${r.avg === '' ? '' : `，平均 ${investSigned_(r.avg)}%`}）`);
-  const lines = [`🎯 模型準確率 ${rows[0].date}`, `累計記錄 ${get('訊號數', '').n} 筆訊號`];
-  ['BUY', 'WATCH', 'SKIP'].forEach((action) => lines.push(
-    '',
-    `【${action}】之後上漲的比例`,
-    `　5 日：${cell(get(action, 't5'))}`,
-    `　10 日：${cell(get(action, 't10'))}`,
-    `　20 日：${cell(get(action, 't20'))}`,
-    `　照策略操作：${cell(get(action, 'trade'))}`,
-  ));
-  lines.push('', `方向準確率（BUY 漲、SKIP 沒漲才算對）\n　5 日 ${cell(get('方向', 't5'))}｜20 日 ${cell(get('方向', 't20'))}`);
-  if (Number(get('BUY', 't5').n) < 30) lines.push('', `BUY 目前只有 ${get('BUY', 't5').n} 筆走完 5 個交易日，少於 30 筆時數字還不可靠。`);
-  lines.push('', 'BUY 明顯優於 SKIP 才代表模型有鑑別力。');
+  const lines = [`🎯 模型準確率 ${rows[0].date}`];
+  INVEST_ACCOUNTS.forEach((account) => {
+    const get = investAccuracyOf_(rows, account);
+    const prm = investParams_(account);
+    lines.push('', `━━ ${account}（${get('訊號數', '').n} 筆訊號）━━`, `參數：${prm.text}`, `　${prm.note}`);
+    ['BUY', 'WATCH', 'SKIP'].forEach((action) => lines.push(
+      `【${action}】5 日 ${cell(get(action, 't5'))}｜20 日 ${cell(get(action, 't20'))}｜照策略 ${cell(get(action, 'trade'))}`,
+    ));
+    lines.push(`方向準確率 5 日 ${cell(get('方向', 't5'))}`);
+    if (Number(get('BUY', 't5').n) < 30) lines.push(`BUY 目前只有 ${get('BUY', 't5').n} 筆走完 5 個交易日，少於 30 筆時數字還不可靠。`);
+  });
+  lines.push('', 'BUY 明顯優於 SKIP 才代表模型有鑑別力。帳戶表現過低時會自動重新挑參數。');
   return lines.join('\n');
 }
 
@@ -347,9 +397,9 @@ function invPct_(value) {
 
 /** 持股損益表（未實現） */
 function investHoldingsFlex_() {
-  const eq = investLatest_(investRows_('sim_equity'));
+  const eq = investEquity_().pop();
   if (!eq) return invBubble_('📂 持股損益表', '還沒有資料', [invT_('排程跑過一次之後才會有。', { color: INV.sub })]);
-  const holdings = investRows_('sim_holdings').sort((x, y) => Number(y.market_value) - Number(x.market_value));
+  const holdings = investHoldings_();
   const cost = holdings.reduce((sum, h) => sum + Number(h.cost), 0);
   const pnl = holdings.reduce((sum, h) => sum + Number(h.pnl), 0);
   const maxAbs = Math.max.apply(null, holdings.map((h) => Math.abs(Number(h.pnl_pct))).concat([1]));
@@ -363,8 +413,11 @@ function investHoldingsFlex_() {
   if (!holdings.length) body.push(invT_('目前沒有持股。', { color: INV.sub, margin: 'lg' }));
   else {
     body.push(invHead_(['標的', '現價', '損益', '收益率'], [5, 3, 3, 3]), invSep_());
-    holdings.forEach((h) => {
+    holdings.forEach((h, i) => {
       const color = invColor_(h.pnl);
+      if (i === 0 || holdings[i - 1].asset_type !== h.asset_type) {
+        body.push(invT_(investAccountCash_(h.asset_type), { size: 'xs', weight: 'bold', color: INV.head, margin: 'lg', wrap: true }));
+      }
       body.push(
         invRow_([
           invT_(`${h.name} ${h.code}`, { flex: 5, weight: 'bold', wrap: true }),
@@ -386,7 +439,7 @@ function investHoldingsFlex_() {
 
 /** 投資報酬率與每日損益表 */
 function investReturnFlex_() {
-  const history = investRows_('sim_equity').sort((x, y) => (x.date < y.date ? -1 : 1));
+  const history = investEquity_();
   const eq = history[history.length - 1];
   if (!eq) return invBubble_('📈 投資報酬率', '還沒有資料', [invT_('排程跑過一次之後才會有。', { color: INV.sub })]);
   const initial = Number(eq.equity) / (1 + Number(eq.total_return_pct) / 100);
@@ -397,8 +450,19 @@ function investReturnFlex_() {
       { type: 'box', layout: 'vertical', flex: 1, contents: [invT_('累計報酬率', { size: 'xs', color: INV.sub }), invT_(invPct_(eq.total_return_pct), { size: 'xxl', weight: 'bold', color: invColor_(eq.total_return_pct) })] },
       { type: 'box', layout: 'vertical', flex: 1, contents: [invT_('當日報酬率', { size: 'xs', color: INV.sub, align: 'end' }), invT_(invPct_(eq.daily_return_pct), { size: 'xl', weight: 'bold', align: 'end', color: invColor_(eq.daily_return_pct) })] },
     ], { margin: 'none' }),
+    invHead_(['帳戶', '權益', '當日', '累計'], [3, 4, 3, 3]),
     invSep_(),
-    invKv_('總權益', investMoney_(eq.equity)),
+  ].concat(INVEST_ACCOUNTS.map((a) => {
+    const r = investEquity_(a).pop() || {};
+    return invRow_([
+      invT_(a, { flex: 3, weight: 'bold' }),
+      invT_(investMoney_(r.equity), { flex: 4, align: 'end' }),
+      invT_(invPct_(r.daily_return_pct), { flex: 3, align: 'end', color: invColor_(r.daily_return_pct) }),
+      invT_(invPct_(r.total_return_pct), { flex: 3, align: 'end', weight: 'bold', color: invColor_(r.total_return_pct) }),
+    ]);
+  })).concat([
+    invSep_(),
+    invKv_('合計權益', investMoney_(eq.equity)),
     invKv_('起始資金', investMoney_(Math.round(initial))),
     invKv_('累計損益', investMoney_(Number(eq.equity) - initial, true), invColor_(Number(eq.equity) - initial)),
     invKv_('現金', investMoney_(eq.cash)),
@@ -406,7 +470,7 @@ function investReturnFlex_() {
     invKv_('已實現損益', investMoney_(eq.realized_pnl, true), invColor_(eq.realized_pnl)),
     invKv_('未實現損益', investMoney_(eq.unrealized_pnl, true), invColor_(eq.unrealized_pnl)),
     invKv_('已出場交易', closed.length ? `${closed.length} 筆｜勝率 ${investNum_((wins / closed.length) * 100, 1)}%` : '還沒有'),
-  ];
+  ]);
   const days = history.slice(-10);
   if (days.length > 1) {
     const maxAbs = Math.max.apply(null, days.map((e) => Math.abs(Number(e.daily_return_pct))).concat([0.5]));
@@ -471,38 +535,43 @@ function investTradesFlex_() {
   return invBubble_('📝 交易與已實現損益', `成交 ${filled.length} 筆｜出場 ${closed.length} 筆`, body);
 }
 
-/** 模型準確率：勝率五成以上紅色、以下綠色 */
+/** 模型準確率：兩個帳戶各一張表與目前參數；勝率五成以上紅色、以下綠色 */
 function investAccuracyFlex_() {
   const rows = investRows_('sim_accuracy');
   if (!rows.length) return invBubble_('🎯 模型準確率', '還沒有資料', [invT_('排程跑過一次之後才會有。', { color: INV.sub })]);
-  const get = (kind, horizon) => rows.find((r) => r.kind === kind && r.horizon === horizon) || { n: '0', win: '', avg: '' };
   const winColor = (r) => (r.win === '' ? INV.flat : Number(r.win) >= 50 ? INV.up : INV.down);
   const horizons = ['t5', 't10', 't20', 'trade'];
-  const body = [
-    invT_('各種訊號之後上漲的比例（括號是樣本數）', { size: 'xs', color: INV.sub, wrap: true }),
-    invHead_(['訊號', '5 日', '10 日', '20 日', '照策略'], [3, 3, 3, 3, 3]), invSep_(),
-  ];
-  ['BUY', 'WATCH', 'SKIP'].forEach((action) => {
+  const body = [invT_('各種訊號之後上漲的比例（括號是樣本數）', { size: 'xs', color: INV.sub, wrap: true })];
+  INVEST_ACCOUNTS.forEach((account, i) => {
+    const get = investAccuracyOf_(rows, account);
+    const prm = investParams_(account);
     body.push(
-      invRow_([invT_(action, { flex: 3, weight: 'bold' })].concat(horizons.map((h) => {
-        const r = get(action, h);
-        return invT_(r.win === '' ? '—' : `${r.win}%`, { flex: 3, align: 'end', weight: 'bold', color: winColor(r) });
-      }))),
-      invRow_([invT_('平均報酬', { flex: 3, size: 'xxs', color: INV.sub })].concat(horizons.map((h) => {
-        const r = get(action, h);
-        return invT_(r.win === '' ? `（${r.n}）` : `${investSigned_(r.avg)}%（${r.n}）`, { flex: 3, align: 'end', size: 'xxs', color: r.avg === '' ? INV.sub : invColor_(r.avg) });
-      })), { margin: 'xs' }),
+      invT_(`${account}｜${get('訊號數', '').n} 筆訊號`, { weight: 'bold', color: INV.head, margin: i ? 'xl' : 'lg' }),
+      invT_(`參數：${prm.text}`, { size: 'xxs', color: INV.text, wrap: true, margin: 'xs' }),
+      invT_(prm.note, { size: 'xxs', color: INV.sub, wrap: true, margin: 'xs' }),
+      invHead_(['訊號', '5 日', '10 日', '20 日', '照策略'], [3, 3, 3, 3, 3]), invSep_(),
     );
+    ['BUY', 'WATCH', 'SKIP'].forEach((action) => {
+      body.push(
+        invRow_([invT_(action, { flex: 3, weight: 'bold' })].concat(horizons.map((h) => {
+          const r = get(action, h);
+          return invT_(r.win === '' ? '—' : `${r.win}%`, { flex: 3, align: 'end', weight: 'bold', color: winColor(r) });
+        }))),
+        invRow_([invT_('平均報酬', { flex: 3, size: 'xxs', color: INV.sub })].concat(horizons.map((h) => {
+          const r = get(action, h);
+          return invT_(r.win === '' ? `（${r.n}）` : `${investSigned_(r.avg)}%（${r.n}）`, { flex: 3, align: 'end', size: 'xxs', color: r.avg === '' ? INV.sub : invColor_(r.avg) });
+        })), { margin: 'xs' }),
+      );
+    });
+    body.push(invRow_([invT_('方向', { flex: 3, weight: 'bold', size: 'xs' })].concat(['t5', 't10', 't20'].map((h) => {
+      const r = get('方向', h);
+      return invT_(r.win === '' ? '—' : `${r.win}%`, { flex: 3, align: 'end', weight: 'bold', size: 'xs', color: winColor(r) });
+    })).concat([invT_(' ', { flex: 3 })])));
+    const matured = Number(get('BUY', 't5').n);
+    if (matured < 30) body.push(invT_(`BUY 只有 ${matured} 筆走完 5 個交易日，少於 30 筆時數字還不可靠。`, { size: 'xxs', color: INV.sub, wrap: true, margin: 'sm' }));
   });
-  body.push(invSep_(), invRow_([invT_('方向準確率', { flex: 3, weight: 'bold', size: 'xs' })].concat(['t5', 't10', 't20'].map((h) => {
-    const r = get('方向', h);
-    return invT_(r.win === '' ? '—' : `${r.win}%`, { flex: 3, align: 'end', weight: 'bold', color: winColor(r) });
-  })).concat([invT_(' ', { flex: 3 })])));
-  const matured = Number(get('BUY', 't5').n);
-  body.push(invT_(
-    (matured < 30 ? `BUY 目前只有 ${matured} 筆走完 5 個交易日，少於 30 筆時數字還不可靠。` : '') + 'BUY 明顯優於 SKIP 才代表模型有鑑別力。',
-    { size: 'xxs', color: INV.sub, wrap: true, margin: 'lg' }));
-  return invBubble_('🎯 模型準確率', `${rows[0].date}｜累計 ${get('訊號數', '').n} 筆訊號`, body);
+  body.push(invT_('BUY 明顯優於 SKIP 才代表模型有鑑別力。帳戶表現過低時會自動重新挑參數。', { size: 'xxs', color: INV.sub, wrap: true, margin: 'lg' }));
+  return invBubble_('🎯 模型準確率', rows[0].date, body);
 }
 
 /** 選股／虛擬貨幣推薦表 */

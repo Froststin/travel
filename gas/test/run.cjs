@@ -764,8 +764,12 @@ check('投資：選股帶氛圍', stockText.includes('中性（5/15'));
 investSheet('daily_crypto_recommendations', [['2026-10-04', '1', 'TRX', '波場幣', '53.4', '可觀察', '10.8599']]);
 check('投資：虛擬貨幣', sayText('虛擬貨幣').text.includes('TRX 波場幣') && sayText('幣').text.includes('10.8599'));
 investSheet('sim_equity', [
-  ['2026-10-04', '1000000', '0', '1000000', '0', '0', '0', '0', '0'],
-  ['2026-10-05', '204518.05', '808070', '1012588.05', '1.259', '1.259', '2', '-17074', '12588.05'],
+  ['2026-10-04', '合計', '1000000', '0', '1000000', '0', '0', '0', '0', '0'],
+  ['2026-10-04', '股票', '500000', '0', '500000', '0', '0', '0', '0', '0'],
+  ['2026-10-04', '虛擬貨幣', '500000', '0', '500000', '0', '0', '0', '0', '0'],
+  ['2026-10-05', '合計', '204518.05', '808070', '1012588.05', '1.259', '1.259', '2', '-17074', '12588.05'],
+  ['2026-10-05', '股票', '104518.05', '611718', '716236.05', '3.25', '3.247', '1', '-17074', '16510.1'],
+  ['2026-10-05', '虛擬貨幣', '100000', '196352', '296352', '-0.73', '-0.73', '1', '0', '-3922.05'],
 ]);
 investSheet('sim_positions', [
   ['1', '股票', '2330', '台積電', '2026-10-02', '79.4', '2026-10-05', '2550', '78', '199183.43', '2346', '2805', 'open', '', '', '', '', '', ''],
@@ -784,11 +788,17 @@ investSheet('sim_holdings', [
   ['latest', '2026-10-05', '股票', '2330', '台積電', '2026-10-05', '2550', '78', '199183.43', '2600', '202800', '2714.17', '1.36', '2346', '2805', '1'],
 ]);
 investSheet('sim_accuracy', [
-  ['latest', '2026-10-05', '訊號數', '', '58', '', ''],
-  ['latest', '2026-10-05', 'BUY', 't5', '12', '66.7', '1.85'],
-  ['latest', '2026-10-05', 'BUY', 't20', '0', '', ''],
-  ['latest', '2026-10-05', 'SKIP', 't5', '20', '40', '-0.5'],
-  ['latest', '2026-10-05', '方向', 't5', '32', '62.5', ''],
+  ['latest', '2026-10-05', '股票', '訊號數', '', '58', '', ''],
+  ['latest', '2026-10-05', '股票', 'BUY', 't5', '12', '66.7', '1.85'],
+  ['latest', '2026-10-05', '股票', 'BUY', 't20', '0', '', ''],
+  ['latest', '2026-10-05', '股票', 'SKIP', 't5', '20', '40', '-0.5'],
+  ['latest', '2026-10-05', '股票', '方向', 't5', '32', '62.5', ''],
+  ['latest', '2026-10-05', '虛擬貨幣', '訊號數', '', '84', '', ''],
+  ['latest', '2026-10-05', '虛擬貨幣', 'SKIP', 't5', '41', '22', '-3.1'],
+]);
+investSheet('sim_params', [
+  ['2026-09-20', '虛擬貨幣', '{"min_tech_score_for_signal":60,"target_return":0.15,"stop_loss":0.1,"hold_days":20}', '舊的', '{}', '2026-09-20 00:30:00'],
+  ['2026-10-05', '虛擬貨幣', '{"min_tech_score_for_signal":70,"target_return":0.2,"stop_loss":0.12,"hold_days":30}', '已經 21 天沒有任何 BUY 訊號 → 改用新參數', '{}', '2026-10-05 00:30:00'],
 ]);
 
 const investMenu = say('投資');
@@ -815,7 +825,7 @@ check('投資：報酬率帶已出場統計與近幾日', inv_ret.includes('已�
 check('投資：「收益率」「投資報酬率」同一個功能', sayText('收益率').text === inv_ret && sayText('投資報酬率').text === inv_ret);
 
 const inv_accText = sayText('準確率').text;
-check('投資：準確率', inv_accText.includes('累計記錄 58 筆訊號') && inv_accText.includes('5 日：66.7%（12 筆，平均 +1.85%）') && inv_accText.includes('20 日：—') && inv_accText.includes('5 日 62.5%（32 筆）'), inv_accText);
+check('投資：準確率', inv_accText.includes('━━ 股票（58 筆訊號）━━') && inv_accText.includes('【BUY】5 日 66.7%（12 筆，平均 +1.85%）｜20 日 —') && inv_accText.includes('方向準確率 5 日 62.5%（32 筆）') && inv_accText.includes('━━ 虛擬貨幣（84 筆訊號）━━'), inv_accText);
 check('投資：準確率樣本不足時提醒', inv_accText.includes('只有 12 筆走完 5 個交易日'));
 
 /* 表格卡片（Flex）：賺錢紅色、賠錢綠色 */
@@ -856,6 +866,15 @@ const firstTry = JSON.parse(investPost('pk', { text: '重試測試', rid: 'abcde
 const firstPushes = pushes().length;
 const secondTry = JSON.parse(investPost('pk', { text: '重試測試', rid: 'abcdef0123456789' }));
 check('投資：同一個 rid 重試不會推兩次', firstTry.ok && firstPushes === 1 && secondTry.ok && secondTry.duplicate === true && pushes().length === 0);
+
+/* 兩個帳戶分開顯示 */
+check('投資：報酬率文字版列出兩個帳戶', inv_ret.includes('【股票】權益 716,236｜累計 +3.25%｜當日 +3.25%') && inv_ret.includes('【虛擬貨幣】權益 296,352｜累計 -0.73%｜當日 -0.73%'), inv_ret);
+check('投資卡片：報酬率有帳戶表，股票賺紅、虛擬貨幣賠綠', ['帳戶', '權益', '當日', '累計'].every((h) => fRet.json.includes(`"text":"${h}"`)) && cell(fRet.json, '+3.25%').includes(UP) && cell(fRet.json, '-0.73%').includes(DOWN) && fRet.json.includes('"text":"716,236"') && fRet.json.includes('"text":"合計權益"'), fRet.json.slice(900, 1800));
+check('投資：每日損益表只用合計，不會把帳戶列重複算', (fRet.json.match(/"text":"10\/5"/g) || []).length === 1 && (fRet.json.match(/"text":"10\/4"/g) || []).length === 1);
+check('投資：持股依帳戶分組並顯示各自的現金', inv_hold.indexOf('【股票帳戶｜權益 716,236｜現金 104,518】') < inv_hold.indexOf('2330 台積電') && inv_hold.indexOf('2330 台積電') < inv_hold.indexOf('【虛擬貨幣帳戶｜權益 296,352｜現金 100,000】') && inv_hold.indexOf('【虛擬貨幣帳戶') < inv_hold.indexOf('BTC 比特幣'), inv_hold);
+check('投資卡片：持股有帳戶小標', fHold.json.includes('股票帳戶｜權益 716,236｜現金 104,518') && fHold.json.includes('虛擬貨幣帳戶｜權益 296,352｜現金 100,000'));
+check('投資：準確率顯示各帳戶目前的參數', inv_accText.includes('參數：進場技術分 ≥ 60｜停利 +10%｜停損 -8%｜最長 20 天') && inv_accText.includes('預設參數，還沒有優化過') && inv_accText.includes('參數：進場技術分 ≥ 70｜停利 +20%｜停損 -12%｜最長 30 天') && inv_accText.includes('10/5 檢查：已經 21 天沒有任何 BUY 訊號 → 改用新參數'), inv_accText);
+check('投資卡片：準確率兩個帳戶各一張表，帶參數', fAcc.json.includes('"text":"股票｜58 筆訊號"') && fAcc.json.includes('"text":"虛擬貨幣｜84 筆訊號"') && fAcc.json.includes('停利 +20%｜停損 -12%｜最長 30 天') && cell(fAcc.json, '22%').includes(DOWN) && (fAcc.json.match(/"text":"照策略"/g) || []).length === 2);
 
 const inv_dailyPush = JSON.parse(investPost('pk', { text: '🧪 模擬交易 2026-10-05' }));
 check('投資：每日推播下方帶投資按鈕', inv_dailyPush.ok && pushes()[0].body.messages[0].quickReply.items.some((i) => i.action.text === '持股'));
