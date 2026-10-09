@@ -645,9 +645,9 @@ function renderTrip(t) {
       <div class="actions no-print">
         <button class="btn btn-line" data-action="share-line">分享到 LINE</button>
         <button class="btn" data-action="edit-trip">編輯</button>
-        <button class="btn" data-action="export-trip" title="匯出 JSON 備份檔，可以再匯入">匯出</button>
-        <button class="btn" data-action="export-static" title="匯出成單一 HTML 檔，沒有網路、網站打不開時也能看">匯出靜態網站</button>
-        <button class="btn" data-action="print">列印</button>
+        <button class="btn" data-action="export-pdf" title="產生 PDF，存在 Google 雲端硬碟，用連結開啟或下載">匯出 PDF</button>
+        <button class="btn" data-action="export-static" title="匯出成單一 HTML 檔，或取得免登入的線上檢視連結">匯出靜態網站</button>
+        <button class="btn" data-action="export-trip" title="下載 JSON 備份檔，之後可以用「匯入」還原">備份檔</button>
         <button class="btn btn-danger" data-action="delete-trip">${isTripOwner(t) ? '刪除' : '退出旅程'}</button>
       </div>
     </div>
@@ -1408,11 +1408,10 @@ document.addEventListener('click', (e) => {
     case 'export-trip':
       if (t) download(`${t.name}.json`, t);
       break;
-    case 'print':
+    case 'export-pdf':
       if (!t) break;
-      currentTab = 'plan';
-      renderTrip(t);
-      window.print();
+      if (typeof exportPdf !== 'function') { toast('網頁有更新，請重新整理後再試一次'); break; }
+      exportPdf(t);
       break;
     case 'delete-trip': {
       if (!t) break;

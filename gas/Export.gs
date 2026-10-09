@@ -146,11 +146,20 @@ function exportFolder_() {
  */
 function exportTripPdf_(userId, trip) {
   const exportedAt = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm');
-  const pdf = Utilities.newBlob(exportHtml_(trip, exportedAt), 'text/html', `${trip.name}.html`)
+  // 每一步失敗都註明是哪一步，回報給使用者時才知道卡在哪裡
+  const step = (name, fn) => {
+    try {
+      return fn();
+    } catch (err) {
+      throw new Error(`${name}失敗：${err && err.message ? err.message : err}`);
+    }
+  };
+  const html = step('整理行程內容', () => exportHtml_(trip, exportedAt));
+  const pdf = step('轉成 PDF', () => Utilities.newBlob(html, 'text/html', `${trip.name}.html`)
     .getAs('application/pdf')
-    .setName(`${trip.name}_${exportedAt.replace(/[: ]/g, '')}.pdf`);
-  const file = exportFolder_().createFile(pdf);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    .setName(`${trip.name}_${exportedAt.replace(/[: ]/g, '')}.pdf`));
+  const file = step('存到雲端硬碟', () => exportFolder_().createFile(pdf));
+  step('設定「知道連結的人可檢視」', () => file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW));
 
   const props = PropertiesService.getScriptProperties();
   const key = `EXPORT_${memberKey_(trip.id, userId)}`;

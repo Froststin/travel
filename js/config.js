@@ -4,7 +4,7 @@
 // version：每次更新網站都要加 1，並且和 version.json 一致。瀏覽器會把舊檔案留 10 分鐘左右，
 //          網站靠這個數字發現有新版，自動抓新檔案並重新載入（見 app.js 的 checkForUpdate）
 window.TRAVEL_CONFIG = {
-  version: '27',
+  version: '28',
   liffId: '2011768794-Lhly8AIw',
   apiUrl: 'https://script.google.com/macros/s/AKfycbxjPX_V7LYnM6oRp3C4uu5dVMNKoCMWKTpymuqgl_SCj04MS8_RU78dPHnpBphLUWd3/exec',
 };

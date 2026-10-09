@@ -648,7 +648,14 @@ res = api('list', {});
 r = say('今天');
 flags.lockBusy = false;
 check('拿不到鎖時回 503，機器人也會回覆請稍後再試', res.status === 503 && res.error.includes('稍後再試') && r.text.includes('稍後再試'), `${JSON.stringify(res)} ${r.text}`);
+// 網站上的「匯出 PDF」
+res = api('exportPdf', { tripId: shopTrip().id });
+const webPdf = pdfs().pop();
+check('網站匯出 PDF：回傳連結，檔案設成知道連結的人可檢視', res.ok && res.url === webPdf.getUrl() && webPdf.sharing === 'ANYONE_WITH_LINK/VIEW' && !!res.exportedAt, JSON.stringify(res));
+check('網站匯出 PDF：要登入、而且只能匯出自己看得到的旅程', api('exportPdf', { tripId: shopTrip().id }, '').status === 401 && api('exportPdf', { tripId: shopTrip().id }, 'good:U3').status === 404 && api('exportPdf', {}).status === 404);
 flags.failPdf = true;
+res = api('exportPdf', { tripId: shopTrip().id });
+check('網站匯出 PDF 失敗時，錯誤訊息說明卡在哪一步', res.status === 500 && res.error.includes('PDF 產生失敗') && res.error.includes('轉成 PDF失敗：轉檔失敗'), JSON.stringify(res));
 r = say('匯出');
 flags.failPdf = false;
 check('PDF 產生失敗時仍給網站連結與純文字行程', r.msgs[0].text.includes('PDF 產生失敗') && r.msgs[0].text.includes('https://liff.line.me/') && r.msgs[1].text.includes('【Day 1'), r.text.slice(0, 200));

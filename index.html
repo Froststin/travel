@@ -134,6 +134,24 @@
     </form>
   </dialog>
 
+  <!-- 匯出 PDF：後端產生，回傳雲端硬碟的連結 -->
+  <dialog id="pdf-dialog">
+    <div class="form">
+      <h2>匯出 PDF</h2>
+      <p id="pdf-info"></p>
+      <div id="pdf-result" class="static-link" hidden>
+        <input id="pdf-url" readonly aria-label="PDF 連結">
+        <div class="static-actions">
+          <a class="btn btn-primary" id="pdf-open" data-pdf="open" target="_blank" rel="noopener">開啟 PDF</a>
+          <button type="button" class="btn" data-pdf="copy">複製連結</button>
+          <button type="button" class="btn btn-line" data-pdf="line">傳到 LINE</button>
+        </div>
+        <p class="form-hint muted">開啟後可以在雲端硬碟的畫面下載到裝置，沒有網路也能看。</p>
+      </div>
+      <div class="form-actions"><button type="button" class="btn" data-action="close-dialog">關閉</button></div>
+    </div>
+  </dialog>
+
   <!-- 匯出靜態網站：產生好之後選怎麼拿 -->
   <dialog id="static-dialog">
     <div class="form">

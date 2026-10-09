@@ -113,6 +113,18 @@ function handleApi_(body) {
         return {};
       });
 
+    case 'exportPdf': {
+      // 網站上的「匯出 PDF」：和 LINE 的匯出是同一套，讀資料時才拿鎖，產生 PDF 放在鎖外面
+      warmRates_();
+      const trip = withLock_(() => loadTrips_(userId).find((t) => t.id === String(body.tripId || '')));
+      if (!trip) throw apiError_(404, '找不到這個旅程');
+      try {
+        return exportTripPdf_(userId, trip);
+      } catch (err) {
+        throw apiError_(500, `PDF 產生失敗（${err.message}）`);
+      }
+    }
+
     case 'viewLink':
       return withLock_(() => ({ url: viewUrl_(viewTokenFor_(userId, String(body.tripId || ''), !!body.reset)) }));
 

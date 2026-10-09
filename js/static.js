@@ -357,6 +357,58 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+/* ---------- 匯出 PDF：後端產生、存在 Google 雲端硬碟，回傳一個連結 ----------
+ * 不靠瀏覽器下載檔案，所以在會擋下載的瀏覽器（例如 LINE 裡）也能用。 */
+async function exportPdf(t) {
+  if (!cloudOn()) return toast('匯出 PDF 要先用 LINE 登入同步；沒登入的話請用「匯出靜態網站」');
+  const dialog = document.getElementById('pdf-dialog');
+  if (!dialog) return toast('網頁有更新，請重新整理後再試一次');
+  const info = document.getElementById('pdf-info');
+  const result = document.getElementById('pdf-result');
+  const urlBox = document.getElementById('pdf-url');
+  info.textContent = `正在產生「${t.name}」的 PDF，大約需要 10 秒……`;
+  info.classList.remove('rate-warn');
+  result.hidden = true;
+  dialog.dataset.name = t.name;
+  dialog.showModal();
+  try {
+    await Cloud.queue; // 等還沒存完的修改先存上去，PDF 才是最新的
+    const r = await Cloud.call('exportPdf', { tripId: t.id });
+    urlBox.value = r.url;
+    document.getElementById('pdf-open').href = r.url;
+    info.textContent = `PDF 好了（${r.exportedAt} 的內容），存在你的 Google 雲端硬碟。行程改過要再匯出一次，舊連結會失效。知道連結的人都能看。`;
+    result.hidden = false;
+  } catch (err) {
+    console.warn('匯出 PDF 失敗', err);
+    info.classList.add('rate-warn');
+    info.textContent = `匯出失敗：${err.message}。可以再按一次「匯出 PDF」，或改用「匯出靜態網站」裡的線上檢視連結。`;
+  }
+}
+
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-pdf]');
+  const urlBox = document.getElementById('pdf-url');
+  if (!el || !urlBox || !urlBox.value) return;
+  if (el.dataset.pdf === 'copy') {
+    try {
+      await navigator.clipboard.writeText(urlBox.value);
+      toast('已複製連結');
+    } catch (err) {
+      urlBox.focus();
+      urlBox.select();
+      toast('請長按或按 Ctrl/⌘+C 複製選取的連結');
+    }
+  }
+  if (el.dataset.pdf === 'line') {
+    openLineShareUrl(`📄 ${document.getElementById('pdf-dialog').dataset.name} 的行程 PDF\n${urlBox.value}`);
+  }
+  // 在 LINE 裡用外部瀏覽器開，內建瀏覽器常開不了雲端硬碟的檔案
+  if (el.dataset.pdf === 'open' && typeof liffReady !== 'undefined' && liffReady && liff.isInClient()) {
+    e.preventDefault();
+    liff.openWindow({ url: urlBox.value, external: true });
+  }
+});
+
 /* ---------- 線上檢視頁：網址帶 ?view=<代碼> 時，不登入、不進入編輯畫面，直接把行程畫成唯讀頁面 ----------
  * 資料用代碼跟後端要（免登入），再用和「匯出靜態網站」同一套版面畫出來，整頁換成靜態內容。 */
 const VIEW_TOKEN = new URLSearchParams(location.search).get('view') || '';
