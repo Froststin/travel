@@ -134,6 +134,21 @@
     </form>
   </dialog>
 
+  <!-- 匯出靜態網站：產生好之後選怎麼拿 -->
+  <dialog id="static-dialog">
+    <div class="form">
+      <h2>匯出靜態網站</h2>
+      <p id="static-info"></p>
+      <div class="static-actions">
+        <button type="button" class="btn btn-primary" data-static="download">⬇️ 下載檔案</button>
+        <a class="btn" id="static-open" target="_blank" rel="noopener">🔗 在新分頁開啟</a>
+        <button type="button" class="btn" id="static-share" data-static="share" hidden>📤 分享／存到檔案</button>
+      </div>
+      <p class="form-hint muted">下載沒反應或出現錯誤時，改用「在新分頁開啟」：開出來的就是完整的靜態頁面，可以用瀏覽器的「儲存網頁」或「列印 → 存成 PDF」留下來。手機上建議用「分享／存到檔案」。</p>
+      <div class="form-actions"><button type="button" class="btn" data-action="close-dialog">關閉</button></div>
+    </div>
+  </dialog>
+
   <!-- 購物清單：選照片、看大圖 -->
   <input type="file" id="shop-photo-file" accept="image/*" hidden>
   <dialog id="photo-dialog" class="photo-dialog"><img id="photo-dialog-img" alt="照片"></dialog>

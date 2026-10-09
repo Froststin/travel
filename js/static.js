@@ -235,26 +235,80 @@ async function staticPhotos(t) {
   return photos;
 }
 
+// 日誌照片是 LINE 傳來的原圖，一張可能好幾 MB；縮小後再內嵌，匯出的檔案才不會大到存不了、傳不出去
+async function shrinkDataUrl(dataUrl, maxSide, quality) {
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = dataUrl;
+    });
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL('image/jpeg', quality);
+    return out.length < dataUrl.length ? out : dataUrl;
+  } catch (err) {
+    return dataUrl; // 縮不了就用原圖
+  }
+}
+
+/* ---------- 匯出結果：下載、開新分頁、分享，三種方式任選 ----------
+ * 不同瀏覽器擋的東西不一樣（內嵌瀏覽器常不能下載、LINE 內建瀏覽器常不能分享檔案），
+ * 所以產生好之後讓使用者自己挑，一種不行可以換另一種。 */
+let staticResult = null; // { name, html, url }
+
+function staticSizeText(chars) {
+  const kb = chars / 1024; // 內容大多是 ASCII（圖片的 base64），用字數估就夠了
+  return kb < 1024 ? `約 ${Math.max(1, Math.round(kb))} KB` : `約 ${(kb / 1024).toFixed(1)} MB`;
+}
+
+function staticFile() {
+  return typeof File === 'function' ? new File([staticResult.html], staticResult.name, { type: 'text/html' }) : null;
+}
+
 async function exportStaticSite(t) {
   toast('正在產生靜態網站……');
   if (typeof ShopPhotos !== 'undefined') await ShopPhotos.fetch((t.shopping || []).map((s) => s.fileId));
-  const html = buildStaticHtml(t, await staticPhotos(t));
+  const photos = await staticPhotos(t);
+  for (const [id, dataUrl] of photos) photos.set(id, await shrinkDataUrl(dataUrl, 1200, 0.78));
+  const html = buildStaticHtml(t, photos);
   const name = `${t.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || '旅程'}.html`;
-  const inLine = typeof liffReady !== 'undefined' && liffReady && liff.isInClient();
-  const mobile = inLine || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  // 手機（尤其是 LINE 內建瀏覽器）通常不能直接下載檔案，改用系統的分享選單：可以存到檔案、傳給自己或旅伴
-  if (mobile && typeof File === 'function' && navigator.canShare) {
-    const file = new File([html], name, { type: 'text/html' });
-    if (navigator.canShare({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: t.name });
-        return;
-      } catch (err) {
-        if (err.name === 'AbortError') return; // 使用者自己取消
-        console.warn('分享失敗，改用下載', err);
-      }
+  if (staticResult && staticResult.url) URL.revokeObjectURL(staticResult.url);
+  staticResult = { name, html, url: URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })) };
+
+  const dialog = document.getElementById('static-dialog');
+  if (!dialog) { // 瀏覽器還留著舊版頁面：照舊直接下載
+    downloadBlob(name, new Blob([html], { type: 'text/html;charset=utf-8' }));
+    return toast('已匯出靜態網站，用瀏覽器打開就能看');
+  }
+  const file = staticFile();
+  let canShare = false;
+  try {
+    canShare = !!(file && navigator.canShare && navigator.canShare({ files: [file] }));
+  } catch (err) { /* 不支援分享 */ }
+  document.getElementById('static-info').textContent = `「${name}」已經產生好了（${staticSizeText(html.length)}）。`;
+  document.getElementById('static-share').hidden = !canShare;
+  document.getElementById('static-open').href = staticResult.url;
+  dialog.showModal();
+}
+
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-static]');
+  if (!el || !staticResult) return;
+  if (el.dataset.static === 'download') {
+    downloadBlob(staticResult.name, new Blob([staticResult.html], { type: 'text/html;charset=utf-8' }));
+    toast('已開始下載；沒有反應的話改用「在新分頁開啟」');
+  }
+  if (el.dataset.static === 'share') {
+    try {
+      await navigator.share({ files: [staticFile()], title: staticResult.name });
+    } catch (err) {
+      if (err.name !== 'AbortError') toast('這個瀏覽器不能分享檔案，請改用「下載」或「在新分頁開啟」');
     }
   }
-  downloadBlob(name, new Blob([html], { type: 'text/html;charset=utf-8' }));
-  toast(inLine ? '如果沒有開始下載，請點右上角選單「以預設瀏覽器開啟」後再匯出一次' : '已匯出靜態網站，用瀏覽器打開就能看');
-}
+  // 「在新分頁開啟」是一般的連結（href 指向產生好的內容），不用另外處理
+});

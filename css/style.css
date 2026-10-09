@@ -629,3 +629,7 @@ textarea { resize: vertical; }
 .shop-ro-note { font-size: .88rem; color: var(--muted); overflow-wrap: anywhere; }
 .shop-ro-price { font-size: .9rem; font-weight: 600; text-align: right; }
 .shop-others-empty { margin: 12px 0; }
+
+/* 匯出靜態網站的結果視窗 */
+.static-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.static-actions .btn { text-decoration: none; }
