@@ -599,7 +599,11 @@ say('新增 今天 21:00 <b>夜景</b> @京都塔');
 say('買 今天 檢視頁測試用 100');
 res = api('viewLink', { tripId: vTrip.id });
 const viewToken = (res.url || '').split('?view=')[1];
-check('產生連結：網址帶 40 碼代碼，再要一次是同一個', res.ok && /^[a-f0-9]{40}$/.test(viewToken) && res.url.startsWith('https://script.google.com/macros/s/') && api('viewLink', { tripId: vTrip.id }).url === res.url, JSON.stringify(res));
+check('產生連結：指到網站、帶 40 碼代碼，再要一次是同一個', res.ok && /^[a-f0-9]{40}$/.test(viewToken) && res.url.startsWith('https://froststin.github.io/travel/?view=') && api('viewLink', { tripId: vTrip.id }).url === res.url, JSON.stringify(res));
+let vd = api('view', { token: viewToken }, '');
+check('檢視資料：不用登入，憑代碼拿到行程與分享者自己的購物清單', vd.ok && vd.trip.id === vTrip.id && vd.trip.shopping.some((s) => s.text === '檢視頁測試用') && Object.values(vd.trip.days).flat().some((a) => a.title === '<b>夜景</b>') && Array.isArray(vd.journal), JSON.stringify(vd).slice(0, 200));
+check('檢視資料：不含旅伴的清單、不外流 LINE userId 與成員代號', !('othersShopping' in vd.trip) && !('role' in vd.trip) && vd.trip.members.every((m) => Object.keys(m).sort().join() === 'name,role') && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
+check('檢視資料：亂猜的代碼拿不到東西', api('view', { token: 'a'.repeat(40) }, '').status === 404 && api('view', { token: { $ne: '' } }, '').status === 404 && api('view', {}, '').status === 404);
 check('產生連結需要登入、而且要是旅程成員', api('viewLink', { tripId: vTrip.id }, '').status === 401 && api('viewLink', { tripId: vTrip.id }, 'good:U3').status === 403);
 let page = getPage({ view: viewToken });
 check('免登入開啟：看得到行程、預算、購物清單', page.title === '京都｜旅程手帖' && page.meta.viewport && ['<h1>京都</h1>', 'Day 1・', '預估花費', '我的購物清單', '檢視頁測試用', '唯讀的線上檢視頁'].every((x) => page.html.includes(x)), page.html.slice(0, 300));
@@ -608,7 +612,8 @@ say('新增 今天 22:00 之後才加的行程');
 check('線上檢視頁會跟著行程更新', getPage({ view: viewToken }).html.includes('之後才加的行程'));
 check('亂猜的連結看不到東西', getPage({ view: 'a'.repeat(40) }).html.includes('已經失效') && getPage({ view: '../../etc' }).html.includes('已經失效') && !getPage({ view: 'a'.repeat(40) }).html.includes('京都'));
 const newUrl = api('viewLink', { tripId: vTrip.id, reset: true }).url;
-check('換新連結：舊的立刻失效', newUrl !== res.url && getPage({ view: viewToken }).html.includes('已經失效') && getPage({ view: newUrl.split('?view=')[1] }).html.includes('<h1>京都</h1>'));
+check('換新連結：舊的立刻失效', newUrl !== res.url && getPage({ view: viewToken }).html.includes('已經失效') && getPage({ view: newUrl.split('?view=')[1] }).html.includes('<h1>京都</h1>')
+  && api('view', { token: viewToken }, '').status === 404 && api('view', { token: newUrl.split('?view=')[1] }, '').ok);
 r = say('匯出');
 check('LINE 匯出也附上線上檢視連結', r.msgs[0].text.includes(newUrl) && r.quick.some((q) => q.action.type === 'uri' && q.action.uri === newUrl), r.msgs[0].text);
 say('不買 檢視頁測試用');
@@ -671,7 +676,7 @@ check('暫存過期時會提示重新輸入', r.text.includes('已經過期'), r
 
 const lastView = api('viewLink', { tripId: trip.id }).url.split('?view=')[1];
 check('API deleteTrip', api('deleteTrip', { id: trip.id }).ok && api('list', {}).trips.length === 0);
-check('旅程刪掉後，線上檢視連結也失效', getPage({ view: lastView }).html.includes('已經失效'));
+check('旅程刪掉後，線上檢視連結也失效', getPage({ view: lastView }).html.includes('已經失效') && api('view', { token: lastView }, '').status === 404);
 
 /* ---------- 只寫入有變動的列 ---------- */
 const mkTrip = (id, name, start, n) => ({

@@ -541,7 +541,11 @@ function downloadBlob(filename, blob) {
 }
 
 /* ---------- 路由 ---------- */
+// 線上檢視頁（?view=代碼）由 static.js 的 bootView 接手，不顯示一般的編輯畫面
+const IS_VIEW_PAGE = new URLSearchParams(location.search).has('view');
+
 function route() {
+  if (IS_VIEW_PAGE) return;
   const m = location.hash.match(/^#\/trip\/([\w-]+)/);
   if (m) {
     const trip = getTrip(m[1]);

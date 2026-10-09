@@ -68,13 +68,13 @@ function staticShopItems(items, currency) {
  * @param {Object} t 旅程
  * @param {Map<string,string>} photos 日誌照片（fileId → data URL），沒有的照片會顯示文字說明
  */
-function buildStaticHtml(t, photos = new Map()) {
+function buildStaticHtml(t, photos = new Map(), online = false) {
   const dates = dateRange(t.startDate, t.endDate);
   const shop = shoppingIndex(t, dates);
   const b = budgetData(t, dates);
   const now = new Date();
   const exportedAt = `${fmtDate(now)} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  const siteUrl = `${location.origin}${location.pathname}${cloudOn() ? `?trip=${encodeURIComponent(t.id)}` : ''}`;
+  const siteUrl = `${location.origin}${location.pathname}${cloudOn() || online ? `?trip=${encodeURIComponent(t.id)}` : ''}`;
   const journal = (state.journal || []).filter((j) => (j.tripId ? j.tripId === t.id : true) && j.date >= t.startDate && j.date <= t.endDate);
 
   const days = dates.map((d, i) => {
@@ -200,10 +200,12 @@ function buildStaticHtml(t, photos = new Map()) {
   <p class="muted">📍 ${esc(t.destination || '未設定目的地')}・${prettyDate(t.startDate)} – ${prettyDate(t.endDate)}・${durationText(dates.length)}</p>
   ${Array.isArray(t.members) && t.members.length > 1 ? `<p class="muted small">👥 ${t.members.map((m) => esc(m.name)).join('、')}</p>` : ''}
   ${t.notes ? `<p>${esc(t.notes).replace(/\n/g, '<br>')}</p>` : ''}
-  <p class="notice">這是 ${exportedAt} 匯出的離線版本，不需要網路就能看（地圖連結除外），之後的修改不會出現在這裡。<br>最新內容：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>
+  ${online
+    ? `<p class="notice">唯讀的線上檢視頁，${exportedAt} 的內容；重新整理就會更新。<br>要編輯請到旅程手帖：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`
+    : `<p class="notice">這是 ${exportedAt} 匯出的離線版本，不需要網路就能看（地圖連結除外），之後的修改不會出現在這裡。<br>最新內容：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`}
   <nav>${nav}</nav>
   ${days}${placesHtml}${budget}${shopping}${packing}${journalHtml}
-  <footer>旅程手帖・${exportedAt} 匯出</footer>
+  <footer>旅程手帖・${exportedAt} ${online ? '的內容' : '匯出'}</footer>
 </main>
 </body>
 </html>`;
@@ -354,3 +356,48 @@ document.addEventListener('click', async (e) => {
     openLineShareUrl(`🧳 ${staticResult.tripName} 的行程（免登入、只能看）\n${urlBox.value}`);
   }
 });
+
+/* ---------- 線上檢視頁：網址帶 ?view=<代碼> 時，不登入、不進入編輯畫面，直接把行程畫成唯讀頁面 ----------
+ * 資料用代碼跟後端要（免登入），再用和「匯出靜態網站」同一套版面畫出來，整頁換成靜態內容。 */
+const VIEW_TOKEN = new URLSearchParams(location.search).get('view') || '';
+
+async function bootView() {
+  document.querySelectorAll('.site-header, .site-footer').forEach((el) => { el.hidden = true; });
+  app.innerHTML = '<p class="loading">正在載入行程……</p>';
+  try {
+    let data = null;
+    for (let attempt = 1; !data; attempt++) {
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'view', token: VIEW_TOKEN }),
+        });
+        data = await res.json();
+      } catch (err) {
+        if (attempt >= 3) throw new Error('連不上雲端，請稍後再重新整理');
+        await new Promise((r) => setTimeout(r, attempt * 1500));
+      }
+    }
+    if (!data.ok) throw new Error(data.error || '這個連結打不開');
+    try {
+      await loadRate(); // 外幣換算成台幣要用
+    } catch (err) { /* 沒有匯率就顯示原幣 */ }
+    state = { trips: [data.trip], journal: data.journal || [] };
+    const html = buildStaticHtml(data.trip, new Map(), true);
+    document.open();
+    document.write(html);
+    document.close();
+  } catch (err) {
+    document.title = '旅程手帖';
+    app.innerHTML = `
+      <section class="empty">
+        <div class="empty-icon" aria-hidden="true">🔗</div>
+        <h1>這個連結打不開</h1>
+        <p class="muted">${esc(err.message || '')}</p>
+        <p class="muted">請向分享的人要新的連結。</p>
+      </section>`;
+  }
+}
+
+if (VIEW_TOKEN) bootView();

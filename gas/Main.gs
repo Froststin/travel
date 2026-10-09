@@ -55,6 +55,7 @@ function json_(obj) {
 /* ---------- 網站 API ---------- */
 function handleApi_(body) {
   if (body.action === 'rate') return { rate: jpyRate_() }; // 匯率不需登入
+  if (body.action === 'view') return withLock_(() => viewData_(body.token)); // 線上檢視連結：憑代碼，不需登入
   const userId = verifyIdToken_(body.idToken);
   checkAllowed_(userId);
 

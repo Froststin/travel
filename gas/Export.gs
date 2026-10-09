@@ -29,7 +29,10 @@ function budgetSummary_(trip) {
 }
 
 /** 整趟旅程的靜態網頁（不含 emoji，轉 PDF 時比較不會缺字） */
-/** 線上檢視頁：用連結就能看、不用登入，內容是打開當下的最新行程 */
+/**
+ * 舊版的線上檢視頁（<後端網址>?view=代碼）。新產生的連結已經改指到網站的 ?view=代碼，
+ * 這裡留著讓先前傳出去的連結還能用；瀏覽器登入多個 Google 帳號時這一頁會打不開，是 Apps Script 的限制。
+ */
 function viewPage_(token) {
   const trip = tripForView_(token);
   const html = trip

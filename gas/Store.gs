@@ -687,8 +687,24 @@ function viewTokenFor_(userId, tripId, reset) {
   return token;
 }
 
+// 檢視頁放在網站上（GitHub Pages），由網頁跟後端要資料再畫出來。
+// 不直接用後端的網址當頁面：瀏覽器登入多個 Google 帳號時，Apps Script 的網頁會被導到 /u/1/ 而打不開
 function viewUrl_(token) {
-  return `${API_URL}?view=${token}`;
+  return `${SITE_URL}?view=${token}`;
+}
+
+/** 檢視頁要的資料（免登入，憑連結上的代碼）：行程本身、產生連結那個人的購物清單、文字日誌 */
+function viewData_(token) {
+  const v = typeof token === 'string' && /^[a-f0-9]{40}$/.test(token) ? readTable_('Views').find((x) => x.token === token) : null;
+  const trip = v ? loadTrips_(v.userId).find((t) => t.id === v.tripId) : null;
+  if (!trip) throw apiError_(404, '這個連結已經失效（可能被換新、旅程已刪除，或分享的人已退出旅程）');
+  delete trip.othersShopping; // 只給分享者自己的那份
+  delete trip.role;
+  trip.members = trip.members.map((m) => ({ name: m.name, role: m.role }));
+  const journal = loadJournal_(v.userId)
+    .filter((j) => j.tripId === trip.id && j.type === 'text')
+    .map((j) => ({ id: j.id, tripId: j.tripId, date: j.date, time: j.time, type: 'text', text: j.text, author: j.author, mine: false }));
+  return { trip, journal };
 }
 
 /** 連結對應的旅程（用產生連結那個人的身分讀）；連結不對或已失效回傳 null */

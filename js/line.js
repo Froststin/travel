@@ -188,4 +188,5 @@ async function shareToLine(t, dates) {
   openLineShareUrl(tripShareText(t, dates));
 }
 
-initLiff();
+// 線上檢視頁（?view=代碼）不用登入，也不要跳出 LINE 登入
+if (typeof VIEW_TOKEN === 'undefined' || !VIEW_TOKEN) initLiff();
