@@ -4,7 +4,7 @@
  * 共用旅程：Trips.userId 是建立者（主人），其他旅伴記在 Members。
  * 主人與成員都能查看、編輯行程；只有主人能刪除旅程、移除成員。
  * 日誌以 tripId 歸屬到旅程，同旅程的成員都看得到。
- * 購物清單是個人的：Shopping 每一列記 tripId＋userId，每個人只讀寫自己的，旅伴互相看不到。
+ * 購物清單每個人各一份：Shopping 每一列記 tripId＋userId，只能改自己的；同旅程的成員看得到彼此的（唯讀）。
  * ============================================================ */
 
 const TABLES = {
@@ -332,7 +332,16 @@ function loadShopping_(tripId, userId) {
     }));
 }
 
-/* ---------- 購物清單的照片（存在 Google 雲端硬碟，只有上傳的人讀得到） ---------- */
+/** 同旅程其他成員的購物清單（唯讀，依人分組）；已經退出或被移出的人不列 */
+function loadOthersShopping_(tripRow, viewerId) {
+  const rows = readTable_('Shopping').filter((s) => s.tripId === tripRow.id);
+  return membersOf_(tripRow)
+    .filter((m) => m.userId !== viewerId)
+    .map((m) => ({ name: m.name, key: memberKey_(tripRow.id, m.userId), items: loadShopping_(tripRow.id, m.userId) }))
+    .filter((g) => rows.length && g.items.length);
+}
+
+/* ---------- 購物清單的照片（存在 Google 雲端硬碟；自己的可以換，同旅程成員的只能看） ---------- */
 const MAX_SHOP_IMAGE_CHARS = 2800000; // data URL 的長度上限，約 2 MB 的圖
 
 function cleanFileId_(v) {
@@ -396,9 +405,23 @@ function uploadShopImage_(userId, dataUrl) {
   return id;
 }
 
-/** 一次讀幾張照片（最多 6 張），只回傳自己的 */
+/** 看得到的照片：自己的，加上同旅程目前成員的 */
+function readableShopFiles_(userId) {
+  const trips = tripIdsFor_(userId);
+  const memberOf = {}; // tripId:userId → 是不是那個旅程目前的成員
+  const isMember = (tripId, uid) => {
+    const k = `${tripId}:${uid}`;
+    if (!(k in memberOf)) memberOf[k] = !!roleIn_(uid, findTripRow_(tripId));
+    return memberOf[k];
+  };
+  return new Set(readTable_('Shopping')
+    .filter((s) => s.fileId && (s.userId === userId || (trips.has(s.tripId) && isMember(s.tripId, s.userId))))
+    .map((s) => s.fileId));
+}
+
+/** 一次讀幾張照片（最多 6 張），只回傳自己的與同旅程成員的 */
 function shopPhotos_(userId, fileIds) {
-  const mine = myShopFiles_(userId);
+  const mine = readableShopFiles_(userId);
   const out = {};
   for (const id of (Array.isArray(fileIds) ? fileIds : []).slice(0, 6).map(cleanFileId_)) {
     if (!ownsShopFile_(userId, id, mine)) continue;
@@ -487,7 +510,8 @@ function rowToTrip_(row, acts, viewerId) {
   } catch (err) {
     packing = [];
   }
-  const shopping = loadShopping_(row.id, viewerId); // 只有自己的
+  const shopping = loadShopping_(row.id, viewerId); // 自己的，可以改
+  const othersShopping = loadOthersShopping_(row, viewerId); // 旅伴的，只能看
   let places = [];
   try {
     places = JSON.parse(row.places || '[]');
@@ -507,6 +531,7 @@ function rowToTrip_(row, acts, viewerId) {
     days,
     packing,
     shopping,
+    othersShopping,
     places,
     createdAt: Number(row.createdAt) || 0,
     updatedAt: row.updatedAt,

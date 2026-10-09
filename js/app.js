@@ -10,6 +10,7 @@
  *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走），
  *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份；
  *             note 是備註（數量、顏色、注意事項）；照片見 js/shopphoto.js
+ *   othersShopping：[{ name, key, items }]，雲端回傳的旅伴購物清單，只能看，存檔時後端不會理它
  *   activity = { id, time, endTime, title, category, location, mapUrl, cost, notes,
  *                travelMode, travelMin, travelCost, travelCostCurrency }  // travel* 是「從上一站過來」
  *   cost 用旅程幣別；travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
@@ -361,12 +362,12 @@ function shopCost(items, currency) {
 }
 
 // 依「哪一站、哪一天」分好：byAct（行程 id → 東西）、byDay（日期 → 沒指定行程的東西）、loose（不指定日期）
-function shoppingIndex(t, dates) {
+function shoppingIndex(t, dates, items = t.shopping || []) {
   const actDate = new Map();
   for (const d of dates) for (const a of t.days[d] || []) actDate.set(a.id, d);
   const idx = { byAct: new Map(), byDay: new Map(), loose: [] };
   const add = (map, key, s) => map.set(key, (map.get(key) || []).concat([s]));
-  for (const s of t.shopping || []) {
+  for (const s of items) {
     if (s.activityId && actDate.has(s.activityId)) add(idx.byAct, s.activityId, s);
     else if (dates.includes(s.date)) add(idx.byDay, s.date, s);
     else idx.loose.push(s);
@@ -425,13 +426,22 @@ function shopCard(s, currency, where = '') {
     </li>`;
 }
 
-function shoppingView(t, dates) {
-  const idx = shoppingIndex(t, dates);
-  const items = t.shopping || [];
-  const done = items.filter((s) => s.done).length;
-  const pct = items.length ? (done / items.length) * 100 : 0;
-  const total = shopCost(items, t.currency);
-  const bought = shopCost(items.filter((s) => s.done), t.currency);
+// 旅伴的購物項目：只能看，不能勾、不能改
+function shopCardReadonly(s, currency, where = '') {
+  return `
+    <li class="shop-card readonly${s.done ? ' done' : ''}">
+      ${shopImg(s, 'shop-photo-btn') ? `<div class="shop-photo">${shopImg(s, 'shop-photo-btn')}</div>` : ''}
+      <div class="shop-card-name"><span class="shop-ro-check" aria-hidden="true">${s.done ? '☑' : '☐'}</span><span>${esc(s.text)}</span></div>
+      ${where ? `<div class="shop-where muted">${where}</div>` : ''}
+      ${s.note ? `<div class="shop-ro-note">${esc(s.note)}</div>` : ''}
+      ${Number(s.price) ? `<div class="shop-ro-price">${showMoney(s.price, currency)}</div>` : ''}
+    </li>`;
+}
+
+/** 一個人的購物清單，依天分組。editable＝自己的（可以改、可以新增），否則是旅伴的（只能看） */
+function shopDaySections(t, dates, items, editable) {
+  const idx = shoppingIndex(t, dates, items);
+  const card = editable ? shopCard : shopCardReadonly;
   const days = dates.map((d, i) => {
     const acts = (t.days[d] || []).filter((a) => idx.byAct.has(a.id));
     const dayTotal = shopCost(shoppingOn(t, idx, d), t.currency);
@@ -441,34 +451,61 @@ function shoppingView(t, dates) {
       <section class="panel">
         <div class="shop-day-head">
           <h3>Day ${i + 1}・${prettyDate(d)}${dayTotal ? `<span class="muted shop-day-total">${ntd(dayTotal)}</span>` : ''}</h3>
-          <button class="btn btn-sm no-print" data-action="add-shop" data-date="${d}">＋ 這天要買</button>
+          ${editable ? `<button class="btn btn-sm no-print" data-action="add-shop" data-date="${d}">＋ 這天要買</button>` : ''}
         </div>
         <ul class="shop-grid">
-          ${acts.map((a) => idx.byAct.get(a.id).map((s) => shopCard(s, t.currency, `📍 ${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}`)).join('')).join('')}
-          ${rest.map((s) => shopCard(s, t.currency)).join('')}
+          ${acts.map((a) => idx.byAct.get(a.id).map((s) => card(s, t.currency, `📍 ${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}`)).join('')).join('')}
+          ${rest.map((s) => card(s, t.currency)).join('')}
         </ul>
       </section>`;
   }).join('');
+  return `${days}
+    ${idx.loose.length ? `
+      <section class="panel">
+        <h3>不指定日期</h3>
+        <ul class="shop-grid">${idx.loose.map((s) => card(s, t.currency)).join('')}</ul>
+      </section>` : ''}`;
+}
+
+function shopSummary(items, currency) {
+  const total = shopCost(items, currency);
+  return `已買 ${items.filter((s) => s.done).length} / ${items.length}${total ? `・預估 ${ntd(total)}（已買 ${ntd(shopCost(items.filter((s) => s.done), currency))}）` : ''}`;
+}
+
+function shoppingView(t, dates) {
+  const items = t.shopping || [];
+  const done = items.filter((s) => s.done).length;
+  const pct = items.length ? (done / items.length) * 100 : 0;
+  const total = shopCost(items, t.currency);
+  const shared = cloudOn() && Array.isArray(t.members) && t.members.length > 1;
+  const me = shared ? (t.members.find((m) => m.me) || {}).name : '';
+  // 旅伴的清單（雲端才有）：一人一區，只能看
+  const others = (shared ? t.othersShopping || [] : []).filter((g) => g && Array.isArray(g.items) && g.items.length);
+  const othersHtml = others.map((g, i) => `
+    <details class="shop-owner shop-owner-other owner-${i % 4}" open>
+      <summary><span class="shop-owner-name">👤 ${esc(g.name)} 的購物清單</span><span class="chip">只能看</span><span class="muted shop-owner-sum">${shopSummary(g.items, t.currency)}</span></summary>
+      ${shopDaySections(t, dates, g.items, false)}
+    </details>`).join('');
+
   return `
+    ${shared ? `<div class="shop-owner shop-owner-me"><div class="shop-owner-title"><span class="shop-owner-name">🙋 我的購物清單${me ? `（${esc(me)}）` : ''}</span><span class="chip">可以修改</span></div>` : ''}
     <section class="panel">
       <div class="shop-day-head">
-        <div class="packing-summary">已買 ${done} / ${items.length}${total ? `・預估 ${ntd(total)}（已買 ${ntd(bought)}）` : ''}</div>
+        <div class="packing-summary">${shopSummary(items, t.currency)}</div>
         <button class="btn btn-primary no-print" data-action="add-shop" data-date="">＋ 新增要買的東西</button>
       </div>
       <div class="progress"><span style="width:${pct}%"></span></div>
       ${items.length ? '' : '<p class="muted shop-empty">還沒有要買的東西。可以指定哪一天、在哪一站買，每日行程裡也會跟著顯示。</p>'}
       ${items.length ? '<p class="muted hint">卡片上的備註和金額可以直接改；點「＋ 加照片」放上商品照片，點照片可以看大圖。有填金額的會計入「💰 預算」的購物分類。</p>' : ''}
-      ${cloudOn() && Array.isArray(t.members) && t.members.length > 1 ? '<p class="muted hint">🔒 購物清單是你自己的，旅伴看不到；預算裡的購物金額也只算你自己的。</p>' : ''}
+      ${shared ? '<p class="muted hint">👥 每個人各有一份購物清單：自己的可以改，旅伴的列在下面、只能看。預算裡的購物金額只算你自己的。</p>' : ''}
       <p class="muted hint no-print">${cloudOn()
         ? '也可以在 LINE 官方帳號輸入「買 明天 抹茶粉」「買 面膜 @藥妝店」「買到 抹茶粉」。'
         : '在「每日行程」每一站的 🛒 也能直接加。'}</p>
     </section>
-    ${days}
-    ${idx.loose.length ? `
-      <section class="panel">
-        <h3>不指定日期</h3>
-        <ul class="shop-grid">${idx.loose.map((s) => shopCard(s, t.currency)).join('')}</ul>
-      </section>` : ''}`;
+    ${shopDaySections(t, dates, items, true)}
+    ${shared ? '</div>' : ''}
+    ${othersHtml}
+    ${shared && !others.length ? '<p class="muted hint shop-others-empty">旅伴還沒有加購物清單。</p>' : ''}`;
 }
 
 function getTrip(id) {
@@ -1441,7 +1478,8 @@ document.addEventListener('click', (e) => {
       updateShopPhotoPreview();
       break;
     case 'view-shop-photo': {
-      const item = t?.shopping?.find((x) => x.id === el.dataset.id);
+      // 自己的和旅伴的照片都可以點開看
+      const item = [...(t?.shopping || []), ...(t?.othersShopping || []).flatMap((g) => g.items || [])].find((x) => x.id === el.dataset.id);
       const src = item && typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(item) : '';
       if (src && photoDialog) {
         $('#photo-dialog-img').src = src;

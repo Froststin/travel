@@ -443,7 +443,8 @@ const kyoto = shopTrip();
 const mineBefore = JSON.stringify(kyoto.shopping);
 say(`加入 ${api('invite', { tripId: kyoto.id }).code}`, 'U2');
 const tripOf = (user) => api('list', {}, `good:${user}`).trips.find((t) => t.id === kyoto.id);
-check('旅伴看不到別人的購物清單', kyoto.shopping.length > 0 && tripOf('U2').shopping.length === 0 && say('購物清單', 'U2').text.includes('還是空的'));
+check('自己的清單是空的；旅伴的另外列在「別人的」那一區', kyoto.shopping.length > 0 && tripOf('U2').shopping.length === 0 && say('購物清單', 'U2').text.includes('還是空的')
+  && tripOf('U2').othersShopping.length === 1 && tripOf('U2').othersShopping[0].name === 'Name-U1' && tripOf('U2').othersShopping[0].items.length === kyoto.shopping.length);
 r = say('買 今天 U2的東西 100', 'U2');
 check('旅伴加的東西只在自己那份', r.text.includes('已加入') && tripOf('U2').shopping.map((s) => s.text).join() === 'U2的東西' && JSON.stringify(tripOf('U1').shopping) === mineBefore, r.text);
 check('查當天行程只列出自己要買的', say('今天', 'U2').text.includes('🛒 要買：U2的東西') && !say('今天').text.includes('U2的東西'));
@@ -454,6 +455,29 @@ u2trip.shopping.push({ id: 'u2-web', text: '網站加的', date: '', activityId:
 res = api('saveTrip', { trip: u2trip, baseUpdatedAt: u2trip.updatedAt }, 'good:U2');
 check('旅伴在網站存檔不會動到別人的購物清單', res.ok && tripOf('U2').shopping.length === 2 && JSON.stringify(tripOf('U1').shopping) === mineBefore);
 check('買到別人的東西會找不到', say('買到 U2的東西').text.includes('找不到') && !tripOf('U2').shopping[0].done);
+// 看得到別人的，但改不了
+const seen = tripOf('U1').othersShopping;
+check('看得到旅伴的清單，依人分組、不外流 LINE userId', seen.length === 1 && seen[0].name === 'Name-U2' && seen[0].items.map((s) => s.text).sort().join() === 'U2的東西,網站加的' && !JSON.stringify(seen).includes('"U2"'), JSON.stringify(seen));
+r = say('購物清單');
+check('LINE：我的清單之後，分段列出旅伴的', r.text.includes('我的購物清單') && r.text.includes('👤 Name-U2 的購物清單（已買 0 / 2）') && r.text.includes('☐ U2的東西') && r.text.indexOf('我的購物清單') < r.text.indexOf('👤 Name-U2'), r.text);
+check('LINE：指定日期時旅伴的也只列那天', say('今天要買什麼').text.includes('U2的東西') && !say('今天要買什麼').text.includes('網站加的') && !say('明天要買什麼').text.includes('U2的東西'));
+let tamper = tripOf('U1');
+tamper.othersShopping[0].items = [{ id: 'hack', text: '被亂改' }];
+tamper.shopping.push({ id: tamper.othersShopping[0].items[0].id, text: '想蓋掉別人的' });
+const u2Before = JSON.stringify(tripOf('U2').shopping);
+res = api('saveTrip', { trip: tamper, baseUpdatedAt: tamper.updatedAt });
+check('改不了旅伴的清單：存檔只會動到自己的', res.ok && JSON.stringify(tripOf('U2').shopping) === u2Before && tripOf('U1').othersShopping[0].items.length === 2, JSON.stringify(tripOf('U2').shopping));
+say('不買 想蓋掉別人的');
+const u2file = api('uploadShopImage', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==' }, 'good:U2').fileId;
+u2trip = tripOf('U2');
+u2trip.shopping[0].fileId = u2file;
+api('saveTrip', { trip: u2trip, baseUpdatedAt: u2trip.updatedAt }, 'good:U2');
+check('旅伴的照片：同旅程看得到，外人看不到', !!api('shopPhotos', { fileIds: [u2file] }).photos[u2file] && Object.keys(api('shopPhotos', { fileIds: [u2file] }, 'good:U3').photos).length === 0);
+let mineU1 = tripOf('U1');
+mineU1.shopping.push({ id: 'steal-1', text: '拿旅伴的照片', fileId: u2file });
+api('saveTrip', { trip: mineU1, baseUpdatedAt: mineU1.updatedAt });
+check('看得到不代表能拿來用：不能把旅伴的照片掛到自己的項目', tripOf('U1').shopping.find((s) => s.id === 'steal-1').fileId === '' && files.find((f) => f.id === u2file).trashed === false);
+say('不買 拿旅伴的照片');
 check('試算表每一列都記了是誰的', rows('Shopping').filter((s) => s.tripId === kyoto.id).every((s) => ['U1', 'U2'].includes(s.userId)) && rows('Shopping').filter((s) => s.userId === 'U2').length === 2);
 // 舊版資料（存在 Trips.shopping）升級後歸給旅程主人
 const col = H.sheets.Trips.data[0].indexOf('shopping');
@@ -468,6 +492,7 @@ check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s
 say('不買 舊版的東西');
 api('deleteTrip', { id: kyoto.id }, 'good:U2');
 check('退出旅程後主人的購物清單不受影響', JSON.stringify(tripOf('U1').shopping) === mineBefore);
+check('退出的人不再出現在旅伴清單裡，照片也讀不到', tripOf('U1').othersShopping.length === 0 && Object.keys(api('shopPhotos', { fileIds: [u2file] }).photos).length === 0);
 
 /* ---------- 購物清單的照片與備註 ---------- */
 const png = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';

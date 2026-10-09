@@ -35,7 +35,7 @@ const HELP_TEXT = [
   '・待去清單 → 查看（到網站按「整理」會把順路的分在一起）',
   '・不去 晴空塔',
   '',
-  '【購物清單】跟著每天的行程走；每個人各自一份，旅伴看不到',
+  '【購物清單】跟著每天的行程走；每個人各自一份，旅伴看得到但不能改',
   '・買 明天 抹茶粉 500円、八橋 → 記在那一天',
   '・買 面膜 @藥妝店 → 記在那個行程（行程改天會跟著走）',
   '　（金額會計入預算的「購物」；寫 円／¥ 會換算成旅程的幣別）',
@@ -618,10 +618,12 @@ function cmdShopView_(ctx, rest) {
   const trip = activeTrip_(ctx.trips, ctx.today, found && found.date);
   const all = trip.shopping || [];
   const more = [qUri_('在網站編輯', tripLiffUrl_(trip.id)), ...defaultQuick_()];
+  const onDay = found && trip.startDate <= found.date && found.date <= trip.endDate ? found.date : '';
+  const others = othersShopLines_(trip, onDay);
   if (!all.length) {
-    return say_(ctx, textMsg_(`「${trip.name}」的購物清單還是空的。\n例如：\n買 明天 抹茶粉、八橋\n買 面膜 @藥妝店`, more));
+    return say_(ctx, textMsg_([`「${trip.name}」你的購物清單還是空的。\n例如：\n買 明天 抹茶粉、八橋\n買 面膜 @藥妝店`, ...others].join('\n'), more));
   }
-  const lines = [`🛒 ${trip.name} 購物清單：已買 ${all.filter((s) => s.done).length} / ${all.length}`];
+  const lines = [`🛒 ${trip.name} ${others.length ? '我的' : ''}購物清單：已買 ${all.filter((s) => s.done).length} / ${all.length}`];
   const total = all.reduce((s, x) => s + twdOrRaw_(x.price, trip.currency), 0);
   if (total) lines.push(`預估 ${ntd_(total)}（已計入預算），其中已買 ${ntd_(all.filter((s) => s.done).reduce((s, x) => s + twdOrRaw_(x.price, trip.currency), 0))}`);
   if (found && trip.startDate <= found.date && found.date <= trip.endDate) {
@@ -642,7 +644,20 @@ function cmdShopView_(ctx, rest) {
       loose.forEach((s) => lines.push(shopLine_(trip, s)));
     }
   }
-  return say_(ctx, textMsg_(lines.join('\n'), more));
+  return say_(ctx, textMsg_(lines.concat(others).join('\n'), more));
+}
+
+/** 旅伴的購物清單（只能看），一人一段；onDay 有值時只列那一天的 */
+function othersShopLines_(trip, onDay) {
+  const lines = [];
+  for (const g of trip.othersShopping || []) {
+    const items = onDay ? g.items.filter((s) => shopDate_(trip, s) === onDay) : g.items;
+    if (!items.length) continue;
+    lines.push('', `━━ 👤 ${g.name} 的購物清單（已買 ${items.filter((s) => s.done).length} / ${items.length}）━━`);
+    items.forEach((s) => lines.push(shopLine_(trip, s)));
+  }
+  if (lines.length) lines.push('', '※ 旅伴的清單只能看；「買到／不買」只會動到你自己的。');
+  return lines;
 }
 
 function cmdShopAdd_(ctx, body) {
