@@ -271,10 +271,11 @@ function cmdSite_(ctx) {
 function cmdExport_(ctx, name) {
   const trip = pickTrip_(ctx, name);
   if (!trip) return say_(ctx, textMsg_('還沒有旅程可以匯出喔。'));
-  ctx.afterLock = () => exportTrip_(ctx, trip); // 產生 PDF 要幾秒，放到鎖外面做
+  const view = viewUrl_(viewTokenFor_(ctx.userId, trip.id)); // 要寫試算表，趁還在鎖裡先拿好
+  ctx.afterLock = () => exportTrip_(ctx, trip, view); // 產生 PDF 要幾秒，放到鎖外面做
 }
 
-function exportTrip_(ctx, trip) {
+function exportTrip_(ctx, trip, view) {
   const site = tripLiffUrl_(trip.id);
   const overview = tripOverviewText_(trip);
   let res;
@@ -283,8 +284,8 @@ function exportTrip_(ctx, trip) {
   } catch (err) {
     console.error(err && err.stack ? err.stack : err);
     return say_(ctx, [
-      textMsg_(`⚠️ PDF 產生失敗（${err.message}），先給你網站連結和純文字版：\n🌐 ${site}`),
-      textMsg_(overview, [qUri_('開啟網站', site), qMsg_('再試一次', `匯出 ${trip.name}`), ...defaultQuick_()]),
+      textMsg_(`⚠️ PDF 產生失敗（${err.message}），先給你連結和純文字版：\n🔗 線上檢視（免登入）：${view}\n🌐 網站：${site}`),
+      textMsg_(overview, [qUri_('🔗 線上檢視', view), qUri_('開啟網站', site), qMsg_('再試一次', `匯出 ${trip.name}`), ...defaultQuick_()]),
     ]);
   }
   return say_(ctx, [
@@ -294,13 +295,16 @@ function exportTrip_(ctx, trip) {
       '📄 PDF（網站打不開也能看）：',
       res.url,
       '',
-      '🌐 網站（最新內容）：',
+      '🔗 線上檢視（免登入、唯讀，內容會跟著行程更新）：',
+      view,
+      '',
+      '🌐 網站（可以編輯）：',
       site,
       '',
       '※ PDF 是當下的備份，行程改過要再匯出一次，舊連結會失效。建議打開後下載到手機，沒網路也能看。',
-      '※ 知道 PDF 連結的人都能看，請只傳給旅伴。',
+      '※ 知道 PDF 或線上檢視連結的人都能看，請只傳給旅伴。',
     ].join('\n')),
-    textMsg_(overview, [qUri_('📄 開啟 PDF', res.url), qUri_('🌐 開啟網站', site), ...defaultQuick_()]),
+    textMsg_(overview, [qUri_('📄 開啟 PDF', res.url), qUri_('🔗 線上檢視', view), qUri_('🌐 開啟網站', site), ...defaultQuick_()]),
   ]);
 }
 
@@ -818,7 +822,8 @@ function handlePostback_(ctx, data) {
   if (p.a === 'export') {
     const trip = ctx.trips.find((t) => t.id === p.id);
     if (!trip) return say_(ctx, textMsg_('這個旅程已經不存在了。'));
-    ctx.afterLock = () => exportTrip_(ctx, trip);
+    const view = viewUrl_(viewTokenFor_(ctx.userId, trip.id));
+    ctx.afterLock = () => exportTrip_(ctx, trip, view);
     return;
   }
   if (p.a === 'trip') {

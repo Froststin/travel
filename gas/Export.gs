@@ -29,7 +29,19 @@ function budgetSummary_(trip) {
 }
 
 /** 整趟旅程的靜態網頁（不含 emoji，轉 PDF 時比較不會缺字） */
-function exportHtml_(trip, exportedAt) {
+/** 線上檢視頁：用連結就能看、不用登入，內容是打開當下的最新行程 */
+function viewPage_(token) {
+  const trip = tripForView_(token);
+  const html = trip
+    ? exportHtml_(trip, Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm'), true)
+    : '<!DOCTYPE html><html><body style="font-family:sans-serif;padding:24px"><h2>這個連結已經失效</h2><p>可能是連結被換新、旅程被刪除，或分享的人已經退出旅程。請向對方要新的連結。</p></body></html>';
+  return HtmlService.createHtmlOutput(html)
+    .setTitle(trip ? `${trip.name}｜旅程手帖` : '旅程手帖')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/** web＝給線上檢視頁用：手機版面、地點可以點開地圖；否則是轉 PDF 用的版面 */
+function exportHtml_(trip, exportedAt, web) {
   const e = escHtml_;
   const dates = dateRange_(trip.startDate, trip.endDate);
   const days = dates.map((d, i) => {
@@ -43,7 +55,7 @@ function exportHtml_(trip, exportedAt) {
         <tr>
           <td class="time">${e(timeLabel_(a) || '—')}</td>
           <td><b>${e(a.title)}</b> <span class="cat">${e(CATEGORY_INFO[catKey_(a.category)].label)}</span>
-            ${a.location ? `<div class="sub">地點：${e(a.location)}</div>` : ''}
+            ${a.location ? `<div class="sub">地點：${web && placeUrl_(a) ? `<a href="${e(placeUrl_(a))}">${e(a.location)}</a>${navUrl_(a) ? `　<a href="${e(navUrl_(a))}">導航</a>` : ''}` : e(a.location)}</div>` : ''}
             ${a.notes ? `<div class="sub">${e(a.notes)}</div>` : ''}
             ${buy.length ? `<div class="sub buy">要買：${buy.map((s) => shopText_(trip, s)).join('、')}</div>` : ''}
           </td>
@@ -81,7 +93,7 @@ function exportHtml_(trip, exportedAt) {
     <h2>行李清單</h2>
     <p>${trip.packing.map((p) => `${p.done ? '[v]' : '[　]'} ${e(p.text)}`).join('　')}</p>` : '';
 
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${e(trip.name)}</title><style>
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8">${web ? '<base target="_blank">' : ''}<title>${e(trip.name)}</title><style>
     body { font-family: "Noto Sans TC", "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif; font-size: 11pt; color: #1f2a2e; line-height: 1.5; }
     h1 { font-size: 20pt; margin: 0 0 4px; color: #0f766e; }
     h2 { font-size: 13pt; margin: 18px 0 6px; padding-bottom: 3px; border-bottom: 2px solid #0f766e; color: #0f766e; }
@@ -94,12 +106,19 @@ function exportHtml_(trip, exportedAt) {
     .buy { color: #b0195a; }
     .transit td { font-size: 9.5pt; color: #555; border-bottom: none; padding-top: 2px; padding-bottom: 2px; }
     .meta { color: #555; margin: 0; }
+    ${web ? `body { max-width: 760px; margin: 0 auto; padding: 16px; font-size: 16px; }
+    h1 { font-size: 1.6rem; } h2 { font-size: 1.15rem; margin-top: 26px; }
+    .time { width: 4.6em; } .money { width: auto; }
+    .sub, .transit td { font-size: .86rem; } .cat { font-size: .75rem; }
+    a { color: #0f766e; }` : ''}
   </style></head><body>
     <h1>${e(trip.name)}</h1>
     <p class="meta">${e(trip.destination || '未設定目的地')}・${e(prettyDate_(trip.startDate))} – ${e(prettyDate_(trip.endDate))}・${e(durationText_(dates.length))}</p>
     ${(trip.members || []).length > 1 ? `<p class="meta">成員：${e(trip.members.map((m) => m.name).join('、'))}</p>` : ''}
     ${trip.notes ? `<p>${e(trip.notes)}</p>` : ''}
-    <p class="sub">這是 ${e(exportedAt)} 匯出的備份，之後的修改不會出現在這裡。最新內容：${e(tripLiffUrl_(trip.id))}</p>
+    ${web
+    ? `<p class="sub">唯讀的線上檢視頁，${e(exportedAt)} 的內容（重新整理就會更新）。要編輯請到 <a href="${e(tripLiffUrl_(trip.id))}">旅程手帖</a>。</p>`
+    : `<p class="sub">這是 ${e(exportedAt)} 匯出的備份，之後的修改不會出現在這裡。最新內容：${e(tripLiffUrl_(trip.id))}</p>`}
     ${days}${budget}${shopping}${packing}
   </body></html>`;
 }

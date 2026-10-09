@@ -312,7 +312,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && props.SCHEMA_VERSION === '9');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && props.SCHEMA_VERSION === '10');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -485,7 +485,7 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '9');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '10');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
@@ -591,6 +591,29 @@ st = shopTrip();
 st.places = [];
 api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
 
+/* ---------- 線上檢視連結（免登入、唯讀） ---------- */
+const getPage = (params) => { run('__clearCache()'); ctx.__req = { parameter: params }; return run('doGet(__req)'); };
+check('沒帶參數的 GET 還是健康檢查', getPage({}).s.includes('旅程手帖 API 運作中') && run('doGet()').s.includes('運作中'));
+const vTrip = shopTrip();
+say('新增 今天 21:00 <b>夜景</b> @京都塔');
+say('買 今天 檢視頁測試用 100');
+res = api('viewLink', { tripId: vTrip.id });
+const viewToken = (res.url || '').split('?view=')[1];
+check('產生連結：網址帶 40 碼代碼，再要一次是同一個', res.ok && /^[a-f0-9]{40}$/.test(viewToken) && res.url.startsWith('https://script.google.com/macros/s/') && api('viewLink', { tripId: vTrip.id }).url === res.url, JSON.stringify(res));
+check('產生連結需要登入、而且要是旅程成員', api('viewLink', { tripId: vTrip.id }, '').status === 401 && api('viewLink', { tripId: vTrip.id }, 'good:U3').status === 403);
+let page = getPage({ view: viewToken });
+check('免登入開啟：看得到行程、預算、購物清單', page.title === '京都｜旅程手帖' && page.meta.viewport && ['<h1>京都</h1>', 'Day 1・', '預估花費', '我的購物清單', '檢視頁測試用', '唯讀的線上檢視頁'].every((x) => page.html.includes(x)), page.html.slice(0, 300));
+check('線上檢視頁：內容有跳脫、沒有程式碼，地點可以點開地圖', page.html.includes('&lt;b&gt;夜景&lt;/b&gt;') && !/<script/i.test(page.html) && page.html.includes('<base target="_blank">') && page.html.includes('https://www.google.com/maps/search/?api=1&amp;query='));
+say('新增 今天 22:00 之後才加的行程');
+check('線上檢視頁會跟著行程更新', getPage({ view: viewToken }).html.includes('之後才加的行程'));
+check('亂猜的連結看不到東西', getPage({ view: 'a'.repeat(40) }).html.includes('已經失效') && getPage({ view: '../../etc' }).html.includes('已經失效') && !getPage({ view: 'a'.repeat(40) }).html.includes('京都'));
+const newUrl = api('viewLink', { tripId: vTrip.id, reset: true }).url;
+check('換新連結：舊的立刻失效', newUrl !== res.url && getPage({ view: viewToken }).html.includes('已經失效') && getPage({ view: newUrl.split('?view=')[1] }).html.includes('<h1>京都</h1>'));
+r = say('匯出');
+check('LINE 匯出也附上線上檢視連結', r.msgs[0].text.includes(newUrl) && r.quick.some((q) => q.action.type === 'uri' && q.action.uri === newUrl), r.msgs[0].text);
+say('不買 檢視頁測試用');
+for (const title of ['夜景', '之後才加的行程']) { const a = shopTrip().days['2026-10-29'].find((x) => x.title.includes(title)); if (a) postback({ a: 'del', id: a.id }); }
+
 /* ---------- 匯出 PDF ---------- */
 say('買 今天 匯出測試用 120');
 say('新增 今天 20:00 <b>壞標題</b> @居酒屋 $800');
@@ -646,7 +669,9 @@ cache.clear();
 r = postback({ a: 'edit', id: 'whatever', k: 'gone' });
 check('暫存過期時會提示重新輸入', r.text.includes('已經過期'), r.text);
 
+const lastView = api('viewLink', { tripId: trip.id }).url.split('?view=')[1];
 check('API deleteTrip', api('deleteTrip', { id: trip.id }).ok && api('list', {}).trips.length === 0);
+check('旅程刪掉後，線上檢視連結也失效', getPage({ view: lastView }).html.includes('已經失效'));
 
 /* ---------- 只寫入有變動的列 ---------- */
 const mkTrip = (id, name, start, n) => ({

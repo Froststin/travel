@@ -144,7 +144,23 @@
         <a class="btn" id="static-open" target="_blank" rel="noopener">🔗 在新分頁開啟</a>
         <button type="button" class="btn" id="static-share" data-static="share" hidden>📤 分享／存到檔案</button>
       </div>
-      <p class="form-hint muted">下載沒反應或出現錯誤時，改用「在新分頁開啟」：開出來的就是完整的靜態頁面，可以用瀏覽器的「儲存網頁」或「列印 → 存成 PDF」留下來。手機上建議用「分享／存到檔案」。</p>
+      <p class="form-hint muted">下載沒反應或出現錯誤時，改用「在新分頁開啟」；手機上可以試「分享／存到檔案」。這三種都被瀏覽器擋掉的話（在 LINE 裡開網站常會這樣），請用下面的線上檢視連結。</p>
+      <div id="static-link-box" class="static-link" hidden>
+        <h3>🔗 線上檢視連結</h3>
+        <p class="form-hint muted">一個免登入、只能看的網頁，內容會跟著行程更新，可以直接開、加到書籤或傳給旅伴。知道連結的人都能看（含你自己的購物清單）。</p>
+        <div class="static-actions">
+          <button type="button" class="btn btn-line" data-static="link">取得連結</button>
+        </div>
+        <div id="static-link-result" hidden>
+          <input id="static-link-url" readonly aria-label="線上檢視連結">
+          <div class="static-actions">
+            <button type="button" class="btn btn-primary" data-static="link-open">開啟</button>
+            <button type="button" class="btn" data-static="link-copy">複製</button>
+            <button type="button" class="btn btn-line" data-static="link-line">傳到 LINE</button>
+            <button type="button" class="btn btn-danger" data-static="link-reset" title="舊連結會立刻失效">換新連結</button>
+          </div>
+        </div>
+      </div>
       <div class="form-actions"><button type="button" class="btn" data-action="close-dialog">關閉</button></div>
     </div>
   </dialog>

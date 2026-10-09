@@ -7,7 +7,9 @@
  * 網站 API 則用 LINE Login 的 ID token 驗證使用者。
  * ============================================================ */
 
-function doGet() {
+function doGet(e) {
+  const token = e && e.parameter && e.parameter.view;
+  if (token) return viewPage_(token); // 免登入的線上檢視頁（見 Export.gs）
   return ContentService.createTextOutput(`旅程手帖 API 運作中（圖文選單 v${prop_('RICHMENU_VERSION') || '1'}，程式 v${RICHMENU_VERSION}）`);
 }
 
@@ -109,6 +111,9 @@ function handleApi_(body) {
         deleteJournal_(userId, String(body.id || ''));
         return {};
       });
+
+    case 'viewLink':
+      return withLock_(() => ({ url: viewUrl_(viewTokenFor_(userId, String(body.tripId || ''), !!body.reset)) }));
 
     case 'uploadShopImage':
       return { fileId: uploadShopImage_(userId, body.dataUrl) };

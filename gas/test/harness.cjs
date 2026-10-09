@@ -129,6 +129,7 @@ const ctx = {
       return files.find((f) => f.id === id) || { setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) };
     },
   },
+  HtmlService: { createHtmlOutput: (html) => ({ html, meta: {}, setTitle(t) { this.title = t; return this; }, addMetaTag(k, v) { this.meta[k] = v; return this; } }) },
   ContentService: { createTextOutput: (s) => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
   UrlFetchApp: {
     fetch(url, opt = {}) {

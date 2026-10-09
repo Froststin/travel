@@ -11,6 +11,8 @@
 const LIFF_ID = '2011768794-Lhly8AIw';
 const LOGIN_CHANNEL_ID = LIFF_ID.split('-')[0];
 const SITE_URL = 'https://froststin.github.io/travel/';
+// 這支後端的網址（要和 js/config.js 的 apiUrl 一樣），用來產生免登入的線上檢視連結
+const API_URL = 'https://script.google.com/macros/s/AKfycbxjPX_V7LYnM6oRp3C4uu5dVMNKoCMWKTpymuqgl_SCj04MS8_RU78dPHnpBphLUWd3/exec';
 const LIFF_URL = `https://liff.line.me/${LIFF_ID}`;
 const BOT_BASIC_ID = '@839jhulx'; // 官方帳號 ID，用於邀請連結
 // 圖文選單：改了按鈕或圖片就把 RICHMENU_VERSION 加 1（圖片換新檔名），部署後第一次有人使用時會自動重建

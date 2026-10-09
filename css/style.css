@@ -633,3 +633,7 @@ textarea { resize: vertical; }
 /* 匯出靜態網站的結果視窗 */
 .static-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .static-actions .btn { text-decoration: none; }
+.static-link { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.static-link h3 { margin: 0; font-size: 1rem; }
+#static-link-result { display: flex; flex-direction: column; gap: 8px; }
+#static-link-url { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); font: inherit; font-size: .85rem; }

@@ -14,8 +14,9 @@ const TABLES = {
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt'],
   Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done', 'note', 'fileId'],
+  Views: ['token', 'tripId', 'userId', 'createdAt'], // 免登入的線上檢視連結
 };
-const SCHEMA_VERSION = '9';
+const SCHEMA_VERSION = '10';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
@@ -622,6 +623,7 @@ function deleteTrip_(userId, tripId) {
   replaceRows_('Trips', (t) => t.id === tripId, []);
   replaceRows_('Activities', (a) => a.tripId === tripId, []);
   replaceRows_('Members', (m) => m.tripId === tripId, []);
+  replaceRows_('Views', (v) => v.tripId === tripId, []);
   trashFiles_(readTable_('Shopping').filter((s) => s.tripId === tripId && s.fileId).map((s) => s.fileId));
   replaceRows_('Shopping', (s) => s.tripId === tripId, []);
   return 'deleted';
@@ -668,6 +670,32 @@ function removeMember_(ownerId, tripId, member) {
   // 舊邀請碼作廢，被移除的人不能用同一組再加入；下次邀請會產生新的
   if (row.inviteCode) replaceRows_('Trips', (t) => t === row, [Object.assign({}, row, { inviteCode: '' })]);
   return target.userId;
+}
+
+/* ---------- 線上檢視連結（免登入、唯讀） ---------- */
+/**
+ * 每個人在每個旅程有一個連結，知道連結的人不用登入就能看（內容以產生連結的人看到的為準，含他自己的購物清單）。
+ * reset＝換一個新的，舊連結立刻失效。產生連結的人退出旅程或旅程被刪掉後，連結也跟著失效。
+ */
+function viewTokenFor_(userId, tripId, reset) {
+  if (!roleIn_(userId, findTripRow_(tripId))) throw apiError_(403, '沒有權限產生這個旅程的連結');
+  const mine = (v) => v.tripId === tripId && v.userId === userId;
+  const cur = readTable_('Views').find(mine);
+  if (cur && !reset) return cur.token;
+  const token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').slice(0, 40);
+  replaceRows_('Views', mine, [{ token, tripId, userId, createdAt: String(Date.now()) }]);
+  return token;
+}
+
+function viewUrl_(token) {
+  return `${API_URL}?view=${token}`;
+}
+
+/** 連結對應的旅程（用產生連結那個人的身分讀）；連結不對或已失效回傳 null */
+function tripForView_(token) {
+  if (typeof token !== 'string' || !/^[a-f0-9]{40}$/.test(token)) return null;
+  const v = readTable_('Views').find((x) => x.token === token);
+  return v ? (loadTrips_(v.userId).find((t) => t.id === v.tripId) || null) : null;
 }
 
 /* ---------- 旅遊日誌 ---------- */

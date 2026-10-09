@@ -278,7 +278,7 @@ async function exportStaticSite(t) {
   const html = buildStaticHtml(t, photos);
   const name = `${t.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || '旅程'}.html`;
   if (staticResult && staticResult.url) URL.revokeObjectURL(staticResult.url);
-  staticResult = { name, html, url: URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })) };
+  staticResult = { name, html, tripId: t.id, tripName: t.name, url: URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })) };
 
   const dialog = document.getElementById('static-dialog');
   if (!dialog) { // 瀏覽器還留著舊版頁面：照舊直接下載
@@ -293,6 +293,12 @@ async function exportStaticSite(t) {
   document.getElementById('static-info').textContent = `「${name}」已經產生好了（${staticSizeText(html.length)}）。`;
   document.getElementById('static-share').hidden = !canShare;
   document.getElementById('static-open').href = staticResult.url;
+  // 線上檢視連結要登入雲端才有（頁面是後端產生的）
+  const linkBox = document.getElementById('static-link-box');
+  if (linkBox) {
+    linkBox.hidden = !cloudOn();
+    document.getElementById('static-link-result').hidden = true;
+  }
   dialog.showModal();
 }
 
@@ -311,4 +317,40 @@ document.addEventListener('click', async (e) => {
     }
   }
   // 「在新分頁開啟」是一般的連結（href 指向產生好的內容），不用另外處理
+
+  /* ----- 線上檢視連結 ----- */
+  const urlBox = document.getElementById('static-link-url');
+  if (el.dataset.static === 'link' || el.dataset.static === 'link-reset') {
+    const reset = el.dataset.static === 'link-reset';
+    if (reset && !confirm('換新連結後，舊的連結會立刻失效，已經傳出去的都打不開。確定要換嗎？')) return;
+    try {
+      el.disabled = true;
+      const { url } = await Cloud.call('viewLink', { tripId: staticResult.tripId, reset });
+      urlBox.value = url;
+      document.getElementById('static-link-result').hidden = false;
+      toast(reset ? '已換成新連結，舊的失效了' : '連結好了，可以開啟、複製或傳到 LINE');
+    } catch (err) {
+      toast(`取得連結失敗：${err.message}`);
+    } finally {
+      el.disabled = false;
+    }
+  }
+  if (el.dataset.static === 'link-open' && urlBox.value) {
+    // 在 LINE 裡用外部瀏覽器開，才不會被內建瀏覽器擋
+    if (typeof liffReady !== 'undefined' && liffReady && liff.isInClient()) liff.openWindow({ url: urlBox.value, external: true });
+    else window.open(urlBox.value, '_blank', 'noopener');
+  }
+  if (el.dataset.static === 'link-copy' && urlBox.value) {
+    try {
+      await navigator.clipboard.writeText(urlBox.value);
+      toast('已複製連結');
+    } catch (err) {
+      urlBox.focus();
+      urlBox.select();
+      toast('請長按或按 Ctrl/⌘+C 複製選取的連結');
+    }
+  }
+  if (el.dataset.static === 'link-line' && urlBox.value) {
+    openLineShareUrl(`🧳 ${staticResult.tripName} 的行程（免登入、只能看）\n${urlBox.value}`);
+  }
 });
