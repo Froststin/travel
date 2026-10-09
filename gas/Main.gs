@@ -23,7 +23,7 @@ function doPost(e) {
     const key = prop_('INVEST_PUSH_KEY');
     if (!key || e.parameter.key !== key) return ContentService.createTextOutput('forbidden');
     ensureInvestMenu_();
-    return json_(Object.assign(investPush_(body), { menu: prop_('INVEST_MENU_VERSION') }));
+    return json_(Object.assign(investPush_(body), { menu: prop_('INVEST_MENU_VERSION'), menuScope: prop_('INVEST_MENU_SCOPE') }));
   }
 
   if (e.parameter.src === 'line') {

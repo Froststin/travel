@@ -743,7 +743,7 @@ check('投資：沒設定金鑰時推播一律拒絕', investPost('', { text: 'x
 Object.assign(props, { INVEST_PUSH_KEY: 'pk', INVEST_BIND_CODE: 'Code1234', INVEST_SHEET_ID: 'inv', INVEST_USERS: '' });
 check('投資：金鑰錯誤拒絕', investPost('wrong', { text: 'x' }) === 'forbidden' && pushes().length === 0);
 check('投資：還沒人綁定時不推', JSON.parse(investPost('pk', { text: '日報' })).ok === false && pushes().length === 0);
-check('投資：沒綁定的人傳「選股」照舊走旅程手帖', !say('選股').text.includes('📊'));
+check('投資：開放後沒綁定的人也能查（還沒有資料時回提示）', flexOf('選股', 'U7').json.includes('今日選股') && flexOf('投資', 'U7').json.includes('投資選單'));
 check('投資：我的ID 回覆自己的 userId', say('我的ID', 'U9').text.includes('U9'));
 check('投資：代碼錯誤不能綁定', say('綁定投資 Wrong999').text.includes('不正確') && props.INVEST_USERS === '');
 check('投資：代碼正確綁定成功', say('綁定投資 Code1234').text.includes('已綁定') && props.INVEST_USERS === 'U1' && props.INVEST_BIND_CODE === '');
@@ -762,7 +762,7 @@ check('投資選單：自動建立兩張分頁選單', tabMenus.length === 2 && 
 check('投資選單：每張最上面是「旅遊｜投資」分頁切換', tabMenus.every((m) => m.areas[0].action.type === 'richmenuswitch' && m.areas[0].action.richMenuAliasId === 'invest-tab-travel' && m.areas[1].action.richMenuAliasId === 'invest-tab-invest' && m.areas[0].bounds.width === 1250 && m.areas[1].bounds.x === 1250));
 check('投資選單：旅遊分頁保留原本七個按鈕', tabMenus[0].areas.slice(2).map((a) => a.action.text || a.action.type).join() === '今天,明天,所有旅程,日誌,uri,匯出,說明' && tabMenus[0].areas[2].bounds.y === 250 && tabMenus[0].areas[8].bounds.y + tabMenus[0].areas[8].bounds.height === 1686);
 check('投資選單：投資分頁六個按鈕', tabMenus[1].areas.slice(2).map((a) => a.action.text).join() === '持股,交易紀錄,報酬率,準確率,選股,虛擬貨幣' && tabMenus[1].areas.every((a) => a.bounds.x + a.bounds.width <= 2500 && a.bounds.y + a.bounds.height <= 1686));
-check('投資選單：只換綁定的人的選單，沒有改預設選單', sent.some((s) => new RegExp(`user/U1/richmenu/${props.INVEST_MENU_IDS.split(',')[0]}$`).test(s.url)) && !sent.some((s) => /user\/all\/richmenu/.test(s.url)));
+check('投資選單：開放後設成所有人的預設選單', sent.some((s) => new RegExp(`user/all/richmenu/${props.INVEST_MENU_IDS.split(',')[0]}$`).test(s.url)) && props.INVEST_MENU_SCOPE === 'all');
 sent.length = 0;
 hook();
 check('投資選單：已是最新版就不再重建', menuCreates().length === 0);
@@ -903,7 +903,18 @@ check('投資卡片：準確率兩個帳戶各一張表，帶參數', fAcc.json.
 
 const inv_dailyPush = JSON.parse(investPost('pk', { text: '🧪 模擬交易 2026-10-05' }));
 check('投資：每日推播下方帶投資按鈕', inv_dailyPush.ok && pushes()[0].body.messages[0].quickReply.items.some((i) => i.action.text === '持股'));
-check('投資：沒綁定的旅伴查不到投資資料', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '投資'].every((t) => { const r = say(t, 'U2'); return !/總權益|台積電|投資選單|模擬持股|持股損益表/.test(r.text); }));
+check('投資：開放後其他好友也看得到全部內容', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '虛擬貨幣'].every((t) => flexOf(t, 'U2').type === 'flex') && flexOf('報酬率', 'U2').json.includes('1,012,588') && flexOf('持股', 'U2').json.includes('台積電 2330'));
+sent.length = 0;
+const pushOnlyBound = JSON.parse(investPost('pk', { text: '只給綁定的人' }));
+check('投資：開放後每日推播仍只給綁定的人', pushOnlyBound.ok && pushOnlyBound.sent === 1 && pushes().length === 1 && pushes()[0].body.to === 'U1');
+check('投資：說明裡有投資的用法', say('說明', 'U2').text.includes('【投資】') && say('說明', 'U2').text.includes('不是投資建議'));
+props.INVEST_MENU_SCOPE = '';
+props.INVEST_MENU_TRIED_AT = '';
+sent.length = 0;
+run('__clearCache()');
+ctx.__ev = { events: [{ type: 'message', replyToken: 'r', source: { userId: 'U2' }, message: { type: 'text', text: '今天' } }] };
+hook();
+check('投資選單：預設選單被換掉後會自動再套用，不重建選單', menuCreates().length === 0 && sent.some((s) => /user\/all\/richmenu\/menu-/.test(s.url)) && props.INVEST_MENU_SCOPE === 'all');
 check('投資：旅遊指令不受影響', say('說明').text.includes('旅程手帖') && say('今天').quick.some((i) => i.action.text === '所有旅程'));
 
 /* ---------- 網站版本號 ---------- */

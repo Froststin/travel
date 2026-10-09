@@ -92,6 +92,7 @@ function setupRichMenu() {
     throw new Error(`套用圖文選單失敗：${set.getContentText()}`);
   }
   PropertiesService.getScriptProperties().setProperty('RICHMENU_VERSION', RICHMENU_VERSION);
+  PropertiesService.getScriptProperties().setProperty('INVEST_MENU_SCOPE', ''); // 預設選單剛被換掉：讓投資分頁選單下次再套用一次
 
   // 刪除舊的選單
   const list = JSON.parse(lineApi_('richmenu/list', null, 'get').getContentText()).richmenus || [];

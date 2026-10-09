@@ -1,8 +1,9 @@
 /* ============================================================
  * 投資日報：跟「投資分析」專案（github.com/Froststin/invest-analysis）共用這個官方帳號
  *
+ *  - 誰能用：INVEST_PUBLIC 為 true 時，所有好友都能查詢；每日推播仍只給綁定過的人
  *  - 推播：投資分析的每日排程 POST <網頁應用程式網址>?src=invest&key=<INVEST_PUSH_KEY>，
- *          body {"text": "..."}，只推給綁定過的人（INVEST_USERS），旅伴不會收到
+ *          body {"text": "..."}，只推給綁定過的人（INVEST_USERS），其他人不會收到
  *  - 查詢：綁定過的人傳「投資」叫出選單，點按鈕（或直接傳「持股」「交易紀錄」「報酬率」「準確率」
  *          「選股」「虛擬貨幣」）就讀投資分析的試算表回覆；每則回覆下方都帶同一排按鈕
  *  - 綁定：傳「綁定投資 <一次性代碼>」，代碼用過即失效
@@ -14,8 +15,9 @@
  *   INVEST_USERS      綁定的 LINE userId（逗號分隔）
  *   INVEST_MENU_VERSION / INVEST_MENU_IDS / INVEST_MENU_TRIED_AT   投資分頁圖文選單（自動維護）
  *
- * 圖文選單：綁定的人會換成「旅遊｜投資」雙分頁選單（圖片由 tools/make_invest_menu.py 產生），
- * 其他人維持原本的旅遊選單。改了圖或按鈕就把 INVEST_MENU_VERSION 加 1。
+ * 圖文選單：「旅遊｜投資」雙分頁選單（圖片由 tools/make_invest_menu.py 產生）。INVEST_PUBLIC 為 true 時是
+ * 所有人的預設選單，false 時只有綁定的人會換成這組。改了圖或按鈕就把 INVEST_MENU_VERSION 加 1。
+ * 從 true 改回 false 時，要把 Config.gs 的 RICHMENU_VERSION 加 1，讓預設選單重建回原本的旅遊選單。
  * ============================================================ */
 
 // 欄位順序要跟投資分析 stock_reco/store.py 的 TABLES 一致
@@ -35,6 +37,10 @@ const INVEST_TABLES = {
   sim_accuracy: ['snapshot', 'date', 'account', 'kind', 'horizon', 'n', 'win', 'avg'],
   sim_params: ['date', 'account', 'params_json', 'reason', 'metrics_json', 'created_at'],
 };
+
+// true：官方帳號的所有好友都能查詢投資內容（選股、模擬交易、準確率），圖文選單也都有「投資」分頁。
+// false：只有用代碼綁定過的人能用。每日推播不受這個設定影響，一律只推給綁定的人。
+const INVEST_PUBLIC = true;
 
 // 模擬交易有兩個獨立帳戶（各自的資金、報酬率、參數）；sim_equity 另有一列「合計」
 const INVEST_ACCOUNTS = ['股票', '虛擬貨幣'];
@@ -155,7 +161,7 @@ function handleInvestText_(ctx, text) {
     say_(ctx, textMsg_(`✅ 已綁定投資日報。\n\n${INVEST_HELP}`));
     return true;
   }
-  if (!investUsers_().includes(ctx.userId) || !prop_('INVEST_SHEET_ID')) return false;
+  if (!(INVEST_PUBLIC || investUsers_().includes(ctx.userId)) || !prop_('INVEST_SHEET_ID')) return false;
 
   let view = '';
   if (/^(投資|投資選單|投資日報|投資功能)$/.test(text)) {
@@ -647,13 +653,22 @@ function investMenuIds_() {
 
 /** 版本不同時自動重建一次；失敗不影響正常使用，10 分鐘後再試 */
 function ensureInvestMenu_() {
-  if (prop_('INVEST_MENU_VERSION') === INVEST_MENU_VERSION || !investUsers_().length || !prop_('CHANNEL_ACCESS_TOKEN')) return;
+  const scope = INVEST_PUBLIC ? 'all' : 'bound';
+  const done = () => prop_('INVEST_MENU_VERSION') === INVEST_MENU_VERSION && prop_('INVEST_MENU_SCOPE') === scope;
+  if (done() || (!INVEST_PUBLIC && !investUsers_().length) || !prop_('CHANNEL_ACCESS_TOKEN')) return;
   if (Date.now() - Number(prop_('INVEST_MENU_TRIED_AT') || 0) < 10 * 60 * 1000) return;
   withLock_(() => {
-    if (prop_('INVEST_MENU_VERSION') === INVEST_MENU_VERSION) return;
-    PropertiesService.getScriptProperties().setProperty('INVEST_MENU_TRIED_AT', String(Date.now()));
+    if (done()) return;
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty('INVEST_MENU_TRIED_AT', String(Date.now()));
     try {
-      setupInvestMenus_();
+      if (prop_('INVEST_MENU_VERSION') !== INVEST_MENU_VERSION) setupInvestMenus_();
+      if (INVEST_PUBLIC) {
+        // 開放給所有好友：把雙分頁選單設成整個官方帳號的預設選單
+        const res = lineApi_(`user/all/richmenu/${investMenuIds_()[0]}`, null, 'post');
+        if (res.getResponseCode() !== 200) throw new Error(`套用預設圖文選單失敗：${res.getContentText()}`);
+      }
+      props.setProperty('INVEST_MENU_SCOPE', scope);
     } catch (err) {
       console.error(`投資圖文選單重建失敗：${err && err.message}`);
     }
