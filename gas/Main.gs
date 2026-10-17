@@ -129,7 +129,7 @@ function handleApi_(body) {
       return withLock_(() => ({ url: viewUrl_(viewTokenFor_(userId, String(body.tripId || ''), !!body.reset)) }));
 
     case 'uploadShopImage':
-      return { fileId: uploadShopImage_(userId, body.dataUrl) };
+      return { fileId: uploadShopImage_(userId, body.dataUrl, body.kind === 'activity' ? 'activity' : 'shop') };
 
     case 'shopPhotos':
       return { photos: shopPhotos_(userId, body.fileIds) };

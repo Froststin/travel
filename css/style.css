@@ -639,3 +639,10 @@ textarea { resize: vertical; }
 #static-link-url { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); font: inherit; font-size: .85rem; }
 #pdf-url { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); font: inherit; font-size: .85rem; }
 #pdf-result { border-top: 0; padding-top: 0; }
+
+/* 行程的照片 */
+.act-photo { float: right; width: 84px; height: 64px; margin: 0 0 6px 10px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--surface-2); cursor: pointer; }
+.act-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.act-photo.failed { display: none; }
+#act-photo-preview { width: 96px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+@media (max-width: 520px) { .act-photo { width: 64px; height: 48px; } }

@@ -73,16 +73,20 @@ const Cloud = {
     });
   },
 
-  /** 購物清單裡還沒上傳的照片（item.image）先傳到雲端，換成檔案 id 再存檔 */
+  /** 購物清單和行程裡還沒上傳的照片（image）先傳到雲端，換成檔案 id 再存檔 */
   async uploadShopImages(trip) {
-    for (const s of (trip.shopping || []).filter((x) => x.image && !x.fileId)) {
-      const { fileId } = await this.call('uploadShopImage', { dataUrl: s.image });
-      if (typeof ShopPhotos !== 'undefined') ShopPhotos.remember(fileId, s.image);
-      // 上傳期間清單可能被改過（物件換新的），用 id 和圖片內容找回同一筆
-      const cur = (trip.shopping || []).find((x) => x.id === s.id && x.image === s.image);
-      if (cur) {
-        cur.fileId = fileId;
-        delete cur.image;
+    const shops = () => trip.shopping || [];
+    const acts = () => Object.values(trip.days || {}).flat();
+    for (const [kind, list] of [['shop', shops], ['activity', acts]]) {
+      for (const s of list().filter((x) => x.image && !x.fileId)) {
+        const { fileId } = await this.call('uploadShopImage', { dataUrl: s.image, kind });
+        if (typeof ShopPhotos !== 'undefined') ShopPhotos.remember(fileId, s.image);
+        // 上傳期間資料可能被改過（物件換新的），用 id 和圖片內容找回同一筆
+        const cur = list().find((x) => x.id === s.id && x.image === s.image);
+        if (cur) {
+          cur.fileId = fileId;
+          delete cur.image;
+        }
       }
     }
   },
@@ -379,7 +383,10 @@ async function loadRate() {
   } catch { /* 忽略 */ }
   reportRate();
   if (!document.querySelector('dialog[open]')) route();
-  else updateFareHint();
+  else {
+    updateFareHint();
+    if (typeof updateCostHint === 'function') updateCostHint();
+  }
 }
 
 // 把臺銀匯率分享給後端，LINE 機器人也能用（需登入）

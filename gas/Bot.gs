@@ -16,7 +16,7 @@ const HELP_TEXT = [
   '・新增 明天 09:00-12:00 清水寺 移動15分',
   '・新增 明天 13:00 伏見稻荷 電車15分 車資230円',
   '　（車資寫「円／日幣」是日幣、「元／台幣」是台幣，沒寫單位當日幣）',
-  '　（花費寫「400円／¥400」會換算成旅程的幣別；只寫 $400 就是旅程的幣別）',
+  '　（花費寫「400円／¥400」記成日幣、顯示時換算台幣；只寫 $400 就是旅程的幣別）',
   '',
   '【修改／刪除】',
   '・改 清水寺 11:30（有結束時間會一起平移）',
@@ -236,7 +236,7 @@ function replySearchHits_(ctx, kw, hits) {
     if (a.location) lines.push(`📍 ${a.location}`);
     if (placeUrl_(a)) lines.push(`🗺️ 地圖：${placeUrl_(a)}`);
     if (navUrl_(a)) lines.push(`🧭 導航：${navUrl_(a)}`);
-    if (a.cost) lines.push(`💰 ${showMoney_(a.cost, trip.currency)}`);
+    if (a.cost) lines.push(`💰 ${showMoney_(a.cost, a.costCurrency || trip.currency)}`);
     if (a.notes) lines.push(`📝 ${a.notes}`);
     const quick = [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/'))];
     if (navUrl_(a)) quick.unshift(qUri_('🧭 開始導航', navUrl_(a)));
@@ -402,13 +402,13 @@ function cmdAdd_(ctx, body) {
   const trip = ctx.trips.find((x) => x.startDate <= date && date <= x.endDate);
   if (!trip) return say_(ctx, textMsg_(`${prettyDate_(date)} 沒有旅程喔，要先建立：新旅程 名稱 ${date.slice(5).replace('-', '/')}-…`));
 
-  const cc = costInCurrency_(c ? c.cost : 0, c ? c.currency : '', trip.currency);
   const activity = {
     id: Utilities.getUuid(), time: t ? t.time : '', endTime: t ? t.endTime : '', travelMin: tr ? tr.travelMin : 0,
     travelMode: tr ? tr.travelMode : '', travelCost: tr && tr.travelCost != null ? tr.travelCost : 0,
     travelCostCurrency: tr && tr.travelCost != null ? tr.travelCostCurrency : '', title: title.slice(0, 100),
     category: guessCategory_(`${title} ${loc ? loc.location : ''}`), location: loc ? loc.location.slice(0, 200) : '',
-    mapUrl: u ? cleanUrl_(u.url) : '', cost: cc.cost, notes: '',
+    mapUrl: u ? cleanUrl_(u.url) : '', cost: c ? c.cost : 0, notes: '',
+    costCurrency: c && c.currency && c.currency !== trip.currency ? c.currency : '', fileId: '', // 寫了幣別就照原幣記
   };
   (trip.days[date] = trip.days[date] || []).push(activity);
   sortDay_(trip.days[date]);
@@ -416,7 +416,7 @@ function cmdAdd_(ctx, body) {
   const list = trip.days[date];
   const issue = scheduleIssue_(list[list.indexOf(activity) - 1], activity);
   return say_(ctx, textMsg_(
-    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}${cc.note}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`,
+    `✅ 已新增到「${trip.name}」Day ${daysBetween_(trip.startDate, date) + 1}・${prettyDate_(date)}\n${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, activity.costCurrency || trip.currency)}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`,
     [qMsg_(`看 ${prettyDate_(date)}`, date.slice(5).replace('-', '/')), qPostback_('復原', { a: 'del', id: activity.id }, '復原剛才的新增'), ...defaultQuick_()],
   ));
 }
@@ -517,11 +517,11 @@ function applyEdit_(ctx, id, changes) {
     activity.travelCost = Math.max(0, Number(changes.travelCost) || 0);
     activity.travelCostCurrency = CURRENCY_CODES.includes(changes.travelCostCurrency) ? changes.travelCostCurrency : '';
   }
-  let costNote = '';
   if (changes.cost != null) {
-    const cc = costInCurrency_(changes.cost, CURRENCY_CODES.includes(changes.costCur) ? changes.costCur : '', trip.currency);
-    activity.cost = cc.cost;
-    costNote = cc.note;
+    activity.cost = Math.max(0, Number(changes.cost) || 0);
+    // 寫了幣別就照原幣記；沒寫（$、元）就是旅程的幣別
+    const cur = CURRENCY_CODES.includes(changes.costCur) ? changes.costCur : '';
+    activity.costCurrency = cur && cur !== trip.currency ? cur : '';
   }
   if (changes.location) activity.location = String(changes.location).slice(0, 200);
   if (changes.mapUrl && cleanUrl_(changes.mapUrl)) activity.mapUrl = cleanUrl_(changes.mapUrl);
@@ -536,7 +536,7 @@ function applyEdit_(ctx, id, changes) {
   sortDay_(trip.days[date]);
   saveTrip_(ctx.userId, trip);
   const issue = scheduleIssue_(trip.days[date][trip.days[date].indexOf(activity) - 1], activity);
-  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, trip.currency)}${costNote}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
+  return say_(ctx, textMsg_(`✏️ 已更新：${prettyDate_(date)} ${activityLine_(activity)}${transitLabel_(activity, trip.currency) ? `\n${transitLabel_(activity, trip.currency)}` : ''}${activity.cost ? `\n💰 ${showMoney_(activity.cost, activity.costCurrency || trip.currency)}` : ''}${issue ? `\n⚠️ ${issue}` : ''}`));
 }
 
 /* ---------- 待去清單 ---------- */

@@ -11,9 +11,10 @@
  *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份；
  *             note 是備註（數量、顏色、注意事項）；照片見 js/shopphoto.js
  *   othersShopping：[{ name, key, items }]，雲端回傳的旅伴購物清單，只能看，存檔時後端不會理它
- *   activity = { id, time, endTime, title, category, location, mapUrl, cost, notes,
+ *   activity = { id, time, endTime, title, category, location, mapUrl, cost, costCurrency, notes, image | fileId,
  *                travelMode, travelMin, travelCost, travelCostCurrency }  // travel* 是「從上一站過來」
- *   cost 用旅程幣別；travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
+ *   cost 用 costCurrency、travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
+ *   照片和購物清單一樣：還沒上傳是 image（data URL），上傳後是 fileId（見 js/shopphoto.js）
  * 用 LINE 登入後改以雲端為準（js/cloud.js），localStorage 只留未登入時的資料與尚未同步的修改
  * ============================================================ */
 
@@ -242,7 +243,7 @@ function missingRates(list, currency, budget, shopItems = []) {
   const used = new Set();
   if (Number(budget) || shopItems.some((s) => Number(s.price))) used.add(currency);
   for (const a of list) {
-    if (Number(a.cost)) used.add(currency);
+    if (Number(a.cost)) used.add(costCurrency(a, currency));
     if (Number(a.travelCost)) used.add(fareCurrency(a, currency));
   }
   return [...used].filter((c) => c && c !== 'TWD' && !(fx.rates[c] && fx.rates[c].rate));
@@ -333,8 +334,13 @@ function sortDay(list) {
 }
 
 // 花費＝行程本身＋前往的車資，全部換算成台幣
+// 行程花費的幣別（沒填就是旅程的幣別）
+function costCurrency(a, currency) {
+  return a.costCurrency || currency;
+}
+
 function sumCost(list, currency) {
-  return list.reduce((s, a) => s + twdOrRaw(a.cost, currency) + twdOrRaw(a.travelCost, fareCurrency(a, currency)), 0);
+  return list.reduce((s, a) => s + twdOrRaw(a.cost, costCurrency(a, currency)) + twdOrRaw(a.travelCost, fareCurrency(a, currency)), 0);
 }
 
 function allActivities(t) {
@@ -708,6 +714,7 @@ function activityItem(a, date, currency, shopItems = []) {
     <li class="activity cat-${key}">
       <div class="act-time">${a.time ? esc(a.time) : '—'}${a.time && a.endTime ? `<span class="act-end">~ ${esc(a.endTime)}</span>` : ''}</div>
       <div class="act-body">
+        ${shopImg(a, 'act-photo')}
         <div class="act-title"><span aria-hidden="true">${c.icon}</span>${esc(a.title)}<span class="chip">${c.label}</span></div>
         ${place || nav ? `
           <div class="act-links">
@@ -718,7 +725,7 @@ function activityItem(a, date, currency, shopItems = []) {
         ${shopItems.length ? `<ul class="shop-list shop-inline" aria-label="在這裡要買的東西">${shopItems.map((s) => shopItem(s, currency)).join('')}</ul>` : ''}
       </div>
       <div class="act-side">
-        ${a.cost ? `<span class="act-cost">${showMoney(a.cost, currency)}</span>` : ''}
+        ${a.cost ? `<span class="act-cost">${showMoney(a.cost, costCurrency(a, currency))}</span>` : ''}
         <div class="act-actions no-print">
           <button class="icon-btn" data-action="add-shop" data-date="${esc(date)}" data-activity="${esc(a.id)}" title="在這裡要買的東西" aria-label="新增在這裡要買的東西">🛒</button>
           <button class="icon-btn" data-action="edit-activity" data-date="${esc(date)}" data-id="${esc(a.id)}" title="編輯" aria-label="編輯">✎</button>
@@ -738,7 +745,7 @@ function budgetData(t, dates) {
   const looseShop = shopCost(shopItems, t.currency) - dates.reduce((s, d) => s + shopCost(shoppingOn(t, shop, d), t.currency), 0);
   const spent = sumCost(all, t.currency) + shopTotal;
   const budget = twdOrRaw(t.budget, t.currency);
-  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency))])].filter((c) => c && c !== 'TWD');
+  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency)), ...all.filter((a) => Number(a.cost)).map((a) => costCurrency(a, t.currency))])].filter((c) => c && c !== 'TWD');
   const remain = budget - spent;
   const over = budget > 0 && remain < 0;
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
@@ -748,7 +755,7 @@ function budgetData(t, dates) {
       ...c,
       key: k,
       // 車資一律算在「交通」
-      sum: all.reduce((s, a) => s + (catKey(a) === k ? twdOrRaw(a.cost, t.currency) : 0)
+      sum: all.reduce((s, a) => s + (catKey(a) === k ? twdOrRaw(a.cost, costCurrency(a, t.currency)) : 0)
         + (k === 'transport' ? twdOrRaw(a.travelCost, fareCurrency(a, t.currency)) : 0), 0)
         + (k === 'shopping' ? shopTotal : 0),
     }))
@@ -972,10 +979,16 @@ function openActivityDialog(date, activity) {
   activityForm.elements.location.value = a.location || '';
   activityForm.elements.mapUrl.value = a.mapUrl || '';
   activityForm.elements.cost.value = a.cost || '';
-  $('#cost-label').textContent = t.currency === 'TWD' ? '花費（NT$）' : `花費（${t.currency}，會換算成台幣）`;
+  // 花費的幣別：日幣、台幣，旅程是其他幣別時多一個選項
+  const curs = [...new Set(['JPY', 'TWD', t.currency])];
+  activityForm.elements.costCurrency.innerHTML = curs.map((c) => `<option value="${c}">${c === 'JPY' ? '¥ 日幣' : c === 'TWD' ? 'NT$ 台幣' : c}</option>`).join('');
+  activityForm.elements.costCurrency.value = activity ? costCurrency(a, t.currency) : lastCostCurrency(t);
+  actDialogPhoto = { image: '', removed: false, item: activity || null };
+  updateActPhotoPreview();
   activityForm.elements.notes.value = a.notes || '';
   updateAutoTime();
   updateFareHint();
+  updateCostHint();
   activityDialog.showModal();
   activityForm.elements.title.focus();
 }
@@ -1047,6 +1060,20 @@ activityForm.addEventListener('submit', (e) => {
     cost: Math.max(0, Number(f.get('cost')) || 0),
     notes: f.get('notes').trim(),
   };
+  // 幣別跟旅程一樣就不另外記
+  const cur = CURRENCIES.includes(f.get('costCurrency')) ? f.get('costCurrency') : '';
+  activity.costCurrency = cur && cur !== t.currency ? cur : '';
+  // 照片：編輯時沿用原本的，有換或移除才改
+  const prev = editingActivity && (t.days[editingActivity.date] || []).find((x) => x.id === editingActivity.id);
+  activity.fileId = (prev && prev.fileId) || '';
+  if (prev && prev.image) activity.image = prev.image;
+  if (actDialogPhoto.image) {
+    activity.image = actDialogPhoto.image;
+    activity.fileId = '';
+  } else if (actDialogPhoto.removed) {
+    delete activity.image;
+    activity.fileId = '';
+  }
   if (!activity.title) return toast('請填寫標題');
   if (activity.endTime && !activity.time) return toast('請先填開始時間');
   if (activity.endTime && activity.endTime < activity.time) return toast('結束時間不能早於開始時間');
@@ -1063,6 +1090,47 @@ activityForm.addEventListener('submit', (e) => {
   toast(editingActivity ? '行程已更新' : '行程已新增');
   renderTrip(t);
 });
+
+// 花費下方即時顯示換算（台幣就不用）
+function lastCostCurrency(t) {
+  try {
+    return localStorage.getItem('travel-planner:cost-currency') || (['JPY', 'TWD'].includes(t.currency) ? t.currency : 'JPY');
+  } catch {
+    return 'JPY';
+  }
+}
+
+function updateCostHint() {
+  const el = $('#cost-hint');
+  if (!el) return;
+  const cost = Number(activityForm.elements.cost.value) || 0;
+  const cur = activityForm.elements.costCurrency.value;
+  const conv = cost && cur !== 'TWD' ? toTWD(cost, cur) : null;
+  el.textContent = cost && cur !== 'TWD' ? (conv == null ? rateNote(cur) : `≈ ${ntd(conv)}｜${rateNote(cur)}`) : '';
+  el.hidden = !el.textContent;
+}
+
+activityForm.elements.cost.addEventListener('input', updateCostHint);
+activityForm.elements.costCurrency?.addEventListener('change', () => {
+  try {
+    localStorage.setItem('travel-planner:cost-currency', activityForm.elements.costCurrency.value);
+  } catch { /* 忽略 */ }
+  updateCostHint();
+});
+
+// 行程表單裡的照片：image＝這次新選的、removed＝按了移除、item＝正在編輯的行程
+let actDialogPhoto = { image: '', removed: false, item: null };
+
+function updateActPhotoPreview() {
+  const img = $('#act-photo-preview');
+  if (!img) return;
+  const it = actDialogPhoto.item;
+  const src = actDialogPhoto.image || (!actDialogPhoto.removed && it && typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(it) : '');
+  const has = !!src || (!actDialogPhoto.removed && !!(it && it.fileId));
+  img.hidden = !src;
+  if (src) img.src = src; else img.removeAttribute('src');
+  $('#act-photo-remove').hidden = !has;
+}
 
 /* ---------- 表單：購物清單 ---------- */
 function fillShopActivities(date, selected) {
@@ -1107,6 +1175,11 @@ shopPhotoFile?.addEventListener('change', async () => {
       shopDialogPhoto.image = dataUrl;
       shopDialogPhoto.removed = false;
       return updateShopPhotoPreview();
+    }
+    if (shopPhotoTarget === 'act-dialog') {
+      actDialogPhoto.image = dataUrl;
+      actDialogPhoto.removed = false;
+      return updateActPhotoPreview();
     }
     const t = currentTrip();
     const item = t && (t.shopping || []).find((s) => s.id === shopPhotoTarget);
@@ -1240,6 +1313,9 @@ function normalizeTrip(raw) {
           location: str(a.location, 200),
           mapUrl: cleanUrl(a.mapUrl),
           cost: Math.max(0, Number(a.cost) || 0),
+          costCurrency: CURRENCIES.includes(a.costCurrency) ? a.costCurrency : '',
+          fileId: '', // 雲端的照片不沿用
+          ...(typeof a.image === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(a.image) && a.image.length < 600000 ? { image: a.image } : {}),
           notes: str(a.notes),
         })));
     }
@@ -1475,6 +1551,15 @@ document.addEventListener('click', (e) => {
       shopPhotoTarget = 'dialog';
       shopPhotoFile?.click();
       break;
+    case 'act-dialog-pick':
+      shopPhotoTarget = 'act-dialog';
+      shopPhotoFile?.click();
+      break;
+    case 'act-dialog-remove-photo':
+      actDialogPhoto.image = '';
+      actDialogPhoto.removed = true;
+      updateActPhotoPreview();
+      break;
     case 'shop-dialog-remove-photo':
       shopDialogPhoto.image = '';
       shopDialogPhoto.removed = true;
@@ -1482,7 +1567,8 @@ document.addEventListener('click', (e) => {
       break;
     case 'view-shop-photo': {
       // 自己的和旅伴的照片都可以點開看
-      const item = [...(t?.shopping || []), ...(t?.othersShopping || []).flatMap((g) => g.items || [])].find((x) => x.id === el.dataset.id);
+      const item = [...(t?.shopping || []), ...(t?.othersShopping || []).flatMap((g) => g.items || []), ...Object.values(t?.days || {}).flat()]
+        .find((x) => x.id === el.dataset.id);
       const src = item && typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(item) : '';
       if (src && photoDialog) {
         $('#photo-dialog-img').src = src;

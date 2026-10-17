@@ -15,10 +15,10 @@ function budgetSummary_(trip) {
   const shopSum = (trip.shopping || []).reduce((s, x) => s + twdOrRaw_(x.price, cur), 0);
   const byCat = { shopping: shopSum };
   all.forEach((a) => {
-    byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, cur);
+    byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, a.costCurrency || cur);
     byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
   });
-  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur))])].filter((c) => c && c !== 'TWD');
+  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency)])].filter((c) => c && c !== 'TWD');
   return {
     spent: Object.values(byCat).reduce((s, v) => s + v, 0),
     budget: trip.budget ? twdOrRaw_(trip.budget, cur) : 0,
@@ -62,7 +62,7 @@ function exportHtml_(trip, exportedAt, web) {
             ${a.notes ? `<div class="sub">${e(a.notes)}</div>` : ''}
             ${buy.length ? `<div class="sub buy">要買：${buy.map((s) => shopText_(trip, s)).join('、')}</div>` : ''}
           </td>
-          <td class="money">${a.cost ? e(showMoney_(a.cost, trip.currency)) : ''}</td>
+          <td class="money">${a.cost ? e(showMoney_(a.cost, a.costCurrency || trip.currency)) : ''}</td>
         </tr>`;
     }).join('');
     const dayBuy = shoppingOn_(trip, d).filter((s) => !list.some((a) => a.id === s.activityId));

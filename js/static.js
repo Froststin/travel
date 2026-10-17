@@ -94,12 +94,13 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
         <li class="act">
           <div class="time">${a.time ? esc(a.time) : '—'}${a.time && a.endTime ? `<br><span class="small">~ ${esc(a.endTime)}</span>` : ''}</div>
           <div class="body">
+            ${staticShopImg(a)}
             <div class="title">${c.icon} ${esc(a.title)}<span class="chip">${c.label}</span></div>
             ${place || nav ? `<div class="small">${place ? `<a href="${esc(place)}">📍 ${esc(a.location || '地圖')}</a>` : ''}${nav ? ` ・ <a href="${esc(nav)}">🧭 導航</a>` : ''}</div>` : ''}
             ${a.notes ? `<div class="small muted">${esc(a.notes)}</div>` : ''}
             ${buy.length ? `<ul class="buy">${staticShopItems(buy, t.currency)}</ul>` : ''}
           </div>
-          ${Number(a.cost) ? `<div class="cost">${showMoney(a.cost, t.currency)}</div>` : ''}
+          ${Number(a.cost) ? `<div class="cost">${showMoney(a.cost, costCurrency(a, t.currency))}</div>` : ''}
         </li>`;
     }).join('');
     return `
@@ -274,7 +275,7 @@ function staticFile() {
 
 async function exportStaticSite(t) {
   toast('正在產生靜態網站……');
-  if (typeof ShopPhotos !== 'undefined') await ShopPhotos.fetch((t.shopping || []).map((s) => s.fileId));
+  if (typeof ShopPhotos !== 'undefined') await ShopPhotos.fetch([...(t.shopping || []), ...Object.values(t.days).flat()].map((s) => s.fileId));
   const photos = await staticPhotos(t);
   for (const [id, dataUrl] of photos) photos.set(id, await shrinkDataUrl(dataUrl, 1200, 0.78));
   const html = buildStaticHtml(t, photos);

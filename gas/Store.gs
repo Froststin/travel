@@ -9,14 +9,14 @@
 
 const TABLES = {
   Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places'],
-  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency'],
+  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency', 'costCurrency', 'fileId'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt'],
   Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done', 'note', 'fileId'],
   Views: ['token', 'tripId', 'userId', 'createdAt'], // 免登入的線上檢視連結
 };
-const SCHEMA_VERSION = '10';
+const SCHEMA_VERSION = '11';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
@@ -229,6 +229,8 @@ function sanitizeActivity_(a) {
     location: str_(a.location, 200),
     mapUrl: cleanUrl_(a.mapUrl),
     cost: Math.max(0, Number(a.cost) || 0),
+    costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '', // 空＝旅程的幣別
+    fileId: cleanFileId_(a.fileId), // 行程的照片；能不能用，存檔時（saveTrip_）才檢查
     notes: str_(a.notes),
   };
 }
@@ -396,17 +398,18 @@ function myShopFiles_(userId) {
   return new Set(readTable_('Shopping').filter((s) => s.userId === userId && s.fileId).map((s) => s.fileId));
 }
 
-/** 上傳一張照片（網站先縮小成 JPEG 再傳），回傳檔案 id；之後存檔時把 id 記在購物項目上 */
-function uploadShopImage_(userId, dataUrl) {
+/** 上傳一張照片（網站先縮小成 JPEG 再傳），回傳檔案 id；之後存檔時把 id 記在購物項目或行程上。kind：'shop'｜'activity' */
+function uploadShopImage_(userId, dataUrl, kind) {
   const m = typeof dataUrl === 'string' && dataUrl.length <= MAX_SHOP_IMAGE_CHARS && /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
   if (!m) throw apiError_(400, '照片格式不對或檔案太大');
   const blob = Utilities.newBlob(Utilities.base64Decode(m[2]), m[1], `shop_${Date.now()}.${m[1].split('/')[1]}`);
-  const id = shopFolder_().createFile(blob).getId();
+  const folder = kind === 'activity' ? driveFolder_('ACTIVITY_FOLDER_ID', '旅程手帖行程照片') : shopFolder_();
+  const id = folder.createFile(blob).getId();
   CacheService.getScriptCache().put(`up_${id}`, userId, 21600);
   return id;
 }
 
-/** 看得到的照片：自己的，加上同旅程目前成員的 */
+/** 看得到的照片：自己的購物照片、同旅程目前成員的購物照片，加上自己參加的旅程裡的行程照片 */
 function readableShopFiles_(userId) {
   const trips = tripIdsFor_(userId);
   const memberOf = {}; // tripId:userId → 是不是那個旅程目前的成員
@@ -415,9 +418,11 @@ function readableShopFiles_(userId) {
     if (!(k in memberOf)) memberOf[k] = !!roleIn_(uid, findTripRow_(tripId));
     return memberOf[k];
   };
-  return new Set(readTable_('Shopping')
+  const files = new Set(readTable_('Shopping')
     .filter((s) => s.fileId && (s.userId === userId || (trips.has(s.tripId) && isMember(s.tripId, s.userId))))
     .map((s) => s.fileId));
+  readTable_('Activities').filter((a) => a.fileId && trips.has(a.tripId)).forEach((a) => files.add(a.fileId));
+  return files;
 }
 
 /** 一次讀幾張照片（最多 6 張），只回傳自己的與同旅程成員的 */
@@ -502,6 +507,7 @@ function rowToTrip_(row, acts, viewerId) {
     (days[a.date] = days[a.date] || []).push({
       id: a.id, time: a.time, endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0, travelMode: travelModeKey_(a.travelMode), travelCost: Number(a.travelCost) || 0,
       travelCostCurrency: a.travelCostCurrency || '', title: a.title, category: catKey_(a.category), location: a.location, mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes,
+      costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '', fileId: a.fileId || '',
     });
   }
   Object.values(days).forEach(sortDay_);
@@ -592,10 +598,17 @@ function saveTrip_(userId, trip) {
   replaceRows_('Shopping', (s) => s.tripId === trip.id && s.userId === userId, shopRows);
   const kept = new Set(shopRows.map((r) => r.fileId));
   trashFiles_(before.filter((id) => !kept.has(id))); // 被換掉或跟著項目刪掉的照片
+  // 行程的照片：原本就掛在同一個行程上的，或是存檔的人剛上傳的，才收；被換掉或跟著行程刪掉的丟到垃圾桶
+  const prevActs = readTable_('Activities').filter((a) => a.tripId === trip.id);
+  const prevFile = new Map(prevActs.map((a) => [a.id, a.fileId]));
+  const uploadedBy = (id) => CacheService.getScriptCache().get(`up_${id}`) === userId;
   const acts = [];
   for (const [date, list] of Object.entries(trip.days || {})) {
     for (const a of list) {
+      const fileId = cleanFileId_(a.fileId);
       acts.push({
+        costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '',
+        fileId: fileId && (prevFile.get(a.id) === fileId || uploadedBy(fileId)) ? fileId : '',
         id: a.id, tripId: trip.id, userId: ownerId, date, time: a.time || '', endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0,
         travelMode: travelModeKey_(a.travelMode), travelCost: Number(a.travelCost) || 0,
         travelCostCurrency: CURRENCY_CODES.includes(a.travelCostCurrency) ? a.travelCostCurrency : '', title: a.title,
@@ -604,6 +617,8 @@ function saveTrip_(userId, trip) {
     }
   }
   replaceRows_('Activities', (a) => a.tripId === trip.id, acts);
+  const keptActFiles = new Set(acts.map((a) => a.fileId));
+  trashFiles_(prevActs.map((a) => a.fileId).filter((id) => id && !keptActFiles.has(id)));
   // 版本號最後才更新：行程寫到一半失敗時版本不變，網站重新存檔就能補回來
   replaceRows_('Trips', (t) => t.id === trip.id, [row]);
   trip.updatedAt = now;
@@ -625,6 +640,7 @@ function deleteTrip_(userId, tripId) {
   replaceRows_('Members', (m) => m.tripId === tripId, []);
   replaceRows_('Views', (v) => v.tripId === tripId, []);
   trashFiles_(readTable_('Shopping').filter((s) => s.tripId === tripId && s.fileId).map((s) => s.fileId));
+  trashFiles_(readTable_('Activities').filter((a) => a.tripId === tripId && a.fileId).map((a) => a.fileId));
   replaceRows_('Shopping', (s) => s.tripId === tripId, []);
   return 'deleted';
 }

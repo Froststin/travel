@@ -312,7 +312,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && props.SCHEMA_VERSION === '10');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && props.SCHEMA_VERSION === '11');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -485,7 +485,7 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '10');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '11');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
@@ -591,6 +591,34 @@ st = shopTrip();
 st.places = [];
 api('saveTrip', { trip: st, baseUpdatedAt: st.updatedAt });
 
+/* ---------- 行程的照片與花費幣別 ---------- */
+const actTrip = () => api('list', {}).trips.find((t) => t.name === '京都');
+say('新增 今天 16:30 照片測試景點');
+const img = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+const actFile = api('uploadShopImage', { dataUrl: img, kind: 'activity' }).fileId;
+check('上傳行程照片：存進行程照片資料夾', files.find((f) => f.id === actFile).folderId === 'folder-旅程手帖行程照片');
+let at = actTrip();
+let spot = at.days['2026-10-29'].find((a) => a.title === '照片測試景點');
+Object.assign(spot, { fileId: actFile, cost: 1500, costCurrency: 'JPY' });
+res = api('saveTrip', { trip: at, baseUpdatedAt: at.updatedAt });
+spot = actTrip().days['2026-10-29'].find((a) => a.title === '照片測試景點');
+check('行程存檔：照片與花費幣別都記下來', res.ok && spot.fileId === actFile && spot.cost === 1500 && spot.costCurrency === 'JPY', JSON.stringify(spot));
+check('同旅程的成員看得到行程照片，外人看不到', !!api('shopPhotos', { fileIds: [actFile] }).photos[actFile] && Object.keys(api('shopPhotos', { fileIds: [actFile] }, 'good:U3').photos).length === 0);
+r = say('今天');
+check('LINE 操作後行程照片還在', actTrip().days['2026-10-29'].find((a) => a.title === '照片測試景點').fileId === actFile);
+check('PDF 與預算用行程自己的幣別', /NT\$3\d\d（¥1,500）/.test(run(`exportHtml_(loadTrips_('U1').find((t) => t.name === '京都'), 'x')`)));
+at = actTrip();
+at.days['2026-10-29'].find((a) => a.title === '照片測試景點').costCurrency = 'XXX';
+at.days['2026-10-29'].find((a) => a.title === '照片測試景點').fileId = 'someone-elses-file-000';
+api('saveTrip', { trip: at, baseUpdatedAt: at.updatedAt });
+spot = actTrip().days['2026-10-29'].find((a) => a.title === '照片測試景點');
+check('不合法的幣別、不是自己上傳的照片都不收；原本的照片丟到垃圾桶', spot.costCurrency === '' && spot.fileId === '' && files.find((f) => f.id === actFile).trashed === true, JSON.stringify(spot));
+const actFile2 = api('uploadShopImage', { dataUrl: img, kind: 'activity' }).fileId;
+at = actTrip(); at.days['2026-10-29'].find((a) => a.title === '照片測試景點').fileId = actFile2;
+api('saveTrip', { trip: at, baseUpdatedAt: at.updatedAt });
+say('刪除 照片測試景點'); postback({ a: 'del', id: actTrip().days['2026-10-29'].find((a) => a.title === '照片測試景點').id });
+check('刪掉行程：照片也丟到垃圾桶', files.find((f) => f.id === actFile2).trashed === true);
+
 /* ---------- 線上檢視連結（免登入、唯讀） ---------- */
 const getPage = (params) => { run('__clearCache()'); ctx.__req = { parameter: params }; return run('doGet(__req)'); };
 check('沒帶參數的 GET 還是健康檢查', getPage({}).s.includes('旅程手帖 API 運作中') && run('doGet()').s.includes('運作中'));
@@ -665,11 +693,14 @@ say('不買 匯出測試用');
 
 /* ---------- 花費幣別、過長的修改內容 ---------- */
 r = say('新增 今天 15:00 龍安寺 400円');
-check('台幣旅程輸入日幣花費會換算', r.text.includes('NT$82') && r.text.includes('由 ¥400 換算') && api('list', {}).trips[0].days['2026-10-29'].find((a) => a.title === '龍安寺').cost === 81.76, r.text);
+check('花費寫日幣就照原幣記，顯示時換算台幣', r.text.includes('💰 NT$82（¥400）') && (() => { const a = api('list', {}).trips[0].days['2026-10-29'].find((x) => x.title === '龍安寺'); return a.cost === 400 && a.costCurrency === 'JPY'; })(), r.text);
 r = say('新增 今天 16:00 銀閣寺 $500');
 check('只寫 $ 維持旅程幣別', r.text.includes('NT$500') && !r.text.includes('換算'), r.text);
 r = say('改 龍安寺 1000日幣');
-check('修改花費也會換算', r.text.includes('NT$204') && r.text.includes('由 ¥1,000 換算'), r.text);
+check('修改花費也照原幣記', r.text.includes('💰 NT$204（¥1,000）') && (() => { const a = api('list', {}).trips[0].days['2026-10-29'].find((x) => x.title === '龍安寺'); return a.cost === 1000 && a.costCurrency === 'JPY'; })(), r.text);
+r = say('改 龍安寺 $500');
+check('改成沒寫幣別的金額：回到旅程的幣別', r.text.includes('💰 NT$500') && api('list', {}).trips[0].days['2026-10-29'].find((x) => x.title === '龍安寺').costCurrency === '', r.text);
+check('預算把每個行程自己的幣別換算成台幣', /交通|景點/.test(say('預算').text));
 say('新增 今天 17:00 抹茶店A');
 say('新增 今天 18:00 抹茶店B');
 const longUrl = `https://www.google.com/maps/place/${'x'.repeat(300)}`;
