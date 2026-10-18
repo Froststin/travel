@@ -36,6 +36,7 @@ const INVEST_TABLES = {
     'last_price', 'market_value', 'pnl', 'pnl_pct', 'stop_price', 'target_price', 'bars_held'],
   sim_accuracy: ['snapshot', 'date', 'account', 'kind', 'horizon', 'n', 'win', 'avg'],
   sim_params: ['date', 'account', 'params_json', 'reason', 'metrics_json', 'created_at'],
+  sim_status: ['snapshot', 'date', 'account', 'key', 'value'],
 };
 
 // true：官方帳號的所有好友都能查詢投資內容（選股、模擬交易、準確率），圖文選單也都有「投資」分頁。
@@ -50,9 +51,9 @@ const INVEST_DEFAULT_PARAMS = { min_tech_score_for_signal: 60, target_return: 0.
 // 選單：[按鈕文字, 送出的訊息]
 const INVEST_MENU = [
   ['📂 持股清單', '持股'], ['📝 交易紀錄', '交易紀錄'], ['📈 報酬率', '報酬率'],
-  ['🎯 模型準確率', '準確率'], ['📊 今日選股', '選股'], ['🪙 虛擬貨幣', '虛擬貨幣'],
+  ['🎯 模型準確率', '準確率'], ['🔧 模型參數', '模型'], ['📊 今日選股', '選股'], ['🪙 虛擬貨幣', '虛擬貨幣'],
 ];
-const INVEST_HELP = '📈 投資日報\n點下面的按鈕，或直接傳：\n・持股 → 目前模擬持股與每檔收益率\n・交易紀錄 → 模擬買賣與出場損益\n・報酬率 → 總權益、累計與當日報酬率\n・準確率 → 模型訊號的實際勝率\n・選股／虛擬貨幣 → 最近一次的推薦\n\n每天排程跑完會自動傳日報。純模擬，沒有實際下單。';
+const INVEST_HELP = '📈 投資日報\n點下面的按鈕，或直接傳：\n・持股 → 目前模擬持股與每檔收益率\n・交易紀錄 → 模擬買賣與出場損益\n・報酬率 → 總權益、累計與當日報酬率\n・準確率 → 模型訊號的實際勝率\n・模型 → 目前的模型參數、風控狀態與調整紀錄\n・選股／虛擬貨幣 → 最近一次的推薦\n\n每天排程跑完會自動傳日報。純模擬，沒有實際下單。';
 
 function investQuick_() {
   return INVEST_MENU.map(([label, text]) => qMsg_(label, text)).concat([qMsg_('🧭 投資選單', '投資')]);
@@ -170,7 +171,8 @@ function handleInvestText_(ctx, text) {
   else if (/^(持股|持股清單|持股損益|現股|現股清單|庫存|模擬持股|部位|未實現損益)$/.test(text)) view = 'holdings';
   else if (/^(交易紀錄|交易記錄|模擬交易|模擬|交易|委託|下單紀錄|已實現損益|損益表)$/.test(text)) view = 'trades';
   else if (/^(報酬率|投資報酬率?|收益率?|績效|損益|權益|每日損益)$/.test(text)) view = 'returns';
-  else if (/^(準確率|模型準確率|勝率|模型)$/.test(text)) view = 'accuracy';
+  else if (/^(準確率|模型準確率|勝率)$/.test(text)) view = 'accuracy';
+  else if (/^(模型|模型參數|模型調整|調整紀錄|參數|參數調整|風控)$/.test(text)) view = 'model';
   else if (/^(選股|今日選股|股票|股票推薦|台股)$/.test(text)) view = 'stocks';
   else if (/^(虛擬貨幣|加密貨幣|幣|幣圈)$/.test(text)) view = 'crypto';
   else return false;
@@ -186,6 +188,7 @@ const INVEST_VIEWS = {
   trades: () => ({ flex: investTradesFlex_(), text: investTradesText_() }),
   returns: () => ({ flex: investReturnFlex_(), text: investReturnText_() }),
   accuracy: () => ({ flex: investAccuracyFlex_(), text: investAccuracyText_() }),
+  model: () => ({ flex: investModelFlex_(), text: investModelText_() }),
   stocks: () => ({ flex: investRecoFlex_('daily_recommendations', '📊 今日選股'), text: investStockText_() }),
   crypto: () => ({ flex: investRecoFlex_('daily_crypto_recommendations', '🪙 虛擬貨幣推薦'), text: investRecoText_('daily_crypto_recommendations', '🪙 虛擬貨幣推薦') }),
 };
@@ -606,6 +609,95 @@ function investRecoFlex_(table, title) {
   return invBubble_(title, date, body);
 }
 
+/* ---------- 模型參數與調整紀錄 ---------- */
+const INVEST_PARAM_LABELS = [
+  ['min_tech_score_for_signal', '進場技術分', (v) => `≥ ${v}`],
+  ['target_return', '停利', (v) => `+${Math.round(Number(v) * 100)}%`],
+  ['stop_loss', '停損', (v) => `-${Math.round(Number(v) * 100)}%`],
+  ['hold_days', '最長持有', (v) => `${v} 天`],
+];
+
+/** 每一次參數紀錄，跟同帳戶前一次（或預設值）比較後的差異；新到舊 */
+function investParamHistory_() {
+  const rows = investRows_('sim_params').sort((x, y) => (x.date + x.created_at < y.date + y.created_at ? -1 : 1));
+  const prev = {};
+  const out = rows.map((r) => {
+    let values;
+    try {
+      values = Object.assign({}, INVEST_DEFAULT_PARAMS, JSON.parse(r.params_json || '{}'));
+    } catch (err) {
+      values = Object.assign({}, INVEST_DEFAULT_PARAMS);
+    }
+    const before = prev[r.account] || INVEST_DEFAULT_PARAMS;
+    const changes = INVEST_PARAM_LABELS.filter(([k]) => Number(before[k]) !== Number(values[k]))
+      .map(([k, label, fmt]) => `${label} ${fmt(before[k])} → ${fmt(values[k])}`);
+    prev[r.account] = values;
+    return { date: r.date, account: r.account, changes, reason: r.reason };
+  });
+  return out.reverse();
+}
+
+function investStatus_() {
+  return investRows_('sim_status');
+}
+
+function investModelText_() {
+  const status = investStatus_();
+  const history = investParamHistory_();
+  if (!status.length && !history.length) return '🔧 模型參數\n還沒有資料，排程跑過一次之後才會有。';
+  const lines = [`🔧 模型參數${status.length ? ` ${status[0].date}` : ''}`];
+  INVEST_ACCOUNTS.forEach((account) => {
+    const mine = status.filter((r) => r.account === account);
+    lines.push('', `━━ ${account} ━━`);
+    if (mine.length) mine.forEach((r) => lines.push(`${r.key}：${r.value}`));
+    else lines.push(`參數：${investParams_(account).text}`);
+  });
+  status.filter((r) => r.account === '全部').forEach((r) => lines.push('', `${r.key}：${r.value}`));
+  lines.push('', '━━ 調整紀錄（新到舊）━━');
+  if (!history.length) lines.push('還沒有調整過。');
+  history.slice(0, 8).forEach((h) => lines.push(
+    '', `${investMd_(h.date)}｜${h.account}`,
+    `　${h.changes.length ? h.changes.join('｜') : '檢查後參數不變'}`,
+    `　原因：${h.reason}`,
+  ));
+  return lines.join('\n');
+}
+
+/** 模型參數卡片：各帳戶目前設定與風控，再列出每一次的調整 */
+function investModelFlex_() {
+  const status = investStatus_();
+  const history = investParamHistory_();
+  if (!status.length && !history.length) return invBubble_('🔧 模型參數', '還沒有資料', [invT_('排程跑過一次之後才會有。', { color: INV.sub })]);
+  const valueColor = (r) => (/暫停/.test(r.value) ? INV.down : r.key === '參數來源' && /調整/.test(r.value) ? INV.warn : INV.text);
+  const body = [];
+  INVEST_ACCOUNTS.forEach((account, i) => {
+    body.push(invT_(`${account}帳戶`, { weight: 'bold', color: INV.head, margin: i ? 'xl' : 'none' }), invSep_());
+    const mine = status.filter((r) => r.account === account);
+    if (!mine.length) body.push(invT_(`參數：${investParams_(account).text}`, { size: 'xs', wrap: true, margin: 'sm' }));
+    mine.forEach((r) => body.push(invRow_([
+      invT_(r.key, { flex: 4, size: 'xs', color: INV.sub }),
+      invT_(r.value, { flex: 7, size: 'xs', align: 'end', wrap: true, weight: 'bold', color: valueColor(r) }),
+    ], { margin: 'sm' })));
+  });
+  status.filter((r) => r.account === '全部').forEach((r) => body.push(
+    invT_(r.key, { size: 'xs', weight: 'bold', margin: 'lg' }),
+    invT_(r.value, { size: 'xxs', color: INV.sub, wrap: true, margin: 'xs' }),
+  ));
+  body.push(invT_('調整紀錄（新到舊）', { weight: 'bold', margin: 'xl' }), invSep_());
+  if (!history.length) body.push(invT_('還沒有調整過。', { size: 'xs', color: INV.sub, margin: 'sm' }));
+  history.slice(0, 8).forEach((h) => body.push(
+    invRow_([
+      invT_(investMd_(h.date), { flex: 2, size: 'xs', weight: 'bold' }),
+      invT_(h.account, { flex: 3, size: 'xs', weight: 'bold', color: INV.head }),
+      invT_(h.changes.length ? `改了 ${h.changes.length} 項` : '參數不變', { flex: 3, size: 'xs', align: 'end', color: h.changes.length ? INV.warn : INV.sub }),
+    ], { margin: 'md' }),
+    ...h.changes.map((c) => invT_(`・${c}`, { size: 'xs', margin: 'xs', wrap: true })),
+    invT_(h.reason, { size: 'xxs', color: INV.sub, wrap: true, margin: 'xs' }),
+  ));
+  if (history.length > 8) body.push(invT_(`…更早的 ${history.length - 8} 筆請看試算表 sim_params`, { size: 'xxs', color: INV.sub, margin: 'sm' }));
+  return invBubble_('🔧 模型參數', status.length ? `${status[0].date}｜目前設定與調整紀錄` : '調整紀錄', body);
+}
+
 /**
  * 投資分析的排程呼叫：把內容推給綁定的人
  *   body.text      文字訊息
@@ -644,7 +736,7 @@ function investPush_(body) {
 }
 
 /* ---------- 圖文選單：「旅遊｜投資」雙分頁，只給綁定的人 ---------- */
-const INVEST_MENU_VERSION = '1';
+const INVEST_MENU_VERSION = '2'; // 2：投資分頁下排改成 4 格，加上「模型參數」
 const INVEST_MENU_ALIAS = { travel: 'invest-tab-travel', invest: 'invest-tab-invest' };
 
 function investMenuIds_() {
@@ -690,7 +782,7 @@ function setupInvestMenus_() {
     travel: { name: '旅程手帖選單（含投資分頁）', chatBarText: '旅程選單',
       areas: cols(3, 0).concat(cols(4, 1)).map((bounds, i) => ({ bounds, action: travelMenuActions_()[i] })) },
     invest: { name: '投資選單', chatBarText: '投資選單',
-      areas: cols(3, 0).concat(cols(3, 1)).map((bounds, i) => ({ bounds, action: { type: 'message', text: INVEST_MENU[i][1] } })) },
+      areas: cols(3, 0).concat(cols(4, 1)).map((bounds, i) => ({ bounds, action: { type: 'message', text: INVEST_MENU[i][1] } })) },
   };
   // 先確認兩張圖都抓得到，再建立選單，避免留下沒有圖片的空選單
   const images = {};

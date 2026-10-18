@@ -826,10 +826,10 @@ run('__clearCache()');
 ctx.__ev = { events: [{ type: 'message', replyToken: 'r', source: { userId: 'U1' }, message: { type: 'text', text: '說明' } }] };
 hook();
 const tabMenus = menuCreates().map((s) => s.body);
-check('投資選單：自動建立兩張分頁選單', tabMenus.length === 2 && tabMenus[0].areas.length === 9 && tabMenus[1].areas.length === 8 && props.INVEST_MENU_VERSION === '1' && props.INVEST_MENU_IDS.split(',').length === 2, JSON.stringify(tabMenus.map((m) => m && m.areas.length)));
+check('投資選單：自動建立兩張分頁選單', tabMenus.length === 2 && tabMenus[0].areas.length === 9 && tabMenus[1].areas.length === 9 && props.INVEST_MENU_VERSION === '2' && props.INVEST_MENU_IDS.split(',').length === 2, JSON.stringify(tabMenus.map((m) => m && m.areas.length)));
 check('投資選單：每張最上面是「旅遊｜投資」分頁切換', tabMenus.every((m) => m.areas[0].action.type === 'richmenuswitch' && m.areas[0].action.richMenuAliasId === 'invest-tab-travel' && m.areas[1].action.richMenuAliasId === 'invest-tab-invest' && m.areas[0].bounds.width === 1250 && m.areas[1].bounds.x === 1250));
 check('投資選單：旅遊分頁保留原本七個按鈕', tabMenus[0].areas.slice(2).map((a) => a.action.text || a.action.type).join() === '今天,明天,所有旅程,日誌,uri,匯出,說明' && tabMenus[0].areas[2].bounds.y === 250 && tabMenus[0].areas[8].bounds.y + tabMenus[0].areas[8].bounds.height === 1686);
-check('投資選單：投資分頁六個按鈕', tabMenus[1].areas.slice(2).map((a) => a.action.text).join() === '持股,交易紀錄,報酬率,準確率,選股,虛擬貨幣' && tabMenus[1].areas.every((a) => a.bounds.x + a.bounds.width <= 2500 && a.bounds.y + a.bounds.height <= 1686));
+check('投資選單：投資分頁七個按鈕（上 3 下 4）', tabMenus[1].areas.slice(2).map((a) => a.action.text).join() === '持股,交易紀錄,報酬率,準確率,模型,選股,虛擬貨幣' && tabMenus[1].areas[5].bounds.width === 625 && tabMenus[1].areas.every((a) => a.bounds.x + a.bounds.width <= 2500 && a.bounds.y + a.bounds.height <= 1686));
 check('投資選單：開放後設成所有人的預設選單', sent.some((s) => new RegExp(`user/all/richmenu/${props.INVEST_MENU_IDS.split(',')[0]}$`).test(s.url)) && props.INVEST_MENU_SCOPE === 'all');
 sent.length = 0;
 hook();
@@ -896,7 +896,7 @@ investSheet('sim_params', [
 
 const investMenu = say('投資');
 const inv_menuButtons = JSON.stringify(investMenu.msgs[0].contents);
-check('投資：選單是 Flex 卡片，六個按鈕都在', investMenu.msgs[0].type === 'flex' && ['持股', '交易紀錄', '報酬率', '準確率', '選股', '虛擬貨幣'].every((t) => inv_menuButtons.includes(`"text":"${t}"`)), inv_menuButtons);
+check('投資：選單是 Flex 卡片，六個按鈕都在', investMenu.msgs[0].type === 'flex' && ['持股', '交易紀錄', '報酬率', '準確率', '模型', '選股', '虛擬貨幣'].every((t) => inv_menuButtons.includes(`"text":"${t}"`)), inv_menuButtons);
 check('投資：選單帶目前權益與報酬率', investMenu.text.includes('總權益 1,012,588') && investMenu.text.includes('累計 +1.26%'));
 check('投資：每則回覆下方都有投資按鈕', ['持股', '交易紀錄', '報酬率', '準確率', '選股', '虛擬貨幣', '投資'].every((t) => { const q = say(t).quick.map((i) => i.action.text); return q.includes('持股') && q.includes('報酬率') && q.includes('投資'); }));
 
@@ -968,6 +968,27 @@ check('投資：持股依帳戶分組並顯示各自的現金', inv_hold.indexOf
 check('投資卡片：持股有帳戶小標', fHold.json.includes('股票帳戶｜權益 716,236｜現金 104,518') && fHold.json.includes('虛擬貨幣帳戶｜權益 296,352｜現金 100,000'));
 check('投資：準確率顯示各帳戶目前的參數', inv_accText.includes('參數：進場技術分 ≥ 60｜停利 +10%｜停損 -8%｜最長 20 天') && inv_accText.includes('預設參數，還沒有優化過') && inv_accText.includes('參數：進場技術分 ≥ 70｜停利 +20%｜停損 -12%｜最長 30 天') && inv_accText.includes('10/5 檢查：已經 21 天沒有任何 BUY 訊號 → 改用新參數'), inv_accText);
 check('投資卡片：準確率兩個帳戶各一張表，帶參數', fAcc.json.includes('"text":"股票｜58 筆訊號"') && fAcc.json.includes('"text":"虛擬貨幣｜84 筆訊號"') && fAcc.json.includes('停利 +20%｜停損 -12%｜最長 30 天') && cell(fAcc.json, '22%').includes(DOWN) && (fAcc.json.match(/"text":"照策略"/g) || []).length === 2);
+
+/* 模型參數與調整紀錄 */
+const noStatusText = sayText('模型').text;
+check('投資：模型參數在沒有狀態資料時仍列出調整紀錄', noStatusText.includes('━━ 調整紀錄（新到舊）━━') && noStatusText.includes('10/5｜虛擬貨幣') && noStatusText.includes('參數：進場技術分 ≥ 60'), noStatusText);
+investSheet('sim_status', [
+  ['latest', '2026-10-18', '股票', '進場技術分', '≥ 60'],
+  ['latest', '2026-10-18', '股票', '停損', '-12%'],
+  ['latest', '2026-10-18', '股票', '參數來源', '2026-10-14 調整'],
+  ['latest', '2026-10-18', '股票', '風控', '⛔ 暫停新買進'],
+  ['latest', '2026-10-18', '虛擬貨幣', '停利', '+20%'],
+  ['latest', '2026-10-18', '虛擬貨幣', '風控', '正常'],
+  ['latest', '2026-10-18', '全部', '每週檢查', '每週六由 Claude 檢查；要調整會開 PR，合併後才生效'],
+]);
+const modelText = sayText('模型參數').text;
+check('投資：模型參數文字版', modelText.includes('🔧 模型參數 2026-10-18') && modelText.indexOf('━━ 股票 ━━') < modelText.indexOf('風控：⛔ 暫停新買進') && modelText.includes('━━ 虛擬貨幣 ━━\n停利：+20%') && modelText.includes('每週檢查：每週六由 Claude 檢查'), modelText);
+check('投資：調整紀錄新到舊、列出改了什麼與原因', modelText.indexOf('10/5｜虛擬貨幣') < modelText.indexOf('9/20｜虛擬貨幣') && modelText.includes('進場技術分 ≥ 60 → ≥ 70｜停利 +15% → +20%｜停損 -10% → -12%｜最長持有 20 天 → 30 天') && modelText.includes('停利 +10% → +15%｜停損 -8% → -10%') && modelText.includes('原因：已經 21 天沒有任何 BUY 訊號 → 改用新參數'), modelText);
+const fModel = flexOf('模型');
+check('投資卡片：模型參數', fModel.type === 'flex' && fModel.alt.includes('模型參數') && fModel.json.includes('"text":"股票帳戶"') && fModel.json.includes('"text":"虛擬貨幣帳戶"') && cell(fModel.json, '⛔ 暫停新買進').includes(DOWN) && cell(fModel.json, '2026-10-14 調整').includes('#E08A00'), fModel.json.slice(0, 600));
+check('投資卡片：調整紀錄', fModel.json.includes('調整紀錄（新到舊）') && fModel.json.includes('"text":"改了 4 項"') && fModel.json.includes('・停利 +15% → +20%') && fModel.json.indexOf('"text":"10/5"') < fModel.json.indexOf('"text":"9/20"') && !fModel.json.includes('"text":""'));
+check('投資：「調整紀錄」「風控」也會開模型參數', flexOf('調整紀錄').alt.includes('模型參數') && flexOf('風控').alt.includes('模型參數') && flexOf('準確率').alt.includes('模型準確率'));
+check('投資：模型參數按鈕在每則回覆下方', say('報酬率').quick.some((i) => i.action.text === '模型'));
 
 const inv_dailyPush = JSON.parse(investPost('pk', { text: '🧪 模擬交易 2026-10-05' }));
 check('投資：每日推播下方帶投資按鈕', inv_dailyPush.ok && pushes()[0].body.messages[0].quickReply.items.some((i) => i.action.text === '持股'));
