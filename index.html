@@ -3,7 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="靜態旅遊行程規劃工具：每日行程、預算與行李清單，資料存在瀏覽器中。">
+  <meta name="description" content="旅遊行程規劃：每日行程、預算、分帳、購物與行李清單，和 LINE 官方帳號同步。">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="旅程手帖">
   <title>旅程手帖</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>">
   <link rel="stylesheet" href="css/style.css">
@@ -14,16 +19,23 @@
     <div class="header-actions">
       <span id="sync-status" class="sync-status" hidden></span>
       <button id="login-btn" class="btn btn-line" data-action="line-login" hidden>LINE 登入同步</button>
-      <button class="btn btn-ghost" data-action="import">匯入</button>
-      <button class="btn btn-ghost" data-action="export-all">匯出全部</button>
       <button class="btn btn-primary" data-action="new-trip">＋ 新增旅程</button>
+      <details class="menu">
+        <summary class="btn btn-ghost" aria-label="更多" title="更多">⋯</summary>
+        <div class="menu-pop">
+          <button type="button" data-action="import">📥 匯入備份檔</button>
+          <button type="button" data-action="export-all">📤 匯出全部旅程<small>下載 JSON 備份檔</small></button>
+          <button type="button" id="install-btn" data-action="install-app">📲 安裝到手機主畫面<small>像 App 一樣開啟，沒網路也能看</small></button>
+          <button type="button" id="logout-btn" data-action="logout" hidden>🚪 登出</button>
+        </div>
+      </details>
     </div>
   </header>
 
   <main id="app" class="container"></main>
 
   <footer id="site-footer" class="site-footer no-print">
-    資料只儲存在這個瀏覽器（localStorage），換裝置前請先「匯出全部」備份。
+    沒有登入時資料只存在這個瀏覽器；用 LINE 登入就會同步到雲端。
   </footer>
 
   <!-- 旅程表單 -->
@@ -42,7 +54,8 @@
           <select name="currency"></select>
         </label>
       </div>
-      <label>備註<textarea name="notes" rows="3" maxlength="500" placeholder="訂房資訊、航班編號、同行旅伴……"></textarea></label>
+      <label>備註<textarea name="notes" rows="3" maxlength="500" placeholder="同行旅伴、注意事項……（航班、住宿可以記在「住宿／交通」）"></textarea></label>
+      <p id="trip-copy-hint" class="form-hint muted" hidden>行程、想去、購物與行李清單會照新的出發日平移；勾選狀態、確認碼與雲端照片不會帶過去。</p>
       <div class="form-actions">
         <button type="button" class="btn" data-action="close-dialog">取消</button>
         <button type="submit" class="btn btn-primary">儲存</button>
@@ -50,58 +63,112 @@
     </form>
   </dialog>
 
-  <!-- 行程項目表單 -->
+  <!-- 行程項目表單：常用的在上面，其他收在「更多」 -->
   <dialog id="activity-dialog">
     <form id="activity-form" class="form">
       <h2 id="activity-dialog-title">新增行程</h2>
+      <div id="act-edit-tools" class="dialog-tools" hidden>
+        <button type="button" class="btn btn-sm" data-action="act-dialog-copy" title="用這個行程的內容新增一個（可以改日期）">📋 複製</button>
+        <button type="button" class="btn btn-sm" data-action="act-dialog-shop">🛒 在這裡要買</button>
+        <button type="button" class="btn btn-sm btn-danger" data-action="act-dialog-delete">🗑️ 刪除</button>
+      </div>
       <label>標題<input name="title" required maxlength="100" placeholder="例如：清水寺"></label>
-      <label>日期<select name="date" required></select></label>
-      <fieldset class="travel-fields">
-        <legend>從上一站過來（選填）</legend>
-        <div class="form-row form-row-3">
-          <label>移動方式<select name="travelMode"></select></label>
-          <label>移動時間（分）<input type="number" name="travelMin" min="0" max="1440" step="1" inputmode="numeric" placeholder="15"></label>
-          <label>車資
-            <span class="fare-input">
-              <input type="number" name="travelCost" min="0" step="any" inputmode="decimal" placeholder="0">
-              <select name="travelCostCurrency" aria-label="車資幣別">
-                <option value="JPY">¥ 日幣</option>
-                <option value="TWD">NT$ 台幣</option>
-              </select>
-            </span>
-          </label>
-        </div>
-        <p id="fare-hint" class="form-hint muted"></p>
-      </fieldset>
+      <div class="form-row">
+        <label>日期<select name="date" required></select></label>
+        <label>類別<select name="category"></select></label>
+      </div>
       <div class="form-row">
         <label>開始時間<input type="time" name="time"></label>
         <label>結束時間<input type="time" name="endTime"></label>
       </div>
-      <p class="form-hint muted">填了移動時間，開始時間會自動帶入「上一站結束＋移動時間」</p>
-      <div class="form-row">
-        <label>類別<select name="category"></select></label>
-        <label>花費
-          <span class="fare-input">
-            <input type="number" name="cost" min="0" step="any" inputmode="decimal" placeholder="0">
-            <select name="costCurrency" aria-label="花費幣別"></select>
-          </span>
-        </label>
-      </div>
-      <p id="cost-hint" class="form-hint muted"></p>
       <label>地點<input name="location" maxlength="200" placeholder="地名或地址，填寫後可直接用 Google 地圖導航"></label>
-      <label>Google 地圖連結（選填）<input name="mapUrl" type="url" maxlength="500" inputmode="url" placeholder="在 Google 地圖按「分享」→ 複製連結，貼在這裡"></label>
-      <label>備註<textarea name="notes" rows="3" maxlength="500" placeholder="門票、營業時間、交通方式……"></textarea></label>
-      <div class="shop-photo-field">
-        <span>照片</span>
-        <div class="shop-photo-row">
-          <img id="act-photo-preview" alt="照片預覽" hidden>
-          <button type="button" class="btn btn-sm" data-action="act-dialog-pick">選照片</button>
-          <button type="button" class="btn btn-sm" id="act-photo-remove" data-action="act-dialog-remove-photo" hidden>移除照片</button>
-        </div>
+      <label>花費
+        <span class="fare-input">
+          <input type="number" name="cost" min="0" step="any" inputmode="decimal" placeholder="0">
+          <select name="costCurrency" aria-label="花費幣別"></select>
+        </span>
+      </label>
+      <p id="cost-hint" class="form-hint muted"></p>
+      <div id="split-fields" class="split-fields" hidden>
+        <label>誰付的<select name="paidBy"></select></label>
+        <div class="split-with"><span>分攤的人（全勾＝大家平分）</span><div id="split-with-list" class="chip-checks"></div></div>
       </div>
+      <details id="act-more" class="more-fields">
+        <summary>更多：交通、地圖連結、備註、照片</summary>
+        <fieldset class="travel-fields">
+          <legend>從上一站過來</legend>
+          <div class="form-row form-row-3">
+            <label>移動方式<select name="travelMode"></select></label>
+            <label>移動時間（分）<input type="number" name="travelMin" min="0" max="1440" step="1" inputmode="numeric" placeholder="15"></label>
+            <label>車資
+              <span class="fare-input">
+                <input type="number" name="travelCost" min="0" step="any" inputmode="decimal" placeholder="0">
+                <select name="travelCostCurrency" aria-label="車資幣別">
+                  <option value="JPY">¥ 日幣</option>
+                  <option value="TWD">NT$ 台幣</option>
+                </select>
+              </span>
+            </label>
+          </div>
+          <p id="fare-hint" class="form-hint muted"></p>
+          <p class="form-hint muted">新增時填了移動時間，開始時間會自動帶入「上一站結束＋移動時間」</p>
+        </fieldset>
+        <label>Google 地圖連結<input name="mapUrl" type="url" maxlength="500" inputmode="url" placeholder="在 Google 地圖按「分享」→ 複製連結，貼在這裡"></label>
+        <label>備註<textarea name="notes" rows="3" maxlength="500" placeholder="門票、營業時間、交通方式……"></textarea></label>
+        <div class="shop-photo-field">
+          <span>照片</span>
+          <div class="shop-photo-row">
+            <img id="act-photo-preview" alt="照片預覽" hidden>
+            <button type="button" class="btn btn-sm" data-action="act-dialog-pick">選照片</button>
+            <button type="button" class="btn btn-sm" id="act-photo-remove" data-action="act-dialog-remove-photo" hidden>移除照片</button>
+          </div>
+        </div>
+      </details>
       <div class="form-actions">
         <button type="button" class="btn" data-action="close-dialog">取消</button>
         <button type="submit" class="btn btn-primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 住宿與交通 -->
+  <dialog id="booking-dialog">
+    <form id="booking-form" class="form">
+      <h2 id="booking-dialog-title">新增住宿／交通</h2>
+      <div class="form-row">
+        <label>類別<select name="type"></select></label>
+        <label>確認碼／訂位代號<input name="code" maxlength="40" autocomplete="off" placeholder="選填"></label>
+      </div>
+      <label>名稱<input name="title" required maxlength="80"></label>
+      <div class="form-row">
+        <label><span data-booking-label="date">日期</span><input type="date" name="date"></label>
+        <label id="booking-end-wrap">退房日期<input type="date" name="endDate"></label>
+      </div>
+      <div class="form-row">
+        <label><span data-booking-label="time">出發</span><input type="time" name="time"></label>
+        <label><span data-booking-label="endTime">抵達</span><input type="time" name="endTime"></label>
+      </div>
+      <label>地點／地址<input name="place" maxlength="200" placeholder="選填，例如：飯店地址、航廈"></label>
+      <label>備註<textarea name="notes" rows="2" maxlength="300" placeholder="座位、行李額度、早餐、取票方式……"></textarea></label>
+      <div class="form-actions">
+        <button type="button" class="btn btn-danger" id="booking-delete" data-action="booking-dialog-delete" hidden>刪除</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-action="close-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 複製這天的行程 -->
+  <dialog id="day-dialog">
+    <form id="day-form" class="form">
+      <h2>複製這天的行程</h2>
+      <p id="day-dialog-info" class="muted"></p>
+      <label>複製到<select name="date" required></select></label>
+      <p class="form-hint muted">那天原本的行程會保留，複製的依時間排進去。</p>
+      <div class="form-actions">
+        <button type="button" class="btn" data-action="close-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">複製</button>
       </div>
     </form>
   </dialog>
@@ -206,10 +273,18 @@
 
   <script src="js/config.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/shopping.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/today.js"></script>
+  <script src="js/split.js"></script>
+  <script src="js/bookings.js"></script>
+  <script src="js/drag.js"></script>
   <script src="js/shopphoto.js"></script>
   <script src="js/cloud.js"></script>
   <script src="js/static.js"></script>
   <script src="js/places.js"></script>
   <script src="js/line.js"></script>
+  <script src="js/pwa.js"></script>
+  <script src="js/boot.js"></script>
 </body>
 </html>

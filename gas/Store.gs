@@ -8,20 +8,23 @@
  * ============================================================ */
 
 const TABLES = {
-  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places'],
-  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency', 'costCurrency', 'fileId'],
+  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places', 'bookings'],
+  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency', 'costCurrency', 'fileId', 'paidBy', 'splitWith'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
-  Users: ['userId', 'name', 'updatedAt'],
+  Users: ['userId', 'name', 'updatedAt', 'sessionsFrom'], // sessionsFrom：這個時間以前發的網站登入憑證一律失效（登出）
   Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done', 'note', 'fileId'],
   Views: ['token', 'tripId', 'userId', 'createdAt'], // 免登入的線上檢視連結
 };
-const SCHEMA_VERSION = '11';
+const SCHEMA_VERSION = '12';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
 const MAX_SHOPPING = 200; // 每個旅程的購物清單上限
 const MAX_PLACES = 100; // 每個旅程的待去清單上限
+const MAX_BOOKINGS = 50; // 每個旅程的住宿／交通資訊上限
+const BOOKING_TYPES = ['flight', 'stay', 'train', 'bus', 'car', 'ticket', 'other'];
+const MEMBER_KEY_RE = /^[\w-]{12}$/; // 成員代號（memberKey_），分帳記的是這個
 const MAX_BLANK_ROWS = 100; // 中間的空列超過這個數量就整理一次
 
 const tableCache_ = {};
@@ -232,7 +235,42 @@ function sanitizeActivity_(a) {
     costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '', // 空＝旅程的幣別
     fileId: cleanFileId_(a.fileId), // 行程的照片；能不能用，存檔時（saveTrip_）才檢查
     notes: str_(a.notes),
+    ...splitFields_(a),
   };
+}
+
+/** 分帳：paidBy＝誰付的（成員代號，空＝還沒填），splitWith＝哪些人分攤（空＝所有成員） */
+function splitFields_(a) {
+  const keys = (Array.isArray(a.splitWith) ? a.splitWith : String(a.splitWith || '').split(','))
+    .filter((k) => MEMBER_KEY_RE.test(k));
+  return { paidBy: MEMBER_KEY_RE.test(a.paidBy) ? a.paidBy : '', splitWith: [...new Set(keys)].slice(0, 30) };
+}
+
+/**
+ * 住宿與交通資訊：type 見 BOOKING_TYPES；date 是出發或入住日，endDate 是退房日（住宿才有），
+ * time／endTime 是出發與抵達（或入住、退房）時間，code 是訂位代號、確認碼
+ */
+function sanitizeBookings_(list) {
+  if (!Array.isArray(list)) return [];
+  const time = (v) => (/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : '');
+  return list
+    .filter((b) => b && typeof b.title === 'string' && b.title.trim())
+    .slice(0, MAX_BOOKINGS)
+    .map((b) => {
+      const date = isValidDate_(b.date) ? b.date : '';
+      return {
+        id: cleanId_(b.id) || Utilities.getUuid(),
+        type: BOOKING_TYPES.includes(b.type) ? b.type : 'other',
+        title: str_(b.title, 80).trim(),
+        date,
+        endDate: date && isValidDate_(b.endDate) && b.endDate >= date ? b.endDate : '',
+        time: time(b.time),
+        endTime: time(b.endTime),
+        code: str_(b.code, 40).trim(),
+        place: str_(b.place, 200).trim(),
+        notes: str_(b.notes, 300).trim(),
+      };
+    });
 }
 
 function sanitizeTrip_(raw) {
@@ -271,6 +309,7 @@ function sanitizeTrip_(raw) {
       }))
     : [];
   const places = sanitizePlaces_(raw.places, actIds);
+  const bookings = sanitizeBookings_(raw.bookings);
   return {
     id: cleanId_(raw.id) || Utilities.getUuid(),
     name: str_(raw.name, 60) || '未命名旅程',
@@ -284,6 +323,7 @@ function sanitizeTrip_(raw) {
     packing,
     shopping,
     places,
+    bookings,
     createdAt: Number(raw.createdAt) || Date.now(),
   };
 }
@@ -391,7 +431,25 @@ function shopFolder_() {
 function ownsShopFile_(userId, fileId, mine) {
   if (!fileId) return false;
   if (mine.has(fileId)) return true;
-  return CacheService.getScriptCache().get(`up_${fileId}`) === userId;
+  if (CacheService.getScriptCache().get(`up_${fileId}`) === userId) return true;
+  return restoreFile_(fileId, `s:${userId}`);
+}
+
+/**
+ * 被刪掉的項目在網站上按「復原」時，照片也要救回來：丟到垃圾桶時記下是誰的（6 小時），
+ * 同一個人（購物）或同一個旅程（行程）存回這張照片時，把它從垃圾桶拿出來
+ */
+function restoreFile_(fileId, owner) {
+  const cache = CacheService.getScriptCache();
+  if (!fileId || cache.get(`tr_${fileId}`) !== owner) return false;
+  try {
+    DriveApp.getFileById(fileId).setTrashed(false);
+  } catch (err) {
+    console.warn(`還原照片失敗：${fileId}`, err);
+    return false;
+  }
+  cache.remove(`tr_${fileId}`);
+  return true;
 }
 
 function myShopFiles_(userId) {
@@ -441,10 +499,12 @@ function shopPhotos_(userId, fileIds) {
   return out;
 }
 
-function trashFiles_(ids) {
+/** owner：記下是誰的照片，之後按「復原」可以拿回來（見 restoreFile_）；整個旅程刪掉時不用記 */
+function trashFiles_(ids, owner) {
   for (const id of ids) {
     try {
       DriveApp.getFileById(id).setTrashed(true);
+      if (owner) CacheService.getScriptCache().put(`tr_${id}`, owner, 21600);
     } catch (err) {
       console.warn(`刪除照片失敗：${id}`, err);
     }
@@ -468,6 +528,19 @@ function setUserName_(userId, name) {
   } else {
     appendRow_('Users', { userId, name: clean, updatedAt: String(Date.now()) });
   }
+}
+
+/** 登出：這個時間以前發給網站的登入憑證全部失效 */
+function revokeSessions_(userId) {
+  const row = readTable_('Users').find((x) => x.userId === userId);
+  const now = String(Date.now());
+  if (row) replaceRows_('Users', (x) => x === row, [Object.assign({}, row, { sessionsFrom: now })]);
+  else appendRow_('Users', { userId, name: '', updatedAt: now, sessionsFrom: now });
+}
+
+function sessionsFrom_(userId) {
+  const u = readTable_('Users').find((x) => x.userId === userId);
+  return Number(u && u.sessionsFrom) || 0;
 }
 
 function hasUserName_(userId) {
@@ -508,6 +581,7 @@ function rowToTrip_(row, acts, viewerId) {
       id: a.id, time: a.time, endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0, travelMode: travelModeKey_(a.travelMode), travelCost: Number(a.travelCost) || 0,
       travelCostCurrency: a.travelCostCurrency || '', title: a.title, category: catKey_(a.category), location: a.location, mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes,
       costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '', fileId: a.fileId || '',
+      ...splitFields_(a),
     });
   }
   Object.values(days).forEach(sortDay_);
@@ -525,6 +599,12 @@ function rowToTrip_(row, acts, viewerId) {
   } catch (err) {
     places = [];
   }
+  let bookings = [];
+  try {
+    bookings = JSON.parse(row.bookings || '[]');
+  } catch (err) {
+    bookings = [];
+  }
   const members = membersOf_(row);
   return {
     id: row.id,
@@ -540,10 +620,11 @@ function rowToTrip_(row, acts, viewerId) {
     shopping,
     othersShopping,
     places,
+    bookings,
     createdAt: Number(row.createdAt) || 0,
     updatedAt: row.updatedAt,
     role: roleIn_(viewerId, row),
-    members: members.map((m) => ({ name: m.name, role: m.role, me: m.userId === viewerId, id: m.userId === viewerId ? 'me' : memberKey_(row.id, m.userId) })),
+    members: members.map((m) => ({ name: m.name, role: m.role, me: m.userId === viewerId, id: m.userId === viewerId ? 'me' : memberKey_(row.id, m.userId), key: memberKey_(row.id, m.userId) })),
   };
 }
 
@@ -586,6 +667,7 @@ function saveTrip_(userId, trip) {
     inviteCode: existing ? existing.inviteCode : '',
     shopping: '', // 舊欄位，已改存 Shopping 工作表
     places: JSON.stringify(sanitizePlaces_(trip.places, new Set(Object.values(trip.days || {}).flat().map((a) => a.id)))),
+    bookings: JSON.stringify(sanitizeBookings_(trip.bookings)),
   };
   // 購物清單只換掉存檔這個人自己的，旅伴的不動；照片只能用自己上傳的
   const mineFiles = myShopFiles_(userId);
@@ -597,7 +679,7 @@ function saveTrip_(userId, trip) {
   });
   replaceRows_('Shopping', (s) => s.tripId === trip.id && s.userId === userId, shopRows);
   const kept = new Set(shopRows.map((r) => r.fileId));
-  trashFiles_(before.filter((id) => !kept.has(id))); // 被換掉或跟著項目刪掉的照片
+  trashFiles_(before.filter((id) => !kept.has(id)), `s:${userId}`); // 被換掉或跟著項目刪掉的照片
   // 行程的照片：原本就掛在同一個行程上的，或是存檔的人剛上傳的，才收；被換掉或跟著行程刪掉的丟到垃圾桶
   const prevActs = readTable_('Activities').filter((a) => a.tripId === trip.id);
   const prevFile = new Map(prevActs.map((a) => [a.id, a.fileId]));
@@ -606,9 +688,11 @@ function saveTrip_(userId, trip) {
   for (const [date, list] of Object.entries(trip.days || {})) {
     for (const a of list) {
       const fileId = cleanFileId_(a.fileId);
+      const split = splitFields_(a);
       acts.push({
         costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '',
-        fileId: fileId && (prevFile.get(a.id) === fileId || uploadedBy(fileId)) ? fileId : '',
+        fileId: fileId && (prevFile.get(a.id) === fileId || uploadedBy(fileId) || restoreFile_(fileId, `a:${trip.id}`)) ? fileId : '',
+        paidBy: split.paidBy, splitWith: split.splitWith.join(','),
         id: a.id, tripId: trip.id, userId: ownerId, date, time: a.time || '', endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0,
         travelMode: travelModeKey_(a.travelMode), travelCost: Number(a.travelCost) || 0,
         travelCostCurrency: CURRENCY_CODES.includes(a.travelCostCurrency) ? a.travelCostCurrency : '', title: a.title,
@@ -618,7 +702,7 @@ function saveTrip_(userId, trip) {
   }
   replaceRows_('Activities', (a) => a.tripId === trip.id, acts);
   const keptActFiles = new Set(acts.map((a) => a.fileId));
-  trashFiles_(prevActs.map((a) => a.fileId).filter((id) => id && !keptActFiles.has(id)));
+  trashFiles_(prevActs.map((a) => a.fileId).filter((id) => id && !keptActFiles.has(id)), `a:${trip.id}`);
   // 版本號最後才更新：行程寫到一半失敗時版本不變，網站重新存檔就能補回來
   replaceRows_('Trips', (t) => t.id === trip.id, [row]);
   trip.updatedAt = now;
@@ -716,7 +800,14 @@ function viewData_(token) {
   if (!trip) throw apiError_(404, '這個連結已經失效（可能被換新、旅程已刪除，或分享的人已退出旅程）');
   delete trip.othersShopping; // 只給分享者自己的那份
   delete trip.role;
-  trip.members = trip.members.map((m) => ({ name: m.name, role: m.role }));
+  // 成員代號換成這一頁專用的（v0、v1……），分帳照樣算得出來，但不外流真正的代號
+  const alias = new Map(trip.members.map((m, i) => [m.key, `v${i}`]));
+  const hide = (k) => alias.get(k) || (k ? 'gone' : '');
+  for (const a of Object.values(trip.days).flat()) {
+    a.paidBy = hide(a.paidBy);
+    a.splitWith = a.splitWith.map(hide);
+  }
+  trip.members = trip.members.map((m) => ({ name: m.name, role: m.role, key: alias.get(m.key) }));
   const journal = loadJournal_(v.userId)
     .filter((j) => j.tripId === trip.id && j.type === 'text')
     .map((j) => ({ id: j.id, tripId: j.tripId, date: j.date, time: j.time, type: 'text', text: j.text, author: j.author, mine: false }));

@@ -312,7 +312,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && props.SCHEMA_VERSION === '11');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && H.sheets.Activities.data[0].includes('paidBy') && H.sheets.Trips.data[0].includes('bookings') && H.sheets.Users.data[0].includes('sessionsFrom') && props.SCHEMA_VERSION === '12');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -485,7 +485,7 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '11');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '12');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
@@ -630,7 +630,7 @@ const viewToken = (res.url || '').split('?view=')[1];
 check('產生連結：指到網站、帶 40 碼代碼，再要一次是同一個', res.ok && /^[a-f0-9]{40}$/.test(viewToken) && res.url.startsWith('https://froststin.github.io/travel/?view=') && api('viewLink', { tripId: vTrip.id }).url === res.url, JSON.stringify(res));
 let vd = api('view', { token: viewToken }, '');
 check('檢視資料：不用登入，憑代碼拿到行程與分享者自己的購物清單', vd.ok && vd.trip.id === vTrip.id && vd.trip.shopping.some((s) => s.text === '檢視頁測試用') && Object.values(vd.trip.days).flat().some((a) => a.title === '<b>夜景</b>') && Array.isArray(vd.journal), JSON.stringify(vd).slice(0, 200));
-check('檢視資料：不含旅伴的清單、不外流 LINE userId 與成員代號', !('othersShopping' in vd.trip) && !('role' in vd.trip) && vd.trip.members.every((m) => Object.keys(m).sort().join() === 'name,role') && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
+check('檢視資料：不含旅伴的清單、不外流 LINE userId 與成員代號', !('othersShopping' in vd.trip) && !('role' in vd.trip) && vd.trip.members.every((m) => Object.keys(m).sort().join() === 'key,name,role' && /^v\d+$/.test(m.key)) && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
 check('檢視資料：亂猜的代碼拿不到東西', api('view', { token: 'a'.repeat(40) }, '').status === 404 && api('view', { token: { $ne: '' } }, '').status === 404 && api('view', {}, '').status === 404);
 check('產生連結需要登入、而且要是旅程成員', api('viewLink', { tripId: vTrip.id }, '').status === 401 && api('viewLink', { tripId: vTrip.id }, 'good:U3').status === 403);
 let page = getPage({ view: viewToken });
@@ -984,6 +984,108 @@ ctx.__ev = { events: [{ type: 'message', replyToken: 'r', source: { userId: 'U2'
 hook();
 check('投資選單：預設選單被換掉後會自動再套用，不重建選單', menuCreates().length === 0 && sent.some((s) => /user\/all\/richmenu\/menu-/.test(s.url)) && props.INVEST_MENU_SCOPE === 'all');
 check('投資：旅遊指令不受影響', say('說明').text.includes('旅程手帖') && say('今天').quick.some((i) => i.action.text === '所有旅程'));
+
+/* ---------- 網站登入憑證（30 天，不用每小時重登 LINE） ---------- */
+function apiS(action, payload, session) {
+  run('__clearCache()');
+  ctx.__req = { parameter: {}, postData: { contents: JSON.stringify({ action, session, ...payload }) } };
+  return JSON.parse(run('doPost(__req)').s);
+}
+const mkSession = (u, iatAgo, expIn) => run(`(() => { const body = Utilities.base64EncodeWebSafe(JSON.stringify({ u: '${u}', iat: Date.now() - ${iatAgo}, exp: Date.now() + ${expIn} })); return body + '.' + sessionSig_(body); })()`);
+let sres = api('list', {});
+check('登入憑證：用 LINE 登入後發一張 30 天的', sres.ok && sres.session && sres.session.exp - Date.now() > 29 * 86400000 && sres.session.userId === 'U1', JSON.stringify(sres.session));
+const sess = sres.session.token;
+let sres2 = apiS('list', {}, sess);
+check('登入憑證：之後不用 LINE 的 ID token 也能用，也不會每次都換新', sres2.ok && Array.isArray(sres2.trips) && sres2.trips.length === sres.trips.length && !sres2.session);
+const [sBody, sSig] = sess.split('.');
+const forgedBody = Buffer.from(JSON.stringify({ u: 'U2', iat: Date.now(), exp: Date.now() + 1e9 })).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+check('登入憑證：改過內容或簽章就失效', apiS('list', {}, `${forgedBody}.${sSig}`).status === 401 && apiS('list', {}, `${sBody}.AAAA`).status === 401 && apiS('list', {}, 'garbage').status === 401 && apiS('list', {}, `${sBody}`).status === 401);
+check('登入憑證：過期的不能用', apiS('list', {}, mkSession('U1', 31 * 86400000, -1000)).status === 401);
+check('登入憑證：用超過 7 天會順便換一張新的', !!apiS('list', {}, mkSession('U1', 8 * 86400000, 86400000)).session);
+check('登入憑證：登出後舊的全部失效，名字還在', apiS('logout', {}, sess).ok && apiS('list', {}, sess).status === 401 && rows('Users').find((u) => u.userId === 'U1').name === 'Name-U1' && Number(rows('Users').find((u) => u.userId === 'U1').sessionsFrom) > 0);
+const sess3 = api('list', {}).session.token;
+check('登入憑證：登出後再用 LINE 登入，新的可以用', apiS('list', {}, sess3).ok);
+
+/* ---------- 分帳與住宿交通 ---------- */
+say('說明', 'U7');
+say('說明', 'U8');
+api('saveTrip', { trip: { id: 'split-trip', name: '分帳測試', startDate: '2026-11-01', endDate: '2026-11-02', currency: 'TWD', days: {}, packing: [] }, baseUpdatedAt: '' }, 'good:U7');
+const spCode = api('invite', { tripId: 'split-trip' }, 'good:U7').code;
+say(`加入 ${spCode}`, 'U8');
+const splitTrip = (u = 'U7') => api('list', {}, `good:${u}`).trips.find((t) => t.id === 'split-trip');
+let sp = splitTrip();
+check('分帳：每個成員都有固定的代號，兩個人看到的一樣', sp.members.length === 2 && sp.members.every((m) => /^[\w-]{12}$/.test(m.key)) && splitTrip('U8').members.map((m) => m.key).join() === sp.members.map((m) => m.key).join());
+const k7 = sp.members.find((m) => m.me).key;
+const k8 = sp.members.find((m) => !m.me).key;
+sp.days = { '2026-11-01': [
+  { id: 'sp-a', time: '18:00', title: '晚餐', cost: 3000, paidBy: k7, splitWith: [] },
+  { id: 'sp-b', time: '10:00', title: '門票', cost: 1000, travelCost: 200, travelCostCurrency: 'TWD', paidBy: k8, splitWith: [k8] },
+  { id: 'sp-c', time: '20:00', title: '計程車', cost: 600, paidBy: k8, splitWith: [k7, k8, 'bad key!', k7] },
+  { id: 'sp-d', time: '21:00', title: '沒填誰付', cost: 500, paidBy: 'x' },
+] };
+sp.bookings = [
+  { id: 'bk1', type: 'flight', title: 'CI154 桃園→關西', date: '2026-11-01', time: '08:30', endTime: '12:10', code: 'ABC123' },
+  { id: 'bk2', type: 'stay', title: '京都站前飯店', date: '2026-11-01', endDate: '2026-11-02', time: '15:00', endTime: '11:00', place: '京都車站' },
+  { type: 'hack', title: '<b>奇怪的</b>', date: 'bad', endDate: '2026-11-09', time: '25:99' },
+  { title: '   ' },
+];
+check('分帳：存檔成功', api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7').ok);
+sp = splitTrip();
+const spActs = sp.days['2026-11-01'];
+const spAct = (id) => spActs.find((a) => a.id === id);
+check('分帳：存得住誰付的、誰分攤，亂填的代號會被拿掉', spAct('sp-a').paidBy === k7 && spAct('sp-a').splitWith.length === 0 && spAct('sp-c').splitWith.join() === [k7, k8].join() && spAct('sp-d').paidBy === '', JSON.stringify(spActs));
+check('住宿交通：存得住，類別、日期、時間不對的會修正，沒名稱的不收', sp.bookings.length === 3 && sp.bookings[0].code === 'ABC123' && sp.bookings[1].endDate === '2026-11-02' && sp.bookings[2].type === 'other' && sp.bookings[2].date === '' && sp.bookings[2].endDate === '' && sp.bookings[2].time === '', JSON.stringify(sp.bookings));
+// 3000 平分、1200 只算 U8、600 平分 → U7 付 3000 分攤 1800；U8 付 1800 分攤 3000
+r = say('結算', 'U7');
+check('LINE 結算：算出誰該給誰多少，沒填的另外提醒', r.text.includes('NT$4,800') && r.text.includes('Name-U8 → Name-U7（你） NT$1,200') && r.text.includes('還有 1 筆'), r.text);
+check('LINE 結算：旅伴看到的是同一份結果', say('結算', 'U8').text.includes('Name-U8（你） → Name-U7 NT$1,200'));
+r = say('訂位', 'U7');
+check('LINE 訂位：列出航班與住宿、確認碼', r.text.includes('CI154 桃園→關西') && r.text.includes('確認碼 ABC123') && r.text.includes('11/1（日） – 11/2（一）') && r.text.includes('📍 京都車站'), r.text);
+r = say('11/1', 'U7');
+check('LINE 查某天：附上當天的航班與入住', r.text.includes('08:30→12:10 CI154') && r.text.includes('入住 京都站前飯店 15:00'), r.text);
+check('LINE 查某天：退房日也提醒', say('11/2', 'U7').text.includes('退房 京都站前飯店 11:00'));
+ctx.__t = splitTrip();
+const spHtml = run('exportHtml_(__t, "2026-11-01 10:00", false)');
+check('PDF：有住宿交通與分帳', spHtml.includes('住宿與交通') && spHtml.includes('確認碼 ABC123') && spHtml.includes('&lt;b&gt;奇怪的') && spHtml.includes('Name-U8 付給 Name-U7 NT$1,200'));
+const spView = api('view', { token: api('viewLink', { tripId: 'split-trip' }, 'good:U7').url.split('?view=')[1] }, '');
+const spViewActs = Object.values(spView.trip.days).flat();
+check('檢視頁：分帳換成這頁專用的代號，算得出來但不外流', spView.trip.members.map((m) => m.key).join() === 'v0,v1' && spViewActs.find((a) => a.id === 'sp-b').paidBy === 'v1' && spViewActs.find((a) => a.id === 'sp-c').splitWith.join() === 'v0,v1' && !JSON.stringify(spView).includes(k7));
+check('說明有結算與訂位', say('說明', 'U7').text.includes('結算') && say('說明', 'U7').text.includes('訂位'));
+
+/* ---------- 刪掉再按「復原」：照片要救回來 ---------- */
+const actPhoto = api('uploadShopImage', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==', kind: 'activity' }, 'good:U7').fileId;
+sp = splitTrip();
+sp.days['2026-11-02'] = [{ id: 'ph-act', title: '有照片的', fileId: actPhoto }];
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+sp = splitTrip();
+const withPhoto = JSON.parse(JSON.stringify(sp.days['2026-11-02']));
+sp.days['2026-11-02'] = [];
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+check('復原：刪掉行程時照片先丟到垃圾桶', files.find((f) => f.id === actPhoto).trashed === true);
+cache.delete(`up_${actPhoto}`); // 上傳紀錄過期了也要能復原
+const otherTrip = { id: 'steal-trip', name: '別的旅程', startDate: '2026-11-01', endDate: '2026-11-01', currency: 'TWD', days: { '2026-11-01': [{ id: 'st-1', title: '偷照片', fileId: actPhoto }] }, packing: [] };
+api('saveTrip', { trip: otherTrip, baseUpdatedAt: '' }, 'good:U7');
+check('復原：別的旅程不能撿走垃圾桶裡的照片', api('list', {}, 'good:U7').trips.find((t) => t.id === 'steal-trip').days['2026-11-01'][0].fileId === '' && files.find((f) => f.id === actPhoto).trashed === true);
+sp = splitTrip();
+sp.days['2026-11-02'] = withPhoto;
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+check('復原：同一個旅程存回來，照片從垃圾桶拿出來', splitTrip().days['2026-11-02'][0].fileId === actPhoto && files.find((f) => f.id === actPhoto).trashed === false);
+const shopPhoto = api('uploadShopImage', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==' }, 'good:U7').fileId;
+sp = splitTrip();
+sp.shopping = [{ id: 'ph-shop', text: '有照片的東西', fileId: shopPhoto }];
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+sp = splitTrip();
+sp.shopping = [];
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+cache.delete(`up_${shopPhoto}`);
+sp = splitTrip('U8');
+sp.shopping = [{ id: 'steal-shop', text: '偷', fileId: shopPhoto }];
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U8');
+check('復原：購物照片別人不能撿走', splitTrip('U8').shopping[0].fileId === '' && files.find((f) => f.id === shopPhoto).trashed === true);
+sp = splitTrip();
+sp.shopping = [{ id: 'ph-shop', text: '有照片的東西', fileId: shopPhoto }];
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+check('復原：自己的購物照片救得回來', splitTrip().shopping[0].fileId === shopPhoto && files.find((f) => f.id === shopPhoto).trashed === false);
 
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');

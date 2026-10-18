@@ -4,7 +4,8 @@
  *  - 投資日報推播：POST  <網頁應用程式網址>?src=invest&key=<INVEST_PUSH_KEY>（見 Invest.gs）
  *  - 網站 API：   POST  <網頁應用程式網址>（text/plain 的 JSON，附 LIFF ID token）
  * Apps Script 無法讀取 HTTP header，因此 LINE 簽章改用網址上的 WEBHOOK_KEY 驗證；
- * 網站 API 則用 LINE Login 的 ID token 驗證使用者。
+ * 網站 API 則用 LINE Login 的 ID token 驗證使用者；驗證過後發一張 30 天有效的登入憑證（session），
+ * 之後網站改用它，不必每小時重新登入 LINE（ID token 只有 1 小時）。
  * ============================================================ */
 
 function doGet(e) {
@@ -56,9 +57,20 @@ function json_(obj) {
 function handleApi_(body) {
   if (body.action === 'rate') return { rate: jpyRate_() }; // 匯率不需登入
   if (body.action === 'view') return withLock_(() => viewData_(body.token)); // 線上檢視連結：憑代碼，不需登入
-  const userId = verifyIdToken_(body.idToken);
+  const auth = authenticate_(body);
+  const userId = auth.userId;
   checkAllowed_(userId);
+  if (body.action === 'logout') {
+    withLock_(() => revokeSessions_(userId));
+    return {};
+  }
+  const result = apiAction_(userId, body);
+  // 用 LINE 的 ID token 登入的、或憑證用超過 7 天的，順便發一張新的
+  if (auth.renew) result.session = issueSession_(userId);
+  return result;
+}
 
+function apiAction_(userId, body) {
   switch (body.action) {
     case 'reportRate':
       fetchReferenceRate_(); // 連外部網站，先查好再拿鎖
@@ -144,6 +156,55 @@ function handleApi_(body) {
     default:
       throw apiError_(400, '未知的動作');
   }
+}
+
+/* ---------- 登入 ---------- */
+const SESSION_DAYS = 30;
+const SESSION_RENEW_DAYS = 7;
+
+function authenticate_(body) {
+  if (body.session) {
+    const p = verifySession_(body.session);
+    return { userId: p.u, renew: Date.now() - p.iat > SESSION_RENEW_DAYS * 86400000 };
+  }
+  return { userId: verifyIdToken_(body.idToken), renew: true };
+}
+
+function sessionSecret_() {
+  let s = prop_('SESSION_SECRET');
+  if (!s) {
+    s = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    PropertiesService.getScriptProperties().setProperty('SESSION_SECRET', s);
+  }
+  return s;
+}
+
+function sessionSig_(body) {
+  return Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(body, sessionSecret_())).replace(/=+$/, '');
+}
+
+/** 網站的登入憑證：「內容.簽章」，內容是 { u: userId, iat: 發出時間, exp: 到期時間 } */
+function issueSession_(userId) {
+  const iat = Date.now();
+  const exp = iat + SESSION_DAYS * 86400000;
+  const body = Utilities.base64EncodeWebSafe(JSON.stringify({ u: userId, iat, exp }));
+  return { token: `${body}.${sessionSig_(body)}`, exp, userId };
+}
+
+function verifySession_(token) {
+  const [body, sig] = String(token).split('.');
+  let p = null;
+  if (body && sig && sig === sessionSig_(body)) {
+    try {
+      p = JSON.parse(Utilities.newBlob(Utilities.base64DecodeWebSafe(body)).getDataAsString());
+    } catch (err) {
+      p = null;
+    }
+  }
+  if (!p || typeof p.u !== 'string' || !(p.exp > Date.now()) || p.iat < sessionsFrom_(p.u)) {
+    throw apiError_(401, '登入已過期，請重新登入');
+  }
+  return p;
 }
 
 function verifyIdToken_(token) {

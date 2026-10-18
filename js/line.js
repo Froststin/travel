@@ -38,6 +38,8 @@ async function initLiff() {
     document.body.classList.toggle('in-line', liff.isInClient());
   } catch (err) {
     console.warn('LIFF 初始化失敗，改用一般分享連結', err);
+    // 沒網路時 LINE 的程式載不到；有登入憑證就照樣用雲端（或這台裝置留的那份）
+    if (API_URL && Cloud.hasSession()) return Cloud.start();
     settleLocal();
     return;
   }
@@ -45,7 +47,7 @@ async function initLiff() {
     openTripFromQuery();
     return;
   }
-  if (liff.isLoggedIn()) {
+  if (liff.isLoggedIn() || Cloud.hasSession()) {
     Cloud.start();
   } else {
     document.getElementById('login-btn').hidden = false;

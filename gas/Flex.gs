@@ -57,6 +57,8 @@ function dayBubble_(trip, date, filter) {
   const rows = list.slice(0, FLEX_MAX_ITEMS).flatMap((a, i) => [...(filter ? [] : transitRows_(list[i - 1], a, trip.currency)), activityRow_(a)]);
   if (list.length > FLEX_MAX_ITEMS) rows.push(fText_(`……還有 ${list.length - FLEX_MAX_ITEMS} 項`, { size: 'xs', color: '#66727a' }));
   if (!rows.length) rows.push(fText_(filter ? `這天沒有${CATEGORY_INFO[filter].label}類的行程` : '這天還沒有安排', { size: 'sm', color: '#66727a' }));
+  const books = filter ? [] : bookingsOn_(trip, date);
+  if (books.length) rows.unshift(fText_(books.map((b) => bookingLine_(b, date)).join('\n'), { size: 'xs', color: '#7c3aed' }));
   const toBuy = filter ? [] : shoppingOn_(trip, date).filter((s) => !s.done);
   if (toBuy.length) rows.push(fText_(`🛒 要買：${toBuy.map((s) => s.text).join('、')}`, { size: 'xs', color: '#db2777' }));
   const route = filter ? '' : dayRouteUrl_(trip.days[date] || []);
@@ -147,6 +149,9 @@ function dayText_(trip, date, filter) {
   let list = trip.days[date] || [];
   if (filter) list = list.filter((a) => catKey_(a.category) === filter);
   const lines = [`🗓️ ${trip.name}｜Day ${dayNo}・${prettyDate_(date)}`];
+  const books = filter ? [] : bookingsOn_(trip, date);
+  books.forEach((b) => lines.push(bookingLine_(b, date)));
+  if (books.length) lines.push('');
   if (!list.length) lines.push('（沒有安排）');
   list.forEach((a, i) => {
     const transit = filter ? '' : transitLabel_(a, trip.currency);

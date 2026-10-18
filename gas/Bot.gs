@@ -9,6 +9,8 @@ const HELP_TEXT = [
   '・今天／明天／後天／10/29／第二天',
   '・明天吃什麼、清水寺幾點',
   '・預算、行李、所有旅程',
+  '・訂位 → 航班、住宿、確認碼（在網站「每日行程」最上面新增）',
+  '・結算 → 和旅伴分帳，算出誰該給誰多少（誰付的在網站填）',
   '',
   '【新增】',
   '・新旅程 京都 10/28-10/30',
@@ -155,6 +157,8 @@ function handleText_(ctx, rawText) {
   }
   if ((m = text.match(/^(?:日誌|日記|記錄|紀錄|記下|筆記|寫日誌)\s*[:：]?\s*([\s\S]+)$/))) return cmdJournalAdd_(ctx, m[1].trim());
   if (/^(匯率|日幣|日圓|日幣匯率|匯率多少)$/.test(text)) return say_(ctx, textMsg_(`💱 ${rateText_('JPY')}\n\n例：¥1,000 ≈ ${ntd_(toTWD_(1000, 'JPY') || 0)}`));
+  if (/^(?:結算|分帳|算帳|誰欠誰|拆帳|分錢)$/.test(text)) return cmdSettle_(ctx);
+  if (/^(?:訂位|訂房|訂位資訊|住宿資訊|交通資訊|航班|機票|飯店|住哪|住哪裡|確認碼)$/.test(text)) return cmdBookings_(ctx);
   if (/預算|花費|花多少|多少錢|開銷|支出/.test(text)) return cmdBudget_(ctx);
   if (/行李|打包/.test(text)) return cmdPacking_(ctx);
   if (/^(行程|旅程|我的旅程|所有旅程|旅程列表|列表|全部行程|全部旅程)$/.test(text)) return cmdTrips_(ctx);
@@ -338,6 +342,18 @@ function cmdBudget_(ctx) {
   if (missing.length) lines.push('', `⚠️ 目前查不到 ${missing.join('、')} 的匯率，這些金額暫時直接當成台幣加總，數字不準，請稍後再查一次。`);
   if (foreign.length) lines.push('', `※ 金額皆換算成台幣：${foreign.map(rateText_).join('；')}`);
   return say_(ctx, textMsg_(lines.join('\n')));
+}
+
+function cmdSettle_(ctx) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  const trip = activeTrip_(ctx.trips, ctx.today);
+  if ((trip.members || []).length < 2) return say_(ctx, textMsg_(`「${trip.name}」目前只有你一個人，輸入「邀請」找旅伴加入後就能分帳。`));
+  return say_(ctx, textMsg_(settleText_(trip)));
+}
+
+function cmdBookings_(ctx) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  return say_(ctx, textMsg_(bookingsText_(activeTrip_(ctx.trips, ctx.today))));
 }
 
 function cmdPacking_(ctx) {

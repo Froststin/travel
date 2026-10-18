@@ -48,6 +48,7 @@ td.num, th.num { text-align:right; white-space:nowrap; }
 .journal li { display:flex; gap:12px; padding:8px 0; border-top:1px dashed var(--line); }
 .journal li:first-child { border-top:0; }
 .journal img { max-width:100%; border-radius:10px; }
+.booking { margin:-4px 0 8px; padding:2px 10px; border-left:3px solid #7c3aed; }
 .shopimg { display:block; width:120px; max-width:40%; border-radius:8px; margin:4px 0; }
 footer { margin-top:24px; text-align:center; font-size:.85rem; color:var(--muted); }
 @media print { body { background:#fff; } section { break-inside:avoid; border-color:#ccc; } nav { display:none; } a { color:inherit; text-decoration:none; } }
@@ -109,6 +110,7 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
           <div><div class="day-no">DAY ${i + 1}</div><h2>${prettyDate(d)}</h2></div>
           <div class="small muted">${total ? `${ntd(total)}　` : ''}${route ? `<a href="${esc(route)}">🧭 當天路線</a>` : ''}</div>
         </div>
+        ${typeof bookingsOn === 'function' ? bookingsOn(t, d).map((bk) => `<div class="small booking">${esc(bookingText(bk, d))}${bk.code && d === bk.date ? `　<span class="muted">確認碼 ${esc(bk.code)}</span>` : ''}</div>`).join('') : ''}
         ${list.length ? `<ol>${acts}</ol>` : '<p class="muted">（尚未安排）</p>'}
         ${dayShop.length ? `<div class="small muted" style="margin-top:8px">🛒 這天要買</div><ul class="buy">${staticShopItems(dayShop, t.currency)}</ul>` : ''}
       </section>`;
@@ -132,6 +134,27 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
       ${b.foreign.length ? `<p class="small muted">※ 金額皆以匯出當時的匯率換算成台幣：${b.foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
       ${b.missing.length ? `<p class="small warn">⚠️ 匯出時還沒取得 ${esc(b.missing.join('、'))} 的匯率，這些金額直接當成台幣加總，數字不準。</p>` : ''}
     </section>`;
+
+  const books = typeof sortedBookings === 'function' ? sortedBookings(t) : [];
+  const bookingsHtml = books.length ? `
+    <section id="bookings">
+      <h2>🧾 住宿與交通</h2>
+      <table><tbody>${books.map((bk) => `<tr>
+        <td class="small muted">${bk.date ? prettyDate(bk.date) : '未定'}${bk.type === 'stay' && bk.endDate ? ` – ${prettyDate(bk.endDate)}` : ''}</td>
+        <td>${esc(bookingText(bk, ''))}${bk.place ? `<div class="small muted">📍 ${esc(bk.place)}</div>` : ''}${bk.notes ? `<div class="small muted">${esc(bk.notes)}</div>` : ''}</td>
+        <td class="num">${bk.code ? esc(bk.code) : ''}</td></tr>`).join('')}</tbody></table>
+    </section>` : '';
+
+  const st = typeof splitMembers === 'function' && splitMembers(t).length ? settlement(t) : null;
+  const settleHtml = st && st.total ? `
+    <section id="settle">
+      <h2>🤝 分帳</h2>
+      <table><thead><tr><th>旅伴</th><th class="num">付了</th><th class="num">應分攤</th></tr></thead><tbody>
+        ${st.rows.map((p) => `<tr><td>${esc(personName(p))}</td><td class="num">${ntd(p.paid)}</td><td class="num">${ntd(p.share)}</td></tr>`).join('')}
+      </tbody></table>
+      <p>${st.transfers.length ? st.transfers.map((x) => `💸 ${esc(personName(x.from))} 付給 ${esc(personName(x.to))} <b>${ntd(x.amount)}</b>`).join('<br>') : '大家都打平了 🎉'}</p>
+      ${st.unassigned ? `<p class="small muted">※ 還有 ${st.unassigned} 筆花費沒填誰付的，沒有算進來。</p>` : ''}
+    </section>` : '';
 
   const items = t.shopping || [];
   const shopping = items.length ? `
@@ -178,9 +201,11 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
     </section>` : '';
 
   const nav = [
+    bookingsHtml ? '<a href="#bookings">🧾 住宿交通</a>' : '',
     ...dates.map((d, i) => `<a href="#day-${i + 1}">Day ${i + 1}</a>`),
     placesHtml ? '<a href="#places">📍 想去</a>' : '',
     '<a href="#budget">💰 預算</a>',
+    settleHtml ? '<a href="#settle">🤝 分帳</a>' : '',
     shopping ? '<a href="#shopping">🛒 購物</a>' : '',
     packing ? '<a href="#packing">🧳 行李</a>' : '',
     journalHtml ? '<a href="#journal">📔 日誌</a>' : '',
@@ -205,7 +230,7 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
     ? `<p class="notice">唯讀的線上檢視頁，${exportedAt} 的內容；重新整理就會更新。<br>要編輯請到旅程手帖：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`
     : `<p class="notice">這是 ${exportedAt} 匯出的離線版本，不需要網路就能看（地圖連結除外），之後的修改不會出現在這裡。<br>最新內容：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`}
   <nav>${nav}</nav>
-  ${days}${placesHtml}${budget}${shopping}${packing}${journalHtml}
+  ${bookingsHtml}${days}${placesHtml}${budget}${settleHtml}${shopping}${packing}${journalHtml}
   <footer>旅程手帖・${exportedAt} ${online ? '的內容' : '匯出'}</footer>
 </main>
 </body>

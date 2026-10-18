@@ -1,0 +1,15 @@
+{
+  "name": "旅程手帖",
+  "short_name": "旅程手帖",
+  "description": "旅遊行程規劃：每日行程、預算、分帳、購物與行李清單，和 LINE 官方帳號同步。",
+  "lang": "zh-Hant-TW",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f4ef",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

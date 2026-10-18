@@ -6,13 +6,14 @@
  *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, notes,
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }],
  *                shopping: [{ id, text, date, activityId, price, done, note, image | fileId }],
- *                places: [...]（待去清單，見 js/places.js）, createdAt } ] }
+ *                places: [...]（待去清單，見 js/places.js）, bookings: [...]（住宿與交通，見 js/bookings.js）, createdAt } ] }
  *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走），
  *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份；
  *             note 是備註（數量、顏色、注意事項）；照片見 js/shopphoto.js
  *   othersShopping：[{ name, key, items }]，雲端回傳的旅伴購物清單，只能看，存檔時後端不會理它
  *   activity = { id, time, endTime, title, category, location, mapUrl, cost, costCurrency, notes, image | fileId,
- *                travelMode, travelMin, travelCost, travelCostCurrency }  // travel* 是「從上一站過來」
+ *                travelMode, travelMin, travelCost, travelCostCurrency,  // travel* 是「從上一站過來」
+ *                paidBy, splitWith }                                     // 分帳：誰付的、哪些人分攤（見 js/split.js）
  *   cost 用 costCurrency、travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
  *   照片和購物清單一樣：還沒上傳是 image（data URL），上傳後是 fileId（見 js/shopphoto.js）
  * 用 LINE 登入後改以雲端為準（js/cloud.js），localStorage 只留未登入時的資料與尚未同步的修改
@@ -347,173 +348,6 @@ function allActivities(t) {
   return dateRange(t.startDate, t.endDate).flatMap((d) => t.days[d] || []);
 }
 
-/* ---------- 購物清單（跟著每日行程走） ---------- */
-const MAX_SHOPPING = 200;
-
-// 存檔前整理：有指定行程的，把日期更新成行程目前那一天；行程被刪掉的就留在最後那一天
-function syncShopping(t) {
-  const where = new Map();
-  for (const [d, list] of Object.entries(t.days || {})) list.forEach((a) => where.set(a.id, d));
-  t.shopping = (t.shopping || []).map((s) => {
-    const d = s.activityId && where.get(s.activityId);
-    const out = { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done, note: s.note || '', fileId: s.fileId || '' };
-    if (s.image) out.image = s.image; // 還沒上傳到雲端的照片
-    return out;
-  });
-}
-
-// 購物金額合計（換算成台幣）
-function shopCost(items, currency) {
-  return items.reduce((sum, s) => sum + twdOrRaw(s.price, currency), 0);
-}
-
-// 依「哪一站、哪一天」分好：byAct（行程 id → 東西）、byDay（日期 → 沒指定行程的東西）、loose（不指定日期）
-function shoppingIndex(t, dates, items = t.shopping || []) {
-  const actDate = new Map();
-  for (const d of dates) for (const a of t.days[d] || []) actDate.set(a.id, d);
-  const idx = { byAct: new Map(), byDay: new Map(), loose: [] };
-  const add = (map, key, s) => map.set(key, (map.get(key) || []).concat([s]));
-  for (const s of items) {
-    if (s.activityId && actDate.has(s.activityId)) add(idx.byAct, s.activityId, s);
-    else if (dates.includes(s.date)) add(idx.byDay, s.date, s);
-    else idx.loose.push(s);
-  }
-  return idx;
-}
-
-// 某一天所有要買的東西（依行程順序，最後是沒指定行程的）
-function shoppingOn(t, idx, date) {
-  return (t.days[date] || []).flatMap((a) => idx.byAct.get(a.id) || []).concat(idx.byDay.get(date) || []);
-}
-
-// 照片：已經有圖就直接顯示；只有雲端的檔案 id 時先留空，畫面畫好後由 ShopPhotos.load 補上
-function shopImg(s, cls) {
-  const photos = typeof ShopPhotos !== 'undefined' ? ShopPhotos : null;
-  const src = photos ? photos.src(s) : (s.image || '');
-  if (!src && !(s.fileId && photos)) return '';
-  return `<button type="button" class="${cls}" data-action="view-shop-photo" data-id="${esc(s.id)}" title="看大圖" aria-label="看 ${esc(s.text)} 的照片">
-    <img ${src ? `src="${esc(src)}"` : `data-shop-file="${esc(s.fileId)}"`} alt="" loading="lazy"></button>`;
-}
-
-// 每日行程裡用的精簡版（一列）
-function shopItem(s, currency, where = '') {
-  return `
-    <li class="shop-item${s.done ? ' done' : ''}">
-      ${shopImg(s, 'shop-thumb')}
-      <label><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}${s.note ? `<small class="shop-note">${esc(s.note)}</small>` : ''}</span></label>
-      ${where ? `<span class="shop-where muted">${where}</span>` : ''}
-      ${Number(s.price) ? `<span class="shop-price">${showMoney(s.price, currency)}</span>` : ''}
-      <span class="shop-actions no-print">
-        <button class="icon-btn" data-action="edit-shop" data-id="${esc(s.id)}" title="編輯" aria-label="編輯">✎</button>
-        <button class="icon-btn" data-action="delete-shop" data-id="${esc(s.id)}" title="刪除" aria-label="刪除">✕</button>
-      </span>
-    </li>`;
-}
-
-// 購物清單分頁用的卡片：照片、勾選、名稱、備註與金額可以直接改
-function shopCard(s, currency, where = '') {
-  const twd = Number(s.price) && currency !== 'TWD' ? toTWD(s.price, currency) : null;
-  return `
-    <li class="shop-card${s.done ? ' done' : ''}">
-      <div class="shop-photo">
-        ${shopImg(s, 'shop-photo-btn') || `<button type="button" class="shop-photo-add no-print" data-action="pick-shop-photo" data-id="${esc(s.id)}">＋ 加照片</button>`}
-        <span class="shop-card-actions no-print">
-          <button class="icon-btn" data-action="edit-shop" data-id="${esc(s.id)}" title="編輯（改日期、在哪買、換照片）" aria-label="編輯">✎</button>
-          <button class="icon-btn" data-action="delete-shop" data-id="${esc(s.id)}" title="刪除" aria-label="刪除">✕</button>
-        </span>
-      </div>
-      <label class="shop-card-name"><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}</span></label>
-      ${where ? `<div class="shop-where muted">${where}</div>` : ''}
-      <input class="shop-card-input" data-change="shop-note" data-id="${esc(s.id)}" value="${esc(s.note || '')}" maxlength="200" placeholder="數量／顏色／備註…" aria-label="${esc(s.text)} 的備註">
-      <div class="shop-card-price">
-        <input class="shop-card-input" type="number" min="0" step="any" inputmode="decimal" data-change="shop-price" data-id="${esc(s.id)}" value="${Number(s.price) || ''}" placeholder="預估／購買金額" aria-label="${esc(s.text)} 的金額（${esc(currency)}）">
-        ${currency !== 'TWD' ? `<span class="muted">${esc(currency)}${twd != null ? ` ≈ ${ntd(twd)}` : ''}</span>` : ''}
-      </div>
-    </li>`;
-}
-
-// 旅伴的購物項目：只能看，不能勾、不能改
-function shopCardReadonly(s, currency, where = '') {
-  return `
-    <li class="shop-card readonly${s.done ? ' done' : ''}">
-      ${shopImg(s, 'shop-photo-btn') ? `<div class="shop-photo">${shopImg(s, 'shop-photo-btn')}</div>` : ''}
-      <div class="shop-card-name"><span class="shop-ro-check" aria-hidden="true">${s.done ? '☑' : '☐'}</span><span>${esc(s.text)}</span></div>
-      ${where ? `<div class="shop-where muted">${where}</div>` : ''}
-      ${s.note ? `<div class="shop-ro-note">${esc(s.note)}</div>` : ''}
-      ${Number(s.price) ? `<div class="shop-ro-price">${showMoney(s.price, currency)}</div>` : ''}
-    </li>`;
-}
-
-/** 一個人的購物清單，依天分組。editable＝自己的（可以改、可以新增），否則是旅伴的（只能看） */
-function shopDaySections(t, dates, items, editable) {
-  const idx = shoppingIndex(t, dates, items);
-  const card = editable ? shopCard : shopCardReadonly;
-  const days = dates.map((d, i) => {
-    const acts = (t.days[d] || []).filter((a) => idx.byAct.has(a.id));
-    const dayTotal = shopCost(shoppingOn(t, idx, d), t.currency);
-    const rest = idx.byDay.get(d) || [];
-    if (!acts.length && !rest.length) return '';
-    return `
-      <section class="panel">
-        <div class="shop-day-head">
-          <h3>Day ${i + 1}・${prettyDate(d)}${dayTotal ? `<span class="muted shop-day-total">${ntd(dayTotal)}</span>` : ''}</h3>
-          ${editable ? `<button class="btn btn-sm no-print" data-action="add-shop" data-date="${d}">＋ 這天要買</button>` : ''}
-        </div>
-        <ul class="shop-grid">
-          ${acts.map((a) => idx.byAct.get(a.id).map((s) => card(s, t.currency, `📍 ${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}`)).join('')).join('')}
-          ${rest.map((s) => card(s, t.currency)).join('')}
-        </ul>
-      </section>`;
-  }).join('');
-  return `${days}
-    ${idx.loose.length ? `
-      <section class="panel">
-        <h3>不指定日期</h3>
-        <ul class="shop-grid">${idx.loose.map((s) => card(s, t.currency)).join('')}</ul>
-      </section>` : ''}`;
-}
-
-function shopSummary(items, currency) {
-  const total = shopCost(items, currency);
-  return `已買 ${items.filter((s) => s.done).length} / ${items.length}${total ? `・預估 ${ntd(total)}（已買 ${ntd(shopCost(items.filter((s) => s.done), currency))}）` : ''}`;
-}
-
-function shoppingView(t, dates) {
-  const items = t.shopping || [];
-  const done = items.filter((s) => s.done).length;
-  const pct = items.length ? (done / items.length) * 100 : 0;
-  const total = shopCost(items, t.currency);
-  const shared = cloudOn() && Array.isArray(t.members) && t.members.length > 1;
-  const me = shared ? (t.members.find((m) => m.me) || {}).name : '';
-  // 旅伴的清單（雲端才有）：一人一區，只能看
-  const others = (shared ? t.othersShopping || [] : []).filter((g) => g && Array.isArray(g.items) && g.items.length);
-  const othersHtml = others.map((g, i) => `
-    <details class="shop-owner shop-owner-other owner-${i % 4}" open>
-      <summary><span class="shop-owner-name">👤 ${esc(g.name)} 的購物清單</span><span class="chip">只能看</span><span class="muted shop-owner-sum">${shopSummary(g.items, t.currency)}</span></summary>
-      ${shopDaySections(t, dates, g.items, false)}
-    </details>`).join('');
-
-  return `
-    ${shared ? `<div class="shop-owner shop-owner-me"><div class="shop-owner-title"><span class="shop-owner-name">🙋 我的購物清單${me ? `（${esc(me)}）` : ''}</span><span class="chip">可以修改</span></div>` : ''}
-    <section class="panel">
-      <div class="shop-day-head">
-        <div class="packing-summary">${shopSummary(items, t.currency)}</div>
-        <button class="btn btn-primary no-print" data-action="add-shop" data-date="">＋ 新增要買的東西</button>
-      </div>
-      <div class="progress"><span style="width:${pct}%"></span></div>
-      ${items.length ? '' : '<p class="muted shop-empty">還沒有要買的東西。可以指定哪一天、在哪一站買，每日行程裡也會跟著顯示。</p>'}
-      ${items.length ? '<p class="muted hint">卡片上的備註和金額可以直接改；點「＋ 加照片」放上商品照片，點照片可以看大圖。有填金額的會計入「💰 預算」的購物分類。</p>' : ''}
-      ${shared ? '<p class="muted hint">👥 每個人各有一份購物清單：自己的可以改，旅伴的列在下面、只能看。預算裡的購物金額只算你自己的。</p>' : ''}
-      <p class="muted hint no-print">${cloudOn()
-        ? '也可以在 LINE 官方帳號輸入「買 明天 抹茶粉」「買 面膜 @藥妝店」「買到 抹茶粉」。'
-        : '在「每日行程」每一站的 🛒 也能直接加。'}</p>
-    </section>
-    ${shopDaySections(t, dates, items, true)}
-    ${shared ? '</div>' : ''}
-    ${othersHtml}
-    ${shared && !others.length ? '<p class="muted hint shop-others-empty">旅伴還沒有加購物清單。</p>' : ''}`;
-}
-
 function getTrip(id) {
   return state.trips.find((t) => t.id === id);
 }
@@ -523,12 +357,25 @@ function currentTrip() {
 }
 
 let toastTimer;
-function toast(msg) {
+// opt.action／opt.onAction：訊息旁邊放一個按鈕（例如「復原」）；opt.duration：顯示多久
+function toast(msg, opt = {}) {
   const el = $('#toast');
   el.textContent = msg;
+  if (opt.action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = opt.action;
+    btn.addEventListener('click', () => {
+      el.classList.remove('show');
+      opt.onAction();
+    }, { once: true });
+    el.append(btn);
+  }
+  el.classList.toggle('has-action', !!opt.action);
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2400);
+  toastTimer = setTimeout(() => el.classList.remove('show'), opt.duration || 2400);
 }
 
 function download(filename, data) {
@@ -556,9 +403,11 @@ function route() {
   if (m) {
     const trip = getTrip(m[1]);
     if (trip) {
-      if (currentTripId !== trip.id) currentTab = 'plan';
+      const opened = currentTripId !== trip.id;
+      if (opened) currentTab = 'plan';
       currentTripId = trip.id;
       renderTrip(trip);
+      if (opened && typeof scrollToToday === 'function') scrollToToday(trip);
       return;
     }
     if (cloudPending) {
@@ -651,24 +500,39 @@ function renderTrip(t) {
       <div class="actions no-print">
         <button class="btn btn-line" data-action="share-line">分享到 LINE</button>
         <button class="btn" data-action="edit-trip">編輯</button>
-        <button class="btn" data-action="export-pdf" title="產生 PDF，存在 Google 雲端硬碟，用連結開啟或下載">匯出 PDF</button>
-        <button class="btn" data-action="export-static" title="匯出成單一 HTML 檔，或取得免登入的線上檢視連結">匯出靜態網站</button>
-        <button class="btn" data-action="export-trip" title="下載 JSON 備份檔，之後可以用「匯入」還原">備份檔</button>
-        <button class="btn btn-danger" data-action="delete-trip">${isTripOwner(t) ? '刪除' : '退出旅程'}</button>
+        ${menu('btn', '旅程的更多動作', `
+          <button type="button" data-action="export-pdf">📄 匯出 PDF<small>存到 Google 雲端硬碟，用連結開啟或下載</small></button>
+          <button type="button" data-action="export-static">🌐 匯出靜態網站<small>單一 HTML 檔，或免登入的線上檢視連結</small></button>
+          <button type="button" data-action="export-trip">💾 下載備份檔<small>之後可以用「匯入」還原</small></button>
+          <button type="button" data-action="copy-trip">📋 複製成新旅程<small>同樣的行程換個日期再用</small></button>
+          <button type="button" class="danger" data-action="delete-trip">🗑️ ${isTripOwner(t) ? '刪除旅程' : '退出旅程'}</button>`)}
       </div>
     </div>
-    <nav class="tabs no-print" role="tablist">
-      ${tab('plan', '🗓️ 每日行程')}${tab('places', '📍 想去')}${tab('budget', '💰 預算')}${tab('shopping', '🛒 購物清單')}${tab('packing', '🧳 行李清單')}${tab('journal', '📔 日誌')}
-    </nav>
+    <div class="trip-sticky no-print">
+      <nav class="tabs" role="tablist">
+        ${tab('plan', '🗓️ 行程')}${tab('places', '📍 想去')}${tab('budget', '💰 預算')}${tab('shopping', '🛒 購物')}${tab('packing', '🧳 行李')}${tab('journal', '📔 日誌')}
+      </nav>
+      ${currentTab === 'plan' ? dayNav(dates) : ''}
+    </div>
     ${body}`;
   if (currentTab === 'journal' && cloudOn()) Cloud.loadPhotos(app);
   if (typeof ShopPhotos !== 'undefined') ShopPhotos.load(app);
 }
 
+// ⋯ 選單：點開才看得到的動作。cls 是按鈕的樣式，items 是選單內容（button 或 a）
+function menu(cls, label, items) {
+  return `<details class="menu no-print"><summary class="${cls}" aria-label="${esc(label)}" title="${esc(label)}">⋯</summary><div class="menu-pop">${items}</div></details>`;
+}
+
+// 跳到某一天（固定在上方，跟著分頁一起）
+function dayNav(dates) {
+  if (dates.length < 2) return '';
+  const today = fmtDate(new Date());
+  return `<nav class="day-nav">${dates.map((d, i) => `<a href="#day-${d}" class="${d === today ? 'today' : ''}" data-action="jump" data-date="${d}">${d === today ? '今天' : `Day ${i + 1}`}</a>`).join('')}</nav>`;
+}
+
 function planView(t, dates) {
-  const nav = dates.length > 3
-    ? `<nav class="day-nav no-print">${dates.map((d, i) => `<a href="#day-${d}" data-action="jump" data-date="${d}">Day ${i + 1}</a>`).join('')}</nav>`
-    : '';
+  const today = fmtDate(new Date());
   const shop = shoppingIndex(t, dates);
   const days = dates.map((d, i) => {
     const list = t.days[d] || [];
@@ -677,24 +541,32 @@ function planView(t, dates) {
     const route = dayRouteUrl(list);
     const dayShop = shop.byDay.get(d) || [];
     const noRate = missingRates(list, t.currency, 0, dayAllShop).length;
+    const marks = typeof nowMarks === 'function' && d === today ? nowMarks(list) : new Map();
     return `
-      <section class="day" id="day-${d}">
+      <section class="day${d === today ? ' is-today' : ''}" id="day-${d}" data-day="${d}">
         <header class="day-head">
           <div>
-            <span class="day-no">DAY ${i + 1}</span>
+            <span class="day-no">DAY ${i + 1}${d === today ? '<span class="today-tag">今天</span>' : ''}</span>
             <h3>${prettyDate(d)}</h3>
+            <div class="day-sub">
+              ${typeof weatherChip === 'function' ? weatherChip(t, d) : ''}
+              ${total ? `<span class="muted day-total"${noRate ? ' title="還沒取得匯率，外幣暫時直接當成台幣加總"' : ''}>${ntd(total)}${noRate ? '？' : ''}</span>` : ''}
+            </div>
           </div>
           <div class="day-meta">
-            ${total ? `<span class="muted"${noRate ? ' title="還沒取得匯率，外幣暫時直接當成台幣加總"' : ''}>${ntd(total)}${noRate ? '？' : ''}</span>` : ''}
-            ${route ? `<a class="btn btn-sm no-print" href="${esc(route)}" target="_blank" rel="noopener" title="用 Google 地圖導航這天的所有地點">🧭 路線</a>` : ''}
-            <button class="btn btn-sm btn-line no-print" data-action="share-day" data-date="${d}" title="把這天的行程分享到 LINE">LINE</button>
-            <button class="btn btn-sm no-print" data-action="add-shop" data-date="${d}" title="新增這天要買的東西">🛒 要買</button>
             <button class="btn btn-sm no-print" data-action="add-activity" data-date="${d}">＋ 新增</button>
+            ${menu('btn btn-sm', '這天的更多動作', `
+              ${route ? `<a href="${esc(route)}" target="_blank" rel="noopener">🧭 用 Google 地圖看這天的路線</a>` : ''}
+              <button type="button" data-action="add-shop" data-date="${d}">🛒 新增這天要買的東西</button>
+              <button type="button" data-action="add-booking" data-date="${d}">🧾 新增住宿／交通</button>
+              <button type="button" data-action="share-day" data-date="${d}">💬 把這天分享到 LINE</button>
+              ${list.length ? `<button type="button" data-action="copy-day" data-date="${d}">📋 複製這天的行程到…</button>` : ''}`)}
           </div>
         </header>
+        ${typeof dayBookings === 'function' ? dayBookings(t, d) : ''}
         ${list.length
-          ? `<ol class="timeline">${list.map((a, idx) => transitItem(list[idx - 1], a, t.currency) + activityItem(a, d, t.currency, shop.byAct.get(a.id))).join('')}</ol>`
-          : '<p class="day-empty muted">還沒有安排，點「新增」加入第一個行程。</p>'}
+          ? `<ol class="timeline" data-day="${d}">${list.map((a, idx) => transitItem(list[idx - 1], a, t.currency) + activityItem(a, d, t.currency, shop.byAct.get(a.id), marks.get(a.id))).join('')}</ol>`
+          : `<ol class="timeline empty" data-day="${d}"><li class="day-empty muted">還沒有安排，點「＋ 新增」加入第一個行程${dates.length > 1 ? '，或把別天的行程拖過來' : ''}。</li></ol>`}
         ${dayShop.length ? `
           <div class="day-shop">
             <div class="day-shop-title">🛒 這天要買</div>
@@ -702,20 +574,26 @@ function planView(t, dates) {
           </div>` : ''}
       </section>`;
   }).join('');
-  return `${nav}<div class="days">${days}</div>`;
+  return `${typeof todayBanner === 'function' ? todayBanner(t, dates) : ''}${typeof bookingsPanel === 'function' ? bookingsPanel(t, dates) : ''}<div class="days">${days}</div>`;
 }
 
-function activityItem(a, date, currency, shopItems = []) {
+// mark：今天的「進行中／下一站」（見 js/today.js）。點整張卡片就能編輯
+function activityItem(a, date, currency, shopItems = [], mark = null) {
   const key = catKey(a);
   const c = CATEGORIES[key];
   const place = placeUrl(a);
   const nav = navUrl(a);
+  const payer = typeof payerChip === 'function' ? payerChip(currentTrip(), a) : '';
   return `
-    <li class="activity cat-${key}">
-      <div class="act-time">${a.time ? esc(a.time) : '—'}${a.time && a.endTime ? `<span class="act-end">~ ${esc(a.endTime)}</span>` : ''}</div>
+    <li class="activity cat-${key}${mark ? ` is-${mark.kind}` : ''}" data-action="open-activity" data-date="${esc(date)}" data-id="${esc(a.id)}">
+      <div class="act-time">
+        <button type="button" class="drag-handle no-print" data-drag="${esc(a.id)}" aria-label="拖曳調整順序或移到別天" title="拖曳調整順序，或拖到別天">⠿</button>
+        ${a.time ? esc(a.time) : '—'}${a.time && a.endTime ? `<span class="act-end">~ ${esc(a.endTime)}</span>` : ''}
+      </div>
       <div class="act-body">
+        ${mark ? `<span class="now-tag">${esc(mark.text)}</span>` : ''}
         ${shopImg(a, 'act-photo')}
-        <div class="act-title"><span aria-hidden="true">${c.icon}</span>${esc(a.title)}<span class="chip">${c.label}</span></div>
+        <button type="button" class="act-title" data-action="open-activity" data-date="${esc(date)}" data-id="${esc(a.id)}"><span aria-hidden="true">${c.icon}</span>${esc(a.title)}<span class="chip">${c.label}</span></button>
         ${place || nav ? `
           <div class="act-links">
             ${place ? `<a class="act-loc" href="${esc(place)}" target="_blank" rel="noopener">📍 ${esc(a.location || '地圖')}</a>` : ''}
@@ -726,11 +604,7 @@ function activityItem(a, date, currency, shopItems = []) {
       </div>
       <div class="act-side">
         ${a.cost ? `<span class="act-cost">${showMoney(a.cost, costCurrency(a, currency))}</span>` : ''}
-        <div class="act-actions no-print">
-          <button class="icon-btn" data-action="add-shop" data-date="${esc(date)}" data-activity="${esc(a.id)}" title="在這裡要買的東西" aria-label="新增在這裡要買的東西">🛒</button>
-          <button class="icon-btn" data-action="edit-activity" data-date="${esc(date)}" data-id="${esc(a.id)}" title="編輯" aria-label="編輯">✎</button>
-          <button class="icon-btn" data-action="delete-activity" data-date="${esc(date)}" data-id="${esc(a.id)}" title="刪除" aria-label="刪除">✕</button>
-        </div>
+        ${payer}
       </div>
     </li>`;
 }
@@ -801,14 +675,15 @@ function budgetView(t, dates) {
         <tbody>
           ${dates.map((d, i) => {
             const list = t.days[d] || [];
-            return `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td>${list.length}</td><td>${ntd(sumCost(list, t.currency) + shopCost(shoppingOn(t, shop, d), t.currency))}</td></tr>`;
+            return `<tr class="row-link" data-action="jump-day" data-date="${d}" title="看這天的行程"><td><a href="#day-${d}">Day ${i + 1}・${prettyDate(d)}</a></td><td>${list.length}</td><td>${ntd(sumCost(list, t.currency) + shopCost(shoppingOn(t, shop, d), t.currency))}</td></tr>`;
           }).join('')}
           ${looseShop > 0.005 ? `<tr><td>🛒 購物清單（不指定日期）</td><td>—</td><td>${ntd(looseShop)}</td></tr>` : ''}
         </tbody>
       </table>
       ${shopTotal ? `<p class="muted hint">※ 含${cloudOn() && Array.isArray(t.members) && t.members.length > 1 ? '你自己的' : ''}購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
       ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
-    </section>`;
+    </section>
+    ${typeof settleView === 'function' ? settleView(t) : ''}`;
 }
 
 function packingView(t) {
@@ -901,12 +776,17 @@ function sortJournal() {
 }
 
 /* ---------- 表單：旅程 ---------- */
-function openTripDialog(trip) {
-  editingTripId = trip ? trip.id : null;
-  $('#trip-dialog-title').textContent = trip ? '編輯旅程' : '新增旅程';
+let copyTripFrom = null; // 「複製成新旅程」的來源旅程 id
+
+// copy：把 trip 當範本建立新旅程（日期可以改，行程會跟著平移）
+function openTripDialog(trip, copy = false) {
+  editingTripId = trip && !copy ? trip.id : null;
+  copyTripFrom = trip && copy ? trip.id : null;
+  $('#trip-dialog-title').textContent = copy ? '複製成新旅程' : trip ? '編輯旅程' : '新增旅程';
+  $('#trip-copy-hint').hidden = !copy;
   tripForm.reset();
   const today = fmtDate(new Date());
-  const values = trip || {
+  const values = copy ? { ...trip, name: `${trip.name}（複本）`.slice(0, 60) } : trip || {
     name: '', destination: '', startDate: addDays(today, 7), endDate: addDays(today, 9),
     budget: '', currency: 'TWD', notes: '',
   };
@@ -947,14 +827,30 @@ tripForm.addEventListener('submit', (e) => {
     toast('旅程已更新');
     route();
   } else {
-    const t = { id: uid(), ...data, days: {}, packing: [], shopping: [], places: [], createdAt: Date.now() };
+    const src = copyTripFrom && getTrip(copyTripFrom);
+    const t = src ? copyTrip(src, data) : { id: uid(), ...data, days: {}, packing: [], shopping: [], places: [], bookings: [], createdAt: Date.now() };
     state.trips.push(t);
     commitTrip(t);
     tripDialog.close();
-    toast('旅程已建立');
+    toast(src ? '已複製成新旅程，行程照片和勾選狀態不會帶過去' : '旅程已建立');
     location.hash = `#/trip/${t.id}`;
   }
 });
+
+// 複製旅程：行程依新的出發日平移，超出新日期範圍的不帶；購物、行李的勾選都重來，雲端照片不帶（見 normalizeTrip）
+function copyTrip(src, data) {
+  const shift = daysBetween(src.startDate, data.startDate);
+  const move = (d) => (DATE_RE.test(d || '') ? addDays(d, shift) : d);
+  const raw = JSON.parse(JSON.stringify({ ...src, ...data, startDate: data.startDate, endDate: data.endDate }));
+  raw.days = Object.fromEntries(Object.entries(src.days || {}).map(([d, list]) => [move(d), list]));
+  raw.shopping = (src.shopping || []).map((s) => ({ ...s, date: move(s.date), done: false }));
+  raw.packing = (src.packing || []).map((p) => ({ ...p, done: false }));
+  raw.bookings = (src.bookings || []).map((b) => ({ ...b, date: move(b.date), endDate: move(b.endDate), code: '' }));
+  const t = normalizeTrip(raw);
+  const dropped = Object.entries(raw.days).filter(([d]) => d < data.startDate || d > data.endDate).reduce((n, [, l]) => n + l.length, 0);
+  if (dropped) setTimeout(() => toast(`有 ${dropped} 個行程在新的日期範圍外，沒有複製`), 2600);
+  return t;
+}
 
 /* ---------- 表單：行程項目 ---------- */
 function openActivityDialog(date, activity) {
@@ -986,11 +882,29 @@ function openActivityDialog(date, activity) {
   actDialogPhoto = { image: '', removed: false, item: activity || null };
   updateActPhotoPreview();
   activityForm.elements.notes.value = a.notes || '';
+  if (typeof fillSplitFields === 'function') fillSplitFields(t, activity);
+  // 「更多」：有填過交通、地圖連結、備註或照片才展開
+  $('#act-more').open = !!(activity && (a.travelMin || a.travelMode || a.travelCost || a.mapUrl || a.notes || a.fileId || a.image));
+  $('#act-edit-tools').hidden = !activity;
   updateAutoTime();
   updateFareHint();
   updateCostHint();
   activityDialog.showModal();
-  activityForm.elements.title.focus();
+  if (!activity) activityForm.elements.title.focus();
+}
+
+// 「複製」：用目前填的內容開一個新的（可以改日期再存）
+function copyActivityDialog() {
+  const date = activityForm.elements.date.value;
+  editingActivity = null;
+  actDialogPhoto = { image: actDialogPhoto.image || (actDialogPhoto.item && !actDialogPhoto.removed && typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(actDialogPhoto.item) || '' : ''), removed: false, item: null };
+  $('#activity-dialog-title').textContent = '複製行程';
+  $('#act-edit-tools').hidden = true;
+  activityForm.dataset.dirty = '1';
+  activityForm.elements.date.value = date;
+  updateActPhotoPreview();
+  activityForm.elements.date.focus();
+  toast('改好日期或時間後按「儲存」，就會多一個行程');
 }
 
 // 同一天上一站的結束時間（沒有結束時間就用開始時間）
@@ -1065,6 +979,7 @@ activityForm.addEventListener('submit', (e) => {
   activity.costCurrency = cur && cur !== t.currency ? cur : '';
   // 照片：編輯時沿用原本的，有換或移除才改
   const prev = editingActivity && (t.days[editingActivity.date] || []).find((x) => x.id === editingActivity.id);
+  if (typeof readSplitFields === 'function') Object.assign(activity, readSplitFields(t, prev));
   activity.fileId = (prev && prev.fileId) || '';
   if (prev && prev.image) activity.image = prev.image;
   if (actDialogPhoto.image) {
@@ -1131,155 +1046,6 @@ function updateActPhotoPreview() {
   if (src) img.src = src; else img.removeAttribute('src');
   $('#act-photo-remove').hidden = !has;
 }
-
-/* ---------- 表單：購物清單 ---------- */
-function fillShopActivities(date, selected) {
-  const t = currentTrip();
-  const list = (t && date && t.days[date]) || [];
-  shopForm.elements.activityId.innerHTML = `<option value="">${date ? '（不指定，這天都可以）' : '（先選日期才能指定行程）'}</option>`
-    + list.map((a) => `<option value="${esc(a.id)}">${a.time ? `${esc(a.time)} ` : ''}${esc(a.title)}</option>`).join('');
-  shopForm.elements.activityId.value = list.some((a) => a.id === selected) ? selected : '';
-  shopForm.elements.activityId.disabled = !list.length;
-}
-
-// 表單裡的照片：image＝這次新選的（還沒存）、removed＝按了移除、item＝正在編輯的項目
-let shopDialogPhoto = { image: '', removed: false, item: null };
-let shopPhotoTarget = '';   // 選照片是給誰用的：'dialog' 或購物項目的 id
-const shopPhotoFile = $('#shop-photo-file');
-const photoDialog = $('#photo-dialog');
-
-function updateShopPhotoPreview() {
-  const img = $('#shop-photo-preview');
-  if (!img) return;
-  const it = shopDialogPhoto.item;
-  const src = shopDialogPhoto.image || (!shopDialogPhoto.removed && it && typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(it) : '');
-  const has = !!src || (!shopDialogPhoto.removed && !!(it && it.fileId));
-  img.hidden = !src;
-  if (src) img.src = src; else img.removeAttribute('src');
-  $('#shop-photo-remove').hidden = !has;
-}
-
-// 把照片放到某個購物項目上（換照片時舊的雲端檔案會在存檔後由後端丟掉）
-function setShopPhoto(item, dataUrl) {
-  item.image = dataUrl;
-  item.fileId = '';
-}
-
-shopPhotoFile?.addEventListener('change', async () => {
-  const file = shopPhotoFile.files[0];
-  shopPhotoFile.value = '';
-  if (!file) return;
-  try {
-    const dataUrl = await shopImageFromFile(file);
-    if (shopPhotoTarget === 'dialog') {
-      shopDialogPhoto.image = dataUrl;
-      shopDialogPhoto.removed = false;
-      return updateShopPhotoPreview();
-    }
-    if (shopPhotoTarget === 'act-dialog') {
-      actDialogPhoto.image = dataUrl;
-      actDialogPhoto.removed = false;
-      return updateActPhotoPreview();
-    }
-    const t = currentTrip();
-    const item = t && (t.shopping || []).find((s) => s.id === shopPhotoTarget);
-    if (!item) return;
-    setShopPhoto(item, dataUrl);
-    commitTrip(t);
-    renderTrip(t);
-    toast('已加上照片');
-  } catch (err) {
-    toast(err.message || '照片處理失敗');
-  }
-});
-
-photoDialog?.addEventListener('click', () => photoDialog.close());
-
-// 卡片上直接改備註、金額。改完不馬上重畫，免得正要點下一格時游標跑掉；離開輸入框後再更新合計
-let shopNeedsRender = false;
-document.addEventListener('change', (e) => {
-  const el = e.target.closest('[data-change="shop-note"], [data-change="shop-price"]');
-  const t = currentTrip();
-  const item = el && t && (t.shopping || []).find((s) => s.id === el.dataset.id);
-  if (!item) return;
-  if (el.dataset.change === 'shop-note') item.note = el.value.trim().slice(0, 200);
-  else item.price = Math.max(0, Number(el.value) || 0);
-  commitTrip(t);
-  shopNeedsRender = true;
-});
-document.addEventListener('focusout', () => {
-  setTimeout(() => {
-    const t = currentTrip();
-    if (!shopNeedsRender || !t || document.querySelector('dialog[open]')) return;
-    if (document.activeElement && document.activeElement.closest('.shop-card-input')) return; // 還在填下一格
-    shopNeedsRender = false;
-    if (currentTab === 'shopping') renderTrip(t);
-  }, 0);
-});
-
-// preset：{ date, activityId } 新增時的預設位置；item：要編輯的項目
-function openShopDialog(preset, item) {
-  const t = currentTrip();
-  if (!t) return;
-  if (!shopForm) return toast('網頁有更新，請重新整理後再試一次');
-  const dates = dateRange(t.startDate, t.endDate);
-  editingShopId = item ? item.id : null;
-  $('#shop-dialog-title').textContent = item ? '編輯要買的東西' : '新增要買的東西';
-  $('#shop-multi-hint').hidden = !!item;
-  shopForm.reset();
-  shopForm.elements.date.innerHTML = '<option value="">（不指定日期）</option>'
-    + dates.map((d, i) => `<option value="${d}">Day ${i + 1}・${prettyDate(d)}</option>`).join('');
-  const src = item || preset || {};
-  // 有指定行程的，以行程目前那一天為準
-  const actDate = src.activityId && dates.find((d) => (t.days[d] || []).some((a) => a.id === src.activityId));
-  const date = actDate || (dates.includes(src.date) ? src.date : '');
-  shopForm.elements.text.value = item ? item.text : '';
-  shopForm.elements.price.value = (item && item.price) || '';
-  if (shopForm.elements.note) shopForm.elements.note.value = (item && item.note) || '';
-  shopDialogPhoto = { image: '', removed: false, item: item || null };
-  updateShopPhotoPreview();
-  $('#shop-price-label').textContent = t.currency === 'TWD' ? '預估金額（NT$，選填）' : `預估金額（${t.currency}，選填，會換算成台幣）`;
-  shopForm.elements.date.value = date;
-  fillShopActivities(date, actDate ? src.activityId : '');
-  shopDialog.showModal();
-  shopForm.elements.text.focus();
-}
-
-// 瀏覽器還留著舊版 index.html（沒有購物清單表單）時，shopForm 會是 null，其他功能要照常運作
-shopForm?.elements.date.addEventListener('change', () => fillShopActivities(shopForm.elements.date.value, ''));
-
-shopForm?.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const t = currentTrip();
-  if (!t) return;
-  const f = new FormData(shopForm);
-  const date = f.get('date') || '';
-  const activityId = date ? (f.get('activityId') || '') : '';
-  const raw = f.get('text').trim();
-  const price = Math.max(0, Number(f.get('price')) || 0);
-  const note = (f.get('note') || '').trim().slice(0, 200);
-  // 新增時可以用「、」一次加好幾樣；編輯時整段都是同一樣
-  const names = editingShopId ? [raw.slice(0, 80)] : [...new Set(raw.split(/[、，,]+/).map((s) => s.trim().slice(0, 80)).filter(Boolean))];
-  if (!names.length || !names[0]) return toast('請填寫要買什麼');
-  t.shopping ||= [];
-  if (editingShopId) {
-    const item = t.shopping.find((s) => s.id === editingShopId);
-    if (item) {
-      Object.assign(item, { text: names[0], date, activityId, price, note });
-      if (shopDialogPhoto.image) setShopPhoto(item, shopDialogPhoto.image);
-      else if (shopDialogPhoto.removed) { delete item.image; item.fileId = ''; }
-    }
-  } else {
-    if (t.shopping.length + names.length > MAX_SHOPPING) return toast(`購物清單最多 ${MAX_SHOPPING} 樣`);
-    const added = names.map((text) => ({ id: uid(), text, date, activityId, price, done: false, note, fileId: '' }));
-    if (shopDialogPhoto.image) setShopPhoto(added[0], shopDialogPhoto.image); // 照片只放第一樣
-    t.shopping.push(...added);
-  }
-  commitTrip(t);
-  shopDialog.close();
-  toast(editingShopId ? '已更新' : `已加入 ${names.length} 樣要買的東西`);
-  renderTrip(t);
-});
 
 /* ---------- 匯入／匯出 ---------- */
 function normalizeTrip(raw) {
@@ -1358,6 +1124,7 @@ function normalizeTrip(raw) {
         };
       })
       : [],
+    bookings: typeof cleanBookings === 'function' ? cleanBookings(raw.bookings) : [],
     createdAt: Date.now(),
   };
 }
@@ -1450,7 +1217,7 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'close-dialog':
-      el.closest('dialog').close();
+      closeDialog(el.closest('dialog'));
       break;
     case 'import':
       importFile.click();
@@ -1466,6 +1233,20 @@ document.addEventListener('click', (e) => {
     case 'jump':
       e.preventDefault();
       document.getElementById(`day-${el.dataset.date}`)?.scrollIntoView({ behavior: 'smooth' });
+      break;
+    case 'jump-day':
+      // 預算頁的每日花費：切到行程分頁，捲到那一天
+      e.preventDefault();
+      if (!t) break;
+      currentTab = 'plan';
+      renderTrip(t);
+      document.getElementById(`day-${el.dataset.date}`)?.scrollIntoView();
+      break;
+    case 'copy-trip':
+      if (t) openTripDialog(t, true);
+      break;
+    case 'copy-day':
+      if (t && typeof openCopyDay === 'function') openCopyDay(t, el.dataset.date);
       break;
     case 'edit-trip':
       if (t) openTripDialog(t);
@@ -1512,19 +1293,30 @@ document.addEventListener('click', (e) => {
     case 'add-activity':
       openActivityDialog(el.dataset.date, null);
       break;
-    case 'edit-activity': {
+    case 'open-activity': {
+      // 點整張卡片編輯；卡片裡的連結、按鈕、要買的東西照它們自己的動作
+      if (el.tagName === 'LI' && e.target.closest('a, button, input, label, select, .shop-inline')) break;
       const a = t?.days[el.dataset.date]?.find((x) => x.id === el.dataset.id);
       if (a) openActivityDialog(el.dataset.date, a);
       break;
     }
-    case 'delete-activity': {
-      const list = t?.days[el.dataset.date];
-      const a = list?.find((x) => x.id === el.dataset.id);
-      if (a && confirm(`刪除「${a.title}」？`)) {
-        t.days[el.dataset.date] = list.filter((x) => x.id !== a.id);
-        commitTrip(t);
-        renderTrip(t);
-      }
+    case 'act-dialog-delete': {
+      const list = t && editingActivity && t.days[editingActivity.date];
+      const a = list?.find((x) => x.id === editingActivity.id);
+      if (!a) break;
+      const date = editingActivity.date;
+      activityDialog.close();
+      withUndo(t, `已刪除「${a.title}」`, () => { t.days[date] = list.filter((x) => x.id !== a.id); });
+      break;
+    }
+    case 'act-dialog-copy':
+      copyActivityDialog();
+      break;
+    case 'act-dialog-shop': {
+      if (!editingActivity) break;
+      const preset = { date: editingActivity.date, activityId: editingActivity.id };
+      activityDialog.close();
+      openShopDialog(preset, null);
       break;
     }
     case 'toggle-pack': {
@@ -1536,13 +1328,11 @@ document.addEventListener('click', (e) => {
       }
       break;
     }
-    case 'delete-pack':
-      if (t) {
-        t.packing = t.packing.filter((x) => x.id !== el.dataset.id);
-        commitTrip(t);
-        renderTrip(t);
-      }
+    case 'delete-pack': {
+      const item = t?.packing.find((x) => x.id === el.dataset.id);
+      if (item) withUndo(t, `已刪除「${item.text}」`, () => { t.packing = t.packing.filter((x) => x.id !== item.id); });
       break;
+    }
     case 'pick-shop-photo':
       shopPhotoTarget = el.dataset.id;
       shopPhotoFile?.click();
@@ -1597,11 +1387,7 @@ document.addEventListener('click', (e) => {
     }
     case 'delete-shop': {
       const item = t?.shopping?.find((x) => x.id === el.dataset.id);
-      if (item && confirm(`不買「${item.text}」了嗎？`)) {
-        t.shopping = t.shopping.filter((x) => x.id !== item.id);
-        commitTrip(t);
-        renderTrip(t);
-      }
+      if (item) withUndo(t, `不買「${item.text}」了`, () => { t.shopping = t.shopping.filter((x) => x.id !== item.id); });
       break;
     }
     case 'organize-places':
@@ -1614,11 +1400,7 @@ document.addEventListener('click', (e) => {
     }
     case 'delete-place': {
       const p = t?.places?.find((x) => x.id === el.dataset.id);
-      if (p && confirm(`把「${p.name}」從待去清單拿掉？${placeDate(t, p) ? '\n（已經排進行程的那一站不會被刪掉）' : ''}`)) {
-        t.places = t.places.filter((x) => x.id !== p.id);
-        commitTrip(t);
-        renderTrip(t);
-      }
+      if (p) withUndo(t, `已從想去拿掉「${p.name}」${placeDate(t, p) ? '（排進行程的那一站還在）' : ''}`, () => { t.places = t.places.filter((x) => x.id !== p.id); });
       break;
     }
     case 'line-login':
@@ -1685,9 +1467,9 @@ document.addEventListener('submit', (e) => {
   $('#packing-form input').focus();
 });
 
-// 點對話框外圍（backdrop）時關閉
-for (const dlg of [tripDialog, activityDialog, shopDialog].filter(Boolean)) {
-  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+// 點對話框外圍（backdrop）時關閉；有改過沒存的先問一下（見 js/ui.js 的 closeDialog）
+for (const dlg of document.querySelectorAll('dialog:not(.photo-dialog)')) {
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) closeDialog(dlg); });
 }
 
 /* ---------- 初始化 ---------- */
@@ -1730,8 +1512,3 @@ async function checkForUpdate() {
 }
 
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkForUpdate(); });
-
-fillSelects();
-window.addEventListener('hashchange', route);
-route();
-checkForUpdate();

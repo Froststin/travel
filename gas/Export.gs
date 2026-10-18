@@ -84,6 +84,25 @@ function exportHtml_(trip, exportedAt, web) {
     ${b.foreign.length ? `<p class="sub">金額皆換算成台幣：${e(b.foreign.map(rateText_).join('；'))}</p>` : ''}
     ${b.missing.length ? `<p class="sub"><b>查不到 ${e(b.missing.join('、'))} 的匯率，這些金額暫時直接當成台幣加總，數字不準。</b></p>` : ''}`;
 
+  // 住宿與交通（PDF 不放 emoji，用文字標類別）
+  const books = (trip.bookings || []).slice().sort((x, y) => `${x.date || '9'}${x.time}`.localeCompare(`${y.date || '9'}${y.time}`));
+  const bookings = books.length ? `
+    <h2>住宿與交通</h2>
+    <table>${books.map((b) => `<tr>
+      <td class="time">${e(b.date ? prettyDate_(b.date) : '未定')}${b.type === 'stay' && b.endDate ? `<br>– ${e(prettyDate_(b.endDate))}` : ''}</td>
+      <td><span class="cat">${e(bookingInfo_(b).label)}</span> <b>${e(b.title)}</b>${b.time ? `　${e(b.time)}${b.endTime ? ` – ${e(b.endTime)}` : ''}` : ''}
+        ${b.place ? `<div class="sub">地點：${e(b.place)}</div>` : ''}${b.notes ? `<div class="sub">${e(b.notes)}</div>` : ''}</td>
+      <td class="money">${b.code ? `確認碼 ${e(b.code)}` : ''}</td></tr>`).join('')}</table>` : '';
+
+  const st = (trip.members || []).length > 1 ? settlement_(trip) : null;
+  const settle = st && st.total ? `
+    <h2>分帳</h2>
+    <table>
+      ${st.rows.map((p) => `<tr><td>${e(p.name)}</td><td class="money">付了 ${e(ntd_(p.paid))}</td><td class="money">應分攤 ${e(ntd_(p.share))}</td></tr>`).join('')}
+    </table>
+    <p>${st.transfers.length ? st.transfers.map((x) => `${e(x.from.name)} 付給 ${e(x.to.name)} ${e(ntd_(x.amount))}`).join('<br>') : '大家都打平了'}</p>
+    ${st.unassigned ? `<p class="sub">還有 ${st.unassigned} 筆花費沒填誰付的，沒有算進來。</p>` : ''}` : '';
+
   const loose = shoppingOn_(trip, '');
   const shopping = (trip.shopping || []).length ? `
     <h2>我的購物清單</h2>
@@ -122,7 +141,7 @@ function exportHtml_(trip, exportedAt, web) {
     ${web
     ? `<p class="sub">唯讀的線上檢視頁，${e(exportedAt)} 的內容（重新整理就會更新）。要編輯請到 <a href="${e(tripLiffUrl_(trip.id))}">旅程手帖</a>。</p>`
     : `<p class="sub">這是 ${e(exportedAt)} 匯出的備份，之後的修改不會出現在這裡。最新內容：${e(tripLiffUrl_(trip.id))}</p>`}
-    ${days}${budget}${shopping}${packing}
+    ${bookings}${days}${budget}${settle}${shopping}${packing}
   </body></html>`;
 }
 

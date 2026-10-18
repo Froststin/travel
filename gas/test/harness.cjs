@@ -88,11 +88,13 @@ const ctx = {
     formatDate: (d, tz, fmt) => (fmt === 'yyyy-MM-dd' ? flags.today : '14:05'),
     getUuid: () => crypto.randomUUID(),
     newBlob: (content, type, name) => {
-      const blob = { content, type, name, getAs(t) { lockLog.push('pdf'); if (flags.failPdf) throw new Error('轉檔失敗'); return { ...blob, type: t, setName(n) { this.name = n; return this; } }; } };
+      const blob = { content, type, name, getDataAsString: () => Buffer.from(content).toString('utf8'), getAs(t) { lockLog.push('pdf'); if (flags.failPdf) throw new Error('轉檔失敗'); return { ...blob, type: t, setName(n) { this.name = n; return this; } }; } };
       return blob;
     },
     computeDigest: (a, s) => [...crypto.createHash('sha256').update(s).digest()],
-    base64EncodeWebSafe: (b) => Buffer.from(b).toString('base64url'),
+    base64EncodeWebSafe: (b) => Buffer.from(b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_'),
+    base64DecodeWebSafe: (s) => [...Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64')],
+    computeHmacSha256Signature: (v, k) => [...crypto.createHmac('sha256', k).update(v).digest()],
     base64Encode: (b) => Buffer.from(b).toString('base64'),
     base64Decode: (s) => [...Buffer.from(s, 'base64')],
     DigestAlgorithm: { SHA_256: 'sha256' },
@@ -105,7 +107,7 @@ const ctx = {
   }) },
   // 只有 postback 暫存（pb_）與照片上傳紀錄（up_）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
   CacheService: { getScriptCache: () => ({
-    get: (k) => (/^(pb_|up_|invest_rid_)/.test(k) && cache.has(k) ? cache.get(k) : null),
+    get: (k) => (/^(pb_|up_|tr_|invest_rid_)/.test(k) && cache.has(k) ? cache.get(k) : null),
     put(k, v) { cache.set(k, v); },
     remove(k) { cache.delete(k); },
   }) },

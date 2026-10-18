@@ -3,11 +3,17 @@
 /* ============================================================
  * 雲端同步：用 LINE 登入後，資料改存在 Google Apps Script（Google 試算表），
  * 與 LINE 官方帳號共用同一份資料。config.js 沒有 apiUrl 時不啟用。
+ *
+ * 登入：第一次用 LINE 的 ID token（只有 1 小時），後端會發一張 30 天的登入憑證（session），
+ *       之後都用它，不用一直重新登入 LINE；登出時後端讓舊的全部失效。
+ * 離線：每次從雲端載入成功就在這台裝置留一份，沒網路時先顯示這份，修改等連上後再補傳。
  * ============================================================ */
 
 const API_URL = (window.TRAVEL_CONFIG && window.TRAVEL_CONFIG.apiUrl) || '';
 const RELOAD_FLAG = 'travel-planner:auth-reloaded';
 const UNSYNCED_KEY = 'travel-planner:unsynced';
+const SESSION_KEY = 'travel-planner:session';
+const CLOUD_CACHE_KEY = 'travel-planner:cloud-cache';
 
 const Cloud = {
   enabled: false,
@@ -19,16 +25,56 @@ const Cloud = {
   saving: new Map(), // id → 排隊中的存檔次數
   retryDelay: 0,
   retryTimer: null,
+  offline: false,
+  session: (() => {
+    try {
+      return JSON.parse(localStorage.getItem(SESSION_KEY));
+    } catch (err) {
+      return null;
+    }
+  })(),
+
+  hasSession() {
+    const s = this.session;
+    return !!(s && s.token && s.exp > Date.now() + 60 * 1000);
+  },
+
+  saveSession(s) {
+    this.session = s || null;
+    try {
+      if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+      else localStorage.removeItem(SESSION_KEY);
+    } catch (err) { /* 存不了就每次用 LINE 的 ID token */ }
+  },
+
+  // 有效的登入憑證優先，沒有才用 LINE 的 ID token
+  auth() {
+    if (this.hasSession()) return { session: this.session.token };
+    try {
+      return { idToken: liff.getIDToken() || '' };
+    } catch (err) {
+      return { idToken: '' };
+    }
+  },
 
   async call(action, payload = {}) {
+    const auth = this.auth();
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // 避免 CORS 預檢，Apps Script 不支援 OPTIONS
-      body: JSON.stringify({ action, idToken: liff.getIDToken(), ...payload }),
+      body: JSON.stringify({ action, ...auth, ...payload }),
     });
     if (!res.ok) throw Object.assign(new Error(`連線失敗（${res.status}）`), { status: res.status });
     const data = await res.json();
-    if (!data.ok) throw Object.assign(new Error(data.error || '未知錯誤'), { status: data.status });
+    if (!data.ok) {
+      // 憑證失效（例如在別的地方登出了）：丟掉，LINE 的登入還有效就改用它再試一次
+      if (data.status === 401 && auth.session) {
+        this.saveSession(null);
+        if (!this.tokenExpired()) return this.call(action, payload);
+      }
+      throw Object.assign(new Error(data.error || '未知錯誤'), { status: data.status });
+    }
+    if (data.session) this.saveSession(data.session);
     return data;
   },
 
@@ -98,10 +144,31 @@ const Cloud = {
   },
 
   userKey() {
+    if (this.session && this.session.userId) return this.session.userId;
     try {
       return (liff.getDecodedIDToken() || {}).sub || '';
     } catch (err) {
       return '';
+    }
+  },
+
+  // 這台裝置留一份雲端的資料，沒網路時先用（空間不夠就算了）
+  cacheData(data) {
+    try {
+      localStorage.setItem(CLOUD_CACHE_KEY, JSON.stringify({ user: this.userKey(), at: Date.now(), trips: data.trips, journal: data.journal }));
+    } catch (err) {
+      try {
+        localStorage.removeItem(CLOUD_CACHE_KEY);
+      } catch (e) { /* 忽略 */ }
+    }
+  },
+
+  cachedData() {
+    try {
+      const c = JSON.parse(localStorage.getItem(CLOUD_CACHE_KEY));
+      return c && c.user && c.user === this.userKey() && Array.isArray(c.trips) ? c : null;
+    } catch (err) {
+      return null;
     }
   },
 
@@ -192,17 +259,33 @@ const Cloud = {
     this.setStatus('syncing');
     app.innerHTML = '<p class="loading">☁️ 正在從雲端載入旅程……</p>';
     try {
-      // 憑證已經過期就不用白跑一趟，直接換新的
-      if (this.tokenExpired()) throw Object.assign(new Error('登入已過期'), { status: 401 });
-      const data = await this.listWithRetry({ name: await this.profileName() });
+      // 沒有登入憑證、LINE 的也過期了，就不用白跑一趟，直接重新登入
+      if (!this.hasSession() && this.tokenExpired()) throw Object.assign(new Error('登入已過期'), { status: 401 });
+      let data;
+      try {
+        data = await this.listWithRetry({ name: await this.profileName() });
+      } catch (err) {
+        // 連不上（沒網路、後端掛了）：有上次的資料就先用
+        const cached = ![401, 403].includes(err.status) && this.cachedData();
+        if (!cached) throw err;
+        data = cached;
+        this.offline = true;
+      }
       const local = state;
       this.enabled = true;
       state = { trips: data.trips, journal: data.journal };
-      document.getElementById('site-footer').textContent = '資料已同步到雲端，LINE 官方帳號也能查詢與修改。';
+      if (this.offline) {
+        const at = new Date(data.at);
+        toast(`📴 連不上雲端，先顯示 ${at.getMonth() + 1}/${at.getDate()} ${fmtTime(at)} 的資料，修改會在連上後補傳`, { duration: 5000 });
+      } else {
+        this.cacheData(data);
+      }
+      document.getElementById('site-footer').hidden = true;
       sessionStorage.removeItem(RELOAD_FLAG);
-      this.setStatus('saved');
+      this.setStatus(this.offline ? 'offline' : 'saved');
+      this.showAccount();
       this.restoreUnsynced();
-      if (!state.trips.length && local.trips.length
+      if (!this.offline && !state.trips.length && local.trips.length
         && confirm(`雲端還沒有旅程。要把這台裝置上的 ${local.trips.length} 個旅程上傳到雲端嗎？`)) {
         for (const t of local.trips) {
           delete t.updatedAt;
@@ -231,7 +314,7 @@ const Cloud = {
       try {
         return await this.call('list', payload);
       } catch (err) {
-        if (attempt >= 3 || [401, 403].includes(err.status)) throw err;
+        if (attempt >= 3 || [401, 403].includes(err.status) || !navigator.onLine) throw err;
         console.warn(`載入失敗，第 ${attempt} 次重試`, err);
         app.innerHTML = '<p class="loading">☁️ 雲端有點忙，正在重試……</p>';
         await new Promise((r) => setTimeout(r, attempt * 2000));
@@ -242,6 +325,13 @@ const Cloud = {
   async refresh() {
     try {
       const data = await this.call('list');
+      this.cacheData(data);
+      if (this.offline) {
+        this.offline = false;
+        this.setStatus(this.unsynced.size ? 'error' : 'saved');
+        this.retryUnsynced();
+        toast('☁️ 已重新連上雲端');
+      }
       if (this.pending || document.querySelector('dialog[open]')) return;
       // 還沒同步成功的旅程保留這台裝置上的版本；已經存過、雲端卻沒有的代表被刪除或被移出了
       const ids = new Set(data.trips.map((t) => t.id));
@@ -256,6 +346,7 @@ const Cloud = {
       route();
       window.scrollTo(0, y);
     } catch (err) {
+      if (this.offline && !err.status) return; // 還是連不上，維持離線模式
       this.handleError(err);
     }
   },
@@ -288,6 +379,12 @@ const Cloud = {
 
   /** 重新取得登入憑證。每個分頁只自動試一次（成功載入後會歸零），避免一直跳去登入 */
   relogin() {
+    this.saveSession(null);
+    if (!liffReady) {
+      this.enabled = false;
+      this.setStatus('error');
+      return toast('登入已過期，請連上網路後重新整理，再用 LINE 登入');
+    }
     const tried = sessionStorage.getItem(RELOAD_FLAG);
     if (!tried) {
       sessionStorage.setItem(RELOAD_FLAG, '1');
@@ -320,9 +417,48 @@ const Cloud = {
     if (!el) return;
     el.hidden = false;
     el.dataset.state = s;
-    el.textContent = { syncing: '☁️ 同步中…', saved: '☁️ 已同步', error: this.unsynced.size ? '⚠️ 尚未同步，自動重試中' : '⚠️ 同步失敗' }[s] || '';
+    if (this.offline && s !== 'syncing') s = 'offline';
+    el.dataset.state = s;
+    el.textContent = {
+      syncing: '☁️ 同步中…', saved: '☁️ 已同步', offline: `📴 離線${this.unsynced.size ? `・${this.unsynced.size} 個待同步` : ''}`,
+      error: this.unsynced.size ? '⚠️ 尚未同步，自動重試中' : '⚠️ 同步失敗',
+    }[s] || '';
+  },
+
+  // 登入後才有「登出」（LINE 裡開的網站不需要）
+  showAccount() {
+    const btn = document.getElementById('logout-btn');
+    let inLine = false;
+    try {
+      inLine = liffReady && liff.isInClient();
+    } catch (err) { /* 忽略 */ }
+    if (btn) btn.hidden = inLine;
+  },
+
+  async logout() {
+    const left = this.unsynced.size;
+    if (!confirm(`確定要登出嗎？${left ? `\n還有 ${left} 個旅程的修改沒同步到雲端，登出後會不見。` : ''}\n之後要再用 LINE 登入才看得到雲端的旅程。`)) return;
+    try {
+      await this.queue;
+      await this.call('logout');
+    } catch (err) {
+      console.warn('登出時通知後端失敗', err);
+    }
+    this.saveSession(null);
+    try {
+      localStorage.removeItem(CLOUD_CACHE_KEY);
+      localStorage.removeItem(UNSYNCED_KEY);
+    } catch (err) { /* 忽略 */ }
+    try {
+      if (liffReady && liff.isLoggedIn()) liff.logout();
+    } catch (err) { /* 忽略 */ }
+    location.reload();
   },
 };
+
+function fmtTime(d) {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 /* ---------- 日幣匯率 ----------
  * 1. 瀏覽器直接向 FinMind 查臺灣銀行現金賣出（FinMind 會封鎖 Google 伺服器，所以不經後端）
@@ -410,9 +546,14 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && Cloud.enabled && !Cloud.pending) Cloud.refresh();
 });
 
-// 網路恢復時馬上補傳
+// 網路恢復時馬上補傳；離線模式就重新載入雲端
 window.addEventListener('online', () => {
   clearTimeout(Cloud.retryTimer);
   Cloud.retryTimer = null;
-  Cloud.retryUnsynced();
+  if (Cloud.offline) Cloud.refresh();
+  else Cloud.retryUnsynced();
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-action="logout"]')) Cloud.logout();
 });
