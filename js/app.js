@@ -257,6 +257,13 @@ function showMoney(amount, cur) {
   return v == null ? origMoney(amount, cur) : `${ntd(v)}（${origMoney(amount, cur)}）`;
 }
 
+// 卡片上的金額：台幣為主，外幣原價小字放下面
+function costLabel(amount, cur) {
+  if (!cur || cur === 'TWD') return ntd(amount);
+  const v = toTWD(amount, cur);
+  return v == null ? origMoney(amount, cur) : `${ntd(v)}<small>${origMoney(amount, cur)}</small>`;
+}
+
 function fareCurrency(a, currency) {
   return a.travelCostCurrency || currency;
 }
@@ -465,12 +472,12 @@ function tripCard(t) {
   const count = allActivities(t).length;
   const status = tripStatus(t);
   return `
-    <a class="trip-card" href="#/trip/${esc(t.id)}">
+    <a class="trip-card ${status.kind}" href="#/trip/${esc(t.id)}">
       <span class="badge badge-${status.kind}">${status.text}</span>
       <h2>${esc(t.name)}</h2>
       <p class="muted">📍 ${esc(t.destination || '未設定目的地')}</p>
-      <p class="muted">🗓️ ${prettyDate(t.startDate)} – ${prettyDate(t.endDate)}・${durationText(days)}</p>
-      <p class="muted">📝 ${count} 個行程項目</p>
+      <p class="muted trip-meta"><span>🗓️ ${prettyDate(t.startDate)} – ${prettyDate(t.endDate)}</span><span>${durationText(days)}</span></p>
+      <p class="muted trip-card-count">${count ? `${count} 個行程` : '還沒有安排行程'}</p>
     </a>`;
 }
 
@@ -493,7 +500,7 @@ function renderTrip(t) {
     <div class="trip-title">
       <div>
         <h1>${esc(t.name)}</h1>
-        <p class="muted">📍 ${esc(t.destination || '未設定目的地')}・${prettyDate(t.startDate)} – ${prettyDate(t.endDate)}・${durationText(dates.length)}</p>
+        <p class="muted trip-meta"><span>📍 ${esc(t.destination || '未設定目的地')}</span><span>🗓️ ${prettyDate(t.startDate)} – ${prettyDate(t.endDate)}</span><span>${durationText(dates.length)}</span></p>
         ${t.notes ? `<p class="trip-notes">${esc(t.notes)}</p>` : ''}
         ${membersView(t)}
       </div>
@@ -603,7 +610,7 @@ function activityItem(a, date, currency, shopItems = [], mark = null) {
         ${shopItems.length ? `<ul class="shop-list shop-inline" aria-label="在這裡要買的東西">${shopItems.map((s) => shopItem(s, currency)).join('')}</ul>` : ''}
       </div>
       <div class="act-side">
-        ${a.cost ? `<span class="act-cost">${showMoney(a.cost, costCurrency(a, currency))}</span>` : ''}
+        ${a.cost ? `<span class="act-cost">${costLabel(a.cost, costCurrency(a, currency))}</span>` : ''}
         ${payer}
       </div>
     </li>`;

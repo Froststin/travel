@@ -171,8 +171,14 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
   transition: transform .15s, border-color .15s;
 }
 .trip-card:hover { transform: translateY(-2px); border-color: var(--primary); }
+.trip-card { --accent: var(--primary); box-shadow: inset 0 4px 0 var(--accent), var(--shadow); overflow: hidden; }
+.trip-card.past { --accent: var(--border); }
+.trip-card.ongoing { --accent: #f59e0b; }
 .trip-card h2 { font-size: 1.15rem; margin: 10px 0 8px; }
 .trip-card p { margin: 2px 0; font-size: .9rem; }
+.trip-card-count { margin-top: 10px !important; padding-top: 10px; border-top: 1px dashed var(--border); font-size: .85rem !important; }
+.trip-meta { display: flex; flex-wrap: wrap; gap: 2px 14px; }
+.trip-meta span { white-space: nowrap; }
 
 .badge {
   display: inline-block;
@@ -204,7 +210,7 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
   gap: 16px;
   flex-wrap: wrap;
 }
-.trip-title h1 { font-size: 1.7rem; }
+.trip-title h1 { font-size: 1.7rem; letter-spacing: .02em; }
 .trip-title p { margin: 6px 0 0; }
 .trip-notes {
   white-space: pre-wrap;
@@ -299,9 +305,10 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
 
 .activity {
   display: grid;
-  grid-template-columns: 56px 1fr auto;
-  gap: 12px;
-  padding: 12px 0 12px 12px;
+  grid-template-columns: 76px 1fr auto;
+  grid-template-areas: "time body side";
+  gap: 4px 12px;
+  padding: 12px 10px 12px 12px;
   border-top: 1px dashed var(--border);
   border-left: 3px solid var(--cat-other);
 }
@@ -314,8 +321,9 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
 .activity.cat-stay { border-left-color: var(--cat-stay); }
 .activity.cat-shopping { border-left-color: var(--cat-shopping); }
 
-.act-time { display: flex; align-items: flex-start; gap: 2px; flex-wrap: wrap; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--muted); }
-.act-time .act-end { flex-basis: 100%; padding-left: 22px; }
+.act-time { grid-area: time; display: flex; align-items: baseline; gap: 2px 4px; flex-wrap: wrap; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.act-time .act-end { flex-basis: 100%; padding-left: 20px; }
+.act-body { grid-area: body; min-width: 0; }
 .act-title { font: inherit; font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 0; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
 .act-title:hover { color: var(--primary); }
 .chip {
@@ -340,8 +348,9 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
 }
 .act-nav:hover { background: var(--primary-soft); }
 .act-notes { margin: 4px 0 0; font-size: .88rem; color: var(--muted); white-space: pre-wrap; }
-.act-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.act-cost { font-size: .9rem; font-variant-numeric: tabular-nums; }
+.act-side { grid-area: side; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.act-cost { font-size: .9rem; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.act-cost small { display: block; font-size: .76rem; font-weight: 400; color: var(--muted); }
 
 /* Budget */
 .stats {
@@ -461,14 +470,42 @@ textarea { resize: vertical; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 600px) {
+  .container { padding-top: 16px; }
+  .site-header { padding: 10px 16px; }
+  .logo { font-size: 1.1rem; }
+  .header-actions .btn { padding: 6px 12px; }
+  .page-head h1 { font-size: 1.4rem; }
+  .trip-title { gap: 12px; }
   .trip-title h1 { font-size: 1.4rem; }
-  .activity { grid-template-columns: 1fr auto; }
-  .act-time { grid-column: 1 / -1; font-size: .85rem; }
-  .form-row { grid-template-columns: 1fr; }
+  .trip-title p { font-size: .9rem; }
+  .tab { padding: 10px 11px; }
+  /* 行程卡：時間和金額同一行，內容占滿寬度 */
+  .activity { grid-template-columns: 1fr auto; grid-template-areas: "time side" "body body"; padding: 10px 8px 10px 10px; }
+  .act-time { font-size: .85rem; }
+  .act-time .act-end { flex-basis: auto; padding-left: 0; }
+  .act-side { flex-direction: row; align-items: baseline; flex-wrap: wrap; justify-content: flex-end; gap: 2px 8px; }
+  .act-cost { font-size: .85rem; }
+  .act-cost small { display: inline; margin-left: 4px; }
+  .form { padding: 20px 18px; gap: 10px; }
+  .form-row { grid-template-columns: 1fr; gap: 10px; }
+  .form-row.keep { grid-template-columns: 1fr 1fr; }
   .bar-row { grid-template-columns: 70px 1fr 90px; }
-  .day { padding: 14px 14px; }
+  .day { padding: 14px 12px; }
+  .day-head { padding: 0 2px; }
   .trip-title .actions { width: 100%; }
+  /* 預算的三個數字排成一列 */
+  .stats { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { padding: 10px; min-width: 0; }
+  .stat .label { font-size: .76rem; white-space: nowrap; }
+  .stat .value { font-size: .9rem; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel { padding: 14px 16px; }
+  /* 對話框改成從下面滑出來 */
+  dialog:not(.photo-dialog) { width: 100%; max-width: 100%; max-height: 92vh; margin: auto 0 0; border-radius: 18px 18px 0 0; border-bottom: 0; }
+  dialog:not(.photo-dialog)[open] { animation: sheet-up .2s ease-out; }
+  .bookings-list li { flex-wrap: wrap; gap: 0 10px; }
+  .booking-date { width: 100%; font-size: .8rem; }
 }
+@keyframes sheet-up { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
 
 /* ---------- Print ---------- */
 @media print {
@@ -798,7 +835,7 @@ dialog { overscroll-behavior: contain; }
 .bookings-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .bookings-list li { display: flex; align-items: baseline; gap: 10px; padding: 4px 0; border-bottom: 1px dashed var(--border); }
 .bookings-list li:last-child { border-bottom: 0; }
-.booking-date { flex: none; width: 7.5em; font-size: .85rem; }
+.booking-date { flex: none; width: 13em; font-size: .85rem; }
 .booking-line { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: .92rem; text-align: left; cursor: pointer; }
 .booking-line:hover span:first-child { color: var(--primary); text-decoration: underline; }
 .booking-code { padding: 0 6px; border-radius: 6px; background: var(--surface-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; letter-spacing: .04em; }

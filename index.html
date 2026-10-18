@@ -44,11 +44,11 @@
       <h2 id="trip-dialog-title">新增旅程</h2>
       <label>旅程名稱<input name="name" required maxlength="60" placeholder="例如：京都賞楓之旅"></label>
       <label>目的地<input name="destination" maxlength="60" placeholder="例如：日本京都"></label>
-      <div class="form-row">
+      <div class="form-row keep">
         <label>出發日期<input type="date" name="startDate" required></label>
         <label>回程日期<input type="date" name="endDate" required></label>
       </div>
-      <div class="form-row">
+      <div class="form-row keep">
         <label>總預算<input type="number" name="budget" min="0" step="any" placeholder="0"></label>
         <label>幣別
           <select name="currency"></select>
@@ -77,7 +77,7 @@
         <label>日期<select name="date" required></select></label>
         <label>類別<select name="category"></select></label>
       </div>
-      <div class="form-row">
+      <div class="form-row keep">
         <label>開始時間<input type="time" name="time"></label>
         <label>結束時間<input type="time" name="endTime"></label>
       </div>
@@ -144,7 +144,7 @@
         <label><span data-booking-label="date">日期</span><input type="date" name="date"></label>
         <label id="booking-end-wrap">退房日期<input type="date" name="endDate"></label>
       </div>
-      <div class="form-row">
+      <div class="form-row keep">
         <label><span data-booking-label="time">出發</span><input type="time" name="time"></label>
         <label><span data-booking-label="endTime">抵達</span><input type="time" name="endTime"></label>
       </div>
