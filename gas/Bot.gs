@@ -744,6 +744,7 @@ function cmdShopMark_(ctx, body, mode) {
   const changed = new Map(); // trip → 這次處理到的項目
   const missing = [];
   const notes = new Map(); // 項目 → 金額換算說明
+  const wasDone = new Set(); // 原本就勾了已買的項目
   for (const want of wanted) {
     const name = want.text;
     const hit = ctx.trips
@@ -753,6 +754,7 @@ function cmdShopMark_(ctx, body, mode) {
       .sort((a, b) => b.score - a.score || Number(a.item.done) - Number(b.item.done) || Number(b.trip === active) - Number(a.trip === active))[0];
     if (!hit) { missing.push(name); continue; }
     if (mode === 'done') {
+      if (hit.item.done) wasDone.add(hit.item); // 原本就買過的不用再提醒
       hit.item.done = true;
       // 「買到 抹茶粉 480円」：順便改成實際付的金額（總額）。數量多於 1 時除以數量存成單價，小計才會等於實際付的
       if (want.cost != null) {
@@ -779,7 +781,7 @@ function cmdShopMark_(ctx, body, mode) {
     saveTrip_(ctx.userId, trip);
     items.forEach((s) => lines.push(mode === 'remove'
       ? `🗑️ 已從購物清單拿掉：${s.text}`
-      : `✅ 買到了：${s.text}${Number(s.price) ? ` ${shopMoneyText_(s, trip.currency)}${notes.get(s) || ''}` : ''}`));
+      : `✅ 買到了：${s.text}${Number(s.price) ? ` ${shopMoneyText_(s, trip.currency)}${notes.get(s) || ''}` : ''}${s.paidBy && Number(s.price) > 0 && !wasDone.has(s) ? '\n　（有填誰付的：勾了已買就視為已結清，不列入分帳）' : ''}`));
     const left = trip.shopping.filter((s) => !s.done).length;
     lines.push(left ? `「${trip.name}」還有 ${left} 樣沒買` : `「${trip.name}」的東西都買齊了 🎉`);
   }

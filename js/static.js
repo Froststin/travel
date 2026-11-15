@@ -6,7 +6,8 @@
  * 內容是匯出當下的快照（金額用當時的匯率換算好），之後的修改要重新匯出。
  * ============================================================ */
 
-const STATIC_MAX_PHOTOS = 40; // 日誌照片最多內嵌幾張，避免檔案太大
+const STATIC_MAX_PHOTOS = 40; // 備忘照片最多內嵌幾張，避免檔案太大
+const STATIC_MAX_CHARS = 15 * 1024 * 1024; // 匯出檔超過約 15 MB 時把地鐵圖再縮小
 
 const STATIC_CSS = `
 :root { --bg:#f6f4ef; --card:#fff; --text:#1f2a2e; --muted:#66727a; --line:#e2ddd3; --pri:#0f766e; --warn:#b42318; --buy:#be185d; }
@@ -50,8 +51,10 @@ td.num, th.num { text-align:right; white-space:nowrap; }
 .journal img { max-width:100%; border-radius:10px; }
 .booking { margin:-4px 0 8px; padding:2px 10px; border-left:3px solid #7c3aed; }
 .shopimg { display:block; width:120px; max-width:40%; border-radius:8px; margin:4px 0; }
+figure.metro { margin:0 0 16px; }
+figure.metro img { display:block; width:100%; height:auto; border-radius:10px; border:1px solid var(--line); }
 footer { margin-top:24px; text-align:center; font-size:.85rem; color:var(--muted); }
-@media print { body { background:#fff; } section { break-inside:avoid; border-color:#ccc; } nav { display:none; } a { color:inherit; text-decoration:none; } }
+@media print { body { background:#fff; } section { break-inside:avoid; border-color:#ccc; } #metro { break-inside:auto; } figure.metro { break-inside:avoid; } nav { display:none; } a { color:inherit; text-decoration:none; } }
 `;
 
 // 購物項目的照片（匯出前已經用 ShopPhotos.fetch 準備好的才放得進來）
@@ -69,7 +72,7 @@ function staticShopItems(items, currency) {
  * @param {Object} t 旅程
  * @param {Map<string,string>} photos 日誌照片（fileId → data URL），沒有的照片會顯示文字說明
  */
-function buildStaticHtml(t, photos = new Map(), online = false) {
+function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map()) {
   const dates = dateRange(t.startDate, t.endDate);
   const shop = shoppingIndex(t, dates);
   const b = budgetData(t, dates);
@@ -149,7 +152,11 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
     </section>` : '';
 
   const st = typeof splitMembers === 'function' && splitMembers(t).length ? settlement(t) : null;
-  const settleHtml = st && st.total ? `
+  const settleHtml = st && !st.total && st.settled ? `
+    <section id="settle">
+      <h2>🤝 分帳</h2>
+      <p>已買的 ${st.settled} 筆購物視為已經結清，目前沒有要轉帳的。</p>
+    </section>` : st && st.total ? `
     <section id="settle">
       <h2>🤝 分帳</h2>
       <table><thead><tr><th>旅伴</th><th class="num">付了</th><th class="num">應分攤</th></tr></thead><tbody>
@@ -157,6 +164,7 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
       </tbody></table>
       <p>${st.transfers.length ? st.transfers.map((x) => `💸 ${esc(personName(x.from))} 付給 ${esc(personName(x.to))} <b>${ntd(x.amount)}</b>`).join('<br>') : '大家都打平了 🎉'}</p>
       ${st.unassigned ? `<p class="small muted">※ 還有 ${st.unassigned} 筆花費沒填誰付的，沒有算進來。</p>` : ''}
+      <p class="small muted">※ 購物清單已勾「已買」的視為已經結清，不列入分帳。</p>
     </section>` : '';
 
   const items = t.shopping || [];
@@ -203,6 +211,14 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
       </ul>
     </section>` : '';
 
+  // 地鐵圖（離線匯出才有；metro：id → 縮小過的圖）
+  const metroList = (t.metroMaps || []).filter((m) => metro.get(m.id));
+  const metroHtml = metroList.length ? `
+    <section id="metro">
+      <h2>🚇 地鐵圖</h2>
+      ${metroList.map((m) => `<figure class="metro"><img src="${esc(metro.get(m.id))}" alt="${esc(m.name || '地鐵圖')}"><figcaption class="small muted">${esc(m.name || '地鐵圖')}（可以用兩指放大）</figcaption></figure>`).join('')}
+    </section>` : '';
+
   const nav = [
     bookingsHtml ? '<a href="#bookings">🧾 住宿交通</a>' : '',
     ...dates.map((d, i) => `<a href="#day-${i + 1}">Day ${i + 1}</a>`),
@@ -212,6 +228,7 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
     shopping ? '<a href="#shopping">🛒 購物</a>' : '',
     packing ? '<a href="#packing">🧳 行李</a>' : '',
     journalHtml ? '<a href="#journal">📝 備忘</a>' : '',
+    metroHtml ? '<a href="#metro">🚇 地鐵圖</a>' : '',
   ].join('');
 
   return `<!DOCTYPE html>
@@ -233,7 +250,7 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
     ? `<p class="notice">唯讀的線上檢視頁，${exportedAt} 的內容；重新整理就會更新。<br>要編輯請到旅程手帖：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`
     : `<p class="notice">這是 ${exportedAt} 匯出的離線版本，不需要網路就能看（地圖連結除外），之後的修改不會出現在這裡。<br>最新內容：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`}
   <nav>${nav}</nav>
-  ${bookingsHtml}${days}${placesHtml}${budget}${settleHtml}${shopping}${packing}${journalHtml}
+  ${bookingsHtml}${days}${placesHtml}${budget}${settleHtml}${shopping}${packing}${journalHtml}${metroHtml}
   <footer>旅程手帖・${exportedAt} ${online ? '的內容' : '匯出'}</footer>
 </main>
 </body>
@@ -251,10 +268,10 @@ function staticShopRow(t, s, dayLabel) {
 async function staticPhotos(t) {
   const photos = new Map();
   if (!cloudOn()) return photos;
-  const ids = (state.journal || [])
-    .filter((j) => j.type === 'image' && j.fileId && (j.tripId ? j.tripId === t.id : true) && j.date >= t.startDate && j.date <= t.endDate)
-    .map((j) => j.fileId)
-    .slice(0, STATIC_MAX_PHOTOS);
+  // 和備忘分頁看到的一樣（含整趟通用）
+  const all = tripMemos(t).filter((j) => j.type === 'image' && j.fileId).map((j) => j.fileId);
+  photos.skipped = Math.max(0, all.length - STATIC_MAX_PHOTOS);
+  const ids = all.slice(0, STATIC_MAX_PHOTOS);
   for (const id of ids) {
     try {
       if (!Cloud.photoCache.has(id)) Cloud.photoCache.set(id, (await Cloud.call('photo', { fileId: id })).dataUrl);
@@ -303,10 +320,34 @@ function staticFile() {
 
 async function exportStaticSite(t) {
   toast('正在產生靜態網站……');
-  if (typeof ShopPhotos !== 'undefined') await ShopPhotos.fetch([...(t.shopping || []), ...Object.values(t.days).flat()].map((s) => s.fileId));
+  // 上傳過的圖都附上：購物、行程照片、地鐵圖（地鐵圖是大圖，一次抓一張）、備忘照片
+  if (typeof ShopPhotos !== 'undefined') {
+    await ShopPhotos.fetch([...(t.shopping || []), ...Object.values(t.days).flat()].map((s) => s.fileId));
+    await ShopPhotos.fetch((t.metroMaps || []).map((m) => m.fileId), 1);
+  }
+  const metroSrc = new Map();
+  for (const m of t.metroMaps || []) {
+    const src = typeof ShopPhotos !== 'undefined' ? ShopPhotos.src(m) : (m.image || '');
+    if (src) metroSrc.set(m.id, src);
+  }
+  const shrinkMetro = async (side, q) => {
+    const out = new Map();
+    for (const [id, src] of metroSrc) out.set(id, await shrinkDataUrl(src, side, q));
+    return out;
+  };
+  let metro = await shrinkMetro(2000, 0.8); // 路線圖要放大看得清楚，比照片大一點
   const photos = await staticPhotos(t);
+  const skipped = photos.skipped || 0;
   for (const [id, dataUrl] of photos) photos.set(id, await shrinkDataUrl(dataUrl, 1200, 0.78));
-  const html = buildStaticHtml(t, photos);
+  let html = buildStaticHtml(t, photos, false, metro);
+  // 檔案太大（約 15 MB 以上）時手機可能存不了、傳不出去：地鐵圖再縮小一次
+  let metroShrunk = false;
+  if (html.length > STATIC_MAX_CHARS && metro.size) {
+    metro = await shrinkMetro(1400, 0.72);
+    html = buildStaticHtml(t, photos, false, metro);
+    metroShrunk = true;
+  }
+  const missingMetro = (t.metroMaps || []).length - metro.size;
   const name = `${t.name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || '旅程'}.html`;
   if (staticResult && staticResult.url) URL.revokeObjectURL(staticResult.url);
   staticResult = { name, html, tripId: t.id, tripName: t.name, url: URL.createObjectURL(new Blob([html], { type: 'text/html;charset=utf-8' })) };
@@ -321,7 +362,13 @@ async function exportStaticSite(t) {
   try {
     canShare = !!(file && navigator.canShare && navigator.canShare({ files: [file] }));
   } catch (err) { /* 不支援分享 */ }
-  document.getElementById('static-info').textContent = `「${name}」已經產生好了（${staticSizeText(html.length)}）。`;
+  document.getElementById('static-info').textContent = `「${name}」已經產生好了（${staticSizeText(html.length)}）。`
+    + (metro.size ? `含 ${metro.size} 張地鐵圖。` : '')
+    + (missingMetro > 0 ? `有 ${missingMetro} 張地鐵圖讀不到，沒有放進去。` : '')
+    + (skipped ? `備忘照片超過 ${STATIC_MAX_PHOTOS} 張，有 ${skipped} 張沒有放進去（避免檔案太大）。` : '')
+    + (metroShrunk ? '檔案太大，地鐵圖已經縮小一些。' : '')
+    + (html.length > STATIC_MAX_CHARS ? '檔案還是很大，手機上存檔或傳送可能會失敗，可以改用線上檢視連結。' : '')
+    + (missingMetro > 0 ? '（讀不到的地鐵圖可以重新整理後再匯出一次）' : '');
   document.getElementById('static-share').hidden = !canShare;
   document.getElementById('static-open').href = staticResult.url;
   // 線上檢視連結要登入雲端才有（頁面是後端產生的）

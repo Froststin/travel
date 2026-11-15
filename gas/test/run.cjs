@@ -1023,7 +1023,11 @@ const forgedBody = Buffer.from(JSON.stringify({ u: 'U2', iat: Date.now(), exp: D
 check('登入憑證：改過內容或簽章就失效', apiS('list', {}, `${forgedBody}.${sSig}`).status === 401 && apiS('list', {}, `${sBody}.AAAA`).status === 401 && apiS('list', {}, 'garbage').status === 401 && apiS('list', {}, `${sBody}`).status === 401);
 check('登入憑證：過期的不能用', apiS('list', {}, mkSession('U1', 31 * 86400000, -1000)).status === 401);
 check('登入憑證：用超過 7 天會順便換一張新的', !!apiS('list', {}, mkSession('U1', 8 * 86400000, 86400000)).session);
+// 憑證和登出的時間精度是毫秒：測試跑太快時兩者會落在同一毫秒，先等時間走過去再比
+const tick = () => { const t0 = Date.now(); while (Date.now() <= t0 + 1) { /* 等 2 毫秒 */ } };
+tick();
 check('登入憑證：登出後舊的全部失效，名字還在', apiS('logout', {}, sess).ok && apiS('list', {}, sess).status === 401 && rows('Users').find((u) => u.userId === 'U1').name === 'Name-U1' && Number(rows('Users').find((u) => u.userId === 'U1').sessionsFrom) > 0);
+tick();
 const sess3 = api('list', {}).session.token;
 check('登入憑證：登出後再用 LINE 登入，新的可以用', apiS('list', {}, sess3).ok);
 
@@ -1317,6 +1321,13 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   ctx.__x = run('toTWD_(1000, "JPY")');
   const hj = splitTrip().shopping.find((x) => x.id === 'buy-jpy');
   check('LINE 買到：寫円時先換成旅程幣別再除以數量', Math.abs(hj.price - Math.round((Math.round(ctx.__x * 100) / 100 / 2) * 100) / 100) < 0.011, `${hj.price} ${ctx.__x}`);
+  sp = splitTrip();
+  sp.shopping.push({ id: 'paid-line', text: '代買的耳機', price: 3000, quantity: 1, paidBy: k7, splitWith: [k7, k8] });
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  r = say('買到 代買的耳機', 'U7');
+  check('LINE 買到：有填誰付的會提醒已結清不列入分帳', r.text.includes('視為已結清'), r.text);
+  r = say('買到 代買的耳機', 'U7');
+  check('LINE 買到：原本就買過的不再提醒', !r.text.includes('視為已結清'), r.text);
   check('LINE 買到：數量 1 的照舊', splitTrip().shopping.find((x) => x.text === '毛巾').price === 120 && !r.text.includes('共 1 個'), r.text);
 }
 
@@ -1457,10 +1468,29 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   fctx.__s2 = { paidBy: '', splitWith: [ka] };
   check('購物卡片：只分給別人、沒填誰付的會提醒；只有自己不提醒', vmF.runInContext('shopPayerChip(__t2, __s1)', fctx).includes('還沒填誰付的') && vmF.runInContext('shopPayerChip(__t2, __s2)', fctx) === '');
   fctx.__s3 = { paidBy: '', splitWith: [ka] };
+  fctx.__s4 = { paidBy: '', splitWith: [ka, kb], done: true };
+  check('購物卡片：已買的不提醒還沒填誰付的', !vmF.runInContext('shopPayerChip(__t2, __s4)', fctx).includes('還沒填誰付的'));
   check('購物卡片：旅伴清單用旅伴當主人判斷（他只分給我＝要提醒）', vmF.runInContext(`shopPayerChip(__t2, __s3, '${kb}')`, fctx).includes('還沒填誰付的'));
   const st2f = vmF.runInContext('settlement(__t2)', fctx);
   const st2b = run('settlement_(__t2)');
   check('分帳：有分給別人卻沒填誰付的 → 列為沒填，不算轉帳；只有自己的不提醒', st2f.unassigned === 1 && st2f.total === 0 && st2b.unassigned === 1 && st2b.total === 0);
+  // 已勾「已買」的購物：已經付款結清，不列入分帳（也不提醒沒填誰付的），每人花費照算
+  const ft3 = JSON.parse(JSON.stringify(ft2));
+  ft3.shopping = [
+    { id: 'paid', text: '已買的', price: 1000, quantity: 1, paidBy: ka, splitWith: [ka, kb], done: true },
+    { id: 'paid2', text: '已買沒填誰付', price: 500, quantity: 1, paidBy: '', splitWith: [ka, kb], done: true },
+    { id: 'open', text: '還沒買', price: 400, quantity: 1, paidBy: ka, splitWith: [ka, kb], done: false },
+  ];
+  fctx.__t3 = ft3;
+  ctx.__t3 = JSON.parse(JSON.stringify(ft3));
+  const st3f = vmF.runInContext('settlement(__t3)', fctx);
+  const st3b = run('settlement_(__t3)');
+  check('分帳：已勾已買的購物不列入（網站與後端），也不提醒沒填誰付的', near(st3f.total, 400) && st3f.unassigned === 0 && near(st3b.total, 400) && st3b.unassigned === 0, `${st3f.total}/${st3b.total} ${st3f.unassigned}/${st3b.unassigned}`);
+  check('分帳：已買略過的筆數另外算（有填誰付的才算）', st3f.settled === 1 && st3b.settled === 1);
+  ctx.__t3x = Object.assign(JSON.parse(JSON.stringify(ft3)), { name: '測試', shopping: ft3.shopping.filter((x) => x.done) });
+  const txt3 = run('settleText_(__t3x)');
+  check('LINE 結算：全部已買時說明已結清，並註明已買不列入', txt3.includes('已買的 1 筆購物視為已經結清') && txt3.includes('已勾「已買」'), txt3);
+  check('每人花費：已買的照算（1900 兩人各 950）', near(vmF.runInContext(`memberShares(__t3, ['2026-12-01'])`, fctx).total, 1900) && near(run('memberShares_(__t3)').rows.find((p) => p.key === kb).total, 950));
   ctx.__vals = [1, 1, 1];
   check('佔比：三人平分也是 100%（34/33/33）', run('sharePcts_(__vals, 3)').join() === '34,33,33');
 }

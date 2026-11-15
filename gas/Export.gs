@@ -101,13 +101,16 @@ function exportHtml_(trip, exportedAt, web) {
       <td class="money">${b.code ? `確認碼 ${e(b.code)}` : ''}</td></tr>`).join('')}</table>` : '';
 
   const st = (trip.members || []).length > 1 ? settlement_(trip) : null;
-  const settle = st && st.total ? `
+  const settle = st && !st.total && st.settled ? `
+    <h2>分帳</h2>
+    <p>已買的 ${st.settled} 筆購物視為已經結清，目前沒有要轉帳的。</p>` : st && st.total ? `
     <h2>分帳</h2>
     <table>
       ${st.rows.map((p) => `<tr><td>${e(p.name)}</td><td class="money">付了 ${e(ntd_(p.paid))}</td><td class="money">應分攤 ${e(ntd_(p.share))}</td></tr>`).join('')}
     </table>
     <p>${st.transfers.length ? st.transfers.map((x) => `${e(x.from.name)} 付給 ${e(x.to.name)} ${e(ntd_(x.amount))}`).join('<br>') : '大家都打平了'}</p>
-    ${st.unassigned ? `<p class="sub">還有 ${st.unassigned} 筆花費沒填誰付的，沒有算進來。</p>` : ''}` : '';
+    ${st.unassigned ? `<p class="sub">還有 ${st.unassigned} 筆花費沒填誰付的，沒有算進來。</p>` : ''}
+    <p class="sub">購物清單已勾「已買」的視為已經結清，不列入分帳。</p>` : '';
 
   const loose = shoppingOn_(trip, '');
   const shopping = (trip.shopping || []).length ? `

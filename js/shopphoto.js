@@ -80,6 +80,9 @@ const ShopPhotos = {
     } finally {
       want.forEach((id) => this.busy.delete(id));
     }
+    // 其他地方（例如畫面正在載入縮圖）正在抓的，等它抓完再回來，匯出才拿得到（最多等 60 秒）
+    const waiting = [...new Set(ids)].filter((id) => id && this.busy.has(id));
+    for (let i = 0; i < 300 && waiting.some((id) => this.busy.has(id)); i++) await new Promise((r) => setTimeout(r, 200));
   },
 
   /** 畫面畫好後呼叫：把還沒有圖的 <img data-shop-file> 補上 */
