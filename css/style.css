@@ -957,3 +957,5 @@ dialog { overscroll-behavior: contain; }
 .metro-links { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
 
 .expense-split-quick { display: flex; gap: 6px; margin-top: 6px; }
+
+.map-regeo-sm { font-size: .78rem; color: var(--muted); margin-left: 4px; }

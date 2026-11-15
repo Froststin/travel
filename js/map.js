@@ -77,6 +77,41 @@ function mapDays(t, dates) {
   });
 }
 
+/* ---------- 位置範圍：避免查到別的國家的同名地點（例如「羽田機場」跑到台灣） ---------- */
+const GEO_NEAR_KM = 300;      // 新查到的位置離這趟的中心超過這麼遠就不採用
+const GEO_OUTLIER_KM = 1000;  // 已經存的位置離其他地點超過這麼遠，列成「位置可能有誤」
+const GEO_OK_KEY = 'travel-planner:geo-confirmed'; // 使用者按過「沒錯」的（行程 id|geoKey），記在這台裝置
+
+/** 這趟其他已定位地點的中間位置（取中位數，少數幾個查錯的不會影響）；exceptId：不算這一個 */
+function pointsCenter(t, exceptId = '') {
+  const pts = allActivities(t).filter((a) => a.id !== exceptId).map((a) => actGeo(a)).filter((g) => g.state === 'ok');
+  if (!pts.length) return null;
+  const med = (arr) => { const s = arr.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  return { lat: med(pts.map((p) => p.lat)), lng: med(pts.map((p) => p.lng)) };
+}
+
+/** 查詢時限定的範圍：目的地的位置，查不到就用其他地點的中間位置 */
+async function tripCenter(t, exceptId = '') {
+  let c = null;
+  try { c = await destinationCenter(t); } catch { c = null; }
+  return c || pointsCenter(t, exceptId);
+}
+
+function geoConfirmed() {
+  try { return new Set(JSON.parse(localStorage.getItem(GEO_OK_KEY)) || []); } catch { return new Set(); }
+}
+
+/** 位置可能有誤：離這趟其他地點（中位數）超過 GEO_OUTLIER_KM，而且使用者沒按過「沒錯」 */
+function geoOutliers(t, dates) {
+  const ok = geoConfirmed();
+  return dates.flatMap((d, i) => (t.days[d] || []).map((a) => ({ a, d, i, g: actGeo(a) }))
+    .filter(({ a, g }) => {
+      if (g.state !== 'ok' || ok.has(`${a.id}|${actGeoKey(a)}`)) return false;
+      const c = pointsCenter(t, a.id);
+      return c && distKm(c, g) > GEO_OUTLIER_KM;
+    }));
+}
+
 /* ---------- 直線距離 ---------- */
 function fmtDist(km) {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km < 10 ? km.toFixed(1) : Math.round(km)} km`;
@@ -104,7 +139,7 @@ function distanceList(t, days) {
   const open = `https://www.google.com/maps/dir/${d.points.map((p) => `${p.lat},${p.lng}`).join('/')}`;
   return `
     <ol class="map-dist-steps" style="--day:${d.color}">
-      ${d.points.map((p, i) => `<li><span class="map-dist-no">${p.n}</span>${p.a.time ? `<span class="muted">${esc(timeLabel(p.a))}</span> ` : ''}${esc(p.a.title)}${segs[i] ? `<span class="map-dist-seg">↓ ${fmtDist(segs[i].km)}</span>` : ''}</li>`).join('')}
+      ${d.points.map((p, i) => `<li><span class="map-dist-no">${p.n}</span>${p.a.time ? `<span class="muted">${esc(timeLabel(p.a))}</span> ` : ''}${esc(p.a.title)}${actGeoQuery(p.a) ? ` <button type="button" class="link-btn map-regeo-sm no-print" data-action="map-regeo" data-force="1" data-date="${esc(d.date)}" data-id="${esc(p.a.id)}" title="位置不對？在這趟旅程的範圍內重新查">🔄 重新查</button>` : ''}${segs[i] ? `<span class="map-dist-seg">↓ ${fmtDist(segs[i].km)}</span>` : ''}</li>`).join('')}
     </ol>
     <p class="map-dist-total">${segs.length ? `直線距離合計 <b>${fmtDist(total)}</b>（${segs.length} 段）` : '這天只有 1 個地點'}
       ・<a href="${esc(open)}" target="_blank" rel="noopener">在 Google 地圖開啟這些地點</a></p>`;
@@ -121,6 +156,7 @@ function mapView(t, dates) {
   const all = allActivities(t).map((a) => ({ a, s: actGeo(a).state }));
   const located = all.filter((x) => x.s === 'ok').length;
   const missing = dates.flatMap((d, i) => (t.days[d] || []).filter((a) => actGeo(a).state === 'none').map((a) => ({ a, d, i })));
+  const outliers = geoOutliers(t, dates);
   const todo = all.filter((x) => x.s === 'todo').length;
   const skip = all.filter((x) => x.s === 'skip').length;
   const chip = (key, label, color) => `<button type="button" class="map-day${mapDay === key ? ' on' : ''}" data-action="map-day" data-day="${key}"${color ? ` style="--day:${color}"` : ''} aria-pressed="${mapDay === key}">${label}</button>`;
@@ -138,6 +174,18 @@ function mapView(t, dates) {
       ${distanceList(t, days)}
       <p class="muted hint">圖釘的數字是當天的順序，同一天依行程時間順序用直線連起來${mapDay === 'all' ? '；選某一天可以看每段的直線距離' : '，線上標的是兩點之間的直線距離（不是實際走的路程）'}。點圖釘可以開 Google 導航。已定位 ${located} 個${skip ? `，${skip} 個行程沒填地點` : ''}。位置是用 OpenStreetMap 查的，不一定準；貼上電腦版 Google 地圖網址列的完整連結（裡面有座標）會最準。</p>
     </section>
+    ${outliers.length ? `
+      <section class="panel">
+        <h3>⚠️ 位置可能有誤<span class="muted shop-day-total">${outliers.length} 個</span></h3>
+        <p class="muted hint">這些地點離這趟其他地點超過 ${GEO_OUTLIER_KM.toLocaleString()} 公里，可能查到別的國家的同名地點。按「重新查」會在這趟旅程的範圍內重查；本來就在那裡的（例如出發的機場）按「沒錯」。</p>
+        <ul class="shop-list">${outliers.map(({ a, d, i, g }) => `
+          <li class="map-missing">
+            <span class="chip" style="background:${dayColor(i)};color:#fff">Day ${i + 1}</span>
+            <button type="button" class="link-btn" data-action="open-activity" data-date="${esc(d)}" data-id="${esc(a.id)}">${esc(a.title)}<small class="muted">距離其他地點約 ${fmtDist(distKm(pointsCenter(t, a.id), g))}</small></button>
+            <button type="button" class="btn btn-sm no-print" data-action="map-regeo" data-force="1" data-date="${esc(d)}" data-id="${esc(a.id)}">🔄 重新查</button>
+            <button type="button" class="btn btn-sm no-print" data-action="map-geo-ok" data-id="${esc(a.id)}" data-key="${esc(actGeoKey(a))}">✅ 沒錯</button>
+          </li>`).join('')}</ul>
+      </section>` : ''}
     ${missing.length ? `
       <section class="panel">
         <h3>找不到位置<span class="muted shop-day-total">${missing.length} 個</span></h3>
@@ -300,12 +348,14 @@ async function geocodeActivities(tripId) {
   mapGeoBusy = true;
   const results = new Map();
   try {
-    const center = await destinationCenter(first);
+    const center = await tripCenter(first); // 目的地查不到時用其他地點的中間位置，免得查到別的國家
     for (let i = 0; i < todo.length; i++) {
       setMapStatus(`📍 定位中 ${i + 1}/${todo.length}：${todo[i].q}`);
       mapGoogleTried.add(todo[i].key); // 這次開啟期間 Google 查過了（geoLookup 查不到時也會問 Google），不要再重查
       const dest = first.destination || '';
-      results.set(todo[i].id, todo[i].googleOnly ? await googleGeocode(todo[i].q, center, dest) : await geoLookup(todo[i].q, center, dest)); // 間隔由 geoThrottle 控制
+      let hit = todo[i].googleOnly ? await googleGeocode(todo[i].q, center, dest) : await geoLookup(todo[i].q, center, dest); // 間隔由 geoThrottle 控制
+      if (hit && center && distKm(center, hit) > GEO_NEAR_KM) hit = null; // 離這趟太遠：多半是同名的別處
+      results.set(todo[i].id, hit);
     }
   } catch (err) {
     console.warn('地圖定位失敗', err);
@@ -345,19 +395,33 @@ const GOOGLE_REASON_TEXT = {
   login: '要用 LINE 登入才能用 Google 查',
 };
 
-async function regeoActivity(tripId, date, id) {
+/**
+ * 在這趟旅程的範圍內重新查一個地點（OpenStreetMap → Google）。
+ * force：原本有位置但不對（「位置可能有誤」或距離清單的「重新查」），查不到時把錯的位置拿掉
+ */
+async function regeoActivity(tripId, date, id, force = false) {
   const t0 = getTrip(tripId);
   const a0 = t0 && (t0.days[date] || []).find((x) => x.id === id);
   if (!a0) return;
   const q = actGeoQuery(a0);
   const key = actGeoKey(a0);
-  toast(`正在用 Google 查「${q}」…`);
-  const center = await destinationCenter(t0).catch(() => null);
-  const hit = await googleGeocode(q, center, t0.destination || '');
+  if (!q) return toast('這個行程沒有地點可以查，請填「地點」或貼 Google 地圖連結');
+  if (coordsFromMapUrl(a0.mapUrl)) return toast('這個行程的位置來自 Google 地圖連結，要改請換連結');
+  toast(`正在這趟旅程的範圍內查「${q}」…`);
+  const center = await tripCenter(t0, id);
+  let hit = force ? await geoLookup(q, center, t0.destination || '') : await googleGeocode(q, center, t0.destination || '');
+  if (hit && center && distKm(center, hit) > GEO_NEAR_KM) { hit = null; googleGeoReason = 'none'; }
   const t = getTrip(tripId);
   const a = t && (t.days[date] || []).find((x) => x.id === id);
   if (!a || actGeoKey(a) !== key) return;
-  if (!hit) return toast(GOOGLE_REASON_TEXT[googleGeoReason] || GOOGLE_REASON_TEXT.none, { duration: 6000 });
+  if (!hit) {
+    if (force) { // 原本的位置是錯的：拿掉，移到「找不到位置」
+      Object.assign(a, { lat: '', lng: '', geo: 'none', geoKey: key });
+      commitTrip(t);
+      if (currentTrip() && currentTrip().id === tripId && currentTab === 'map') renderTrip(t);
+    }
+    return toast(`${force ? '在這趟旅程附近找不到，已先拿掉原本的位置。' : ''}${GOOGLE_REASON_TEXT[googleGeoReason] || GOOGLE_REASON_TEXT.none}`, { duration: 7000 });
+  }
   Object.assign(a, { lat: hit.lat, lng: hit.lng, geo: 'ok', geoKey: key });
   commitTrip(t);
   toast(`找到了：${hit.geoName}`);
@@ -367,7 +431,14 @@ async function regeoActivity(tripId, date, id) {
 /* ---------- 操作 ---------- */
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action="map-regeo"]');
-  if (el && currentTrip()) regeoActivity(currentTrip().id, el.dataset.date, el.dataset.id);
+  if (el && currentTrip()) regeoActivity(currentTrip().id, el.dataset.date, el.dataset.id, el.dataset.force === '1');
+  const ok = e.target.closest('[data-action="map-geo-ok"]');
+  if (ok && currentTrip()) {
+    const set = geoConfirmed();
+    set.add(`${ok.dataset.id}|${ok.dataset.key}`);
+    try { localStorage.setItem(GEO_OK_KEY, JSON.stringify([...set].slice(-500))); } catch { /* 忽略 */ }
+    renderTrip(currentTrip());
+  }
 });
 
 document.addEventListener('click', (e) => {

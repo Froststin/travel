@@ -252,11 +252,13 @@ async function organizePlaces(tripId) {
   organizing = '準備中……';
   refreshPlaces(tripId);
   try {
-    const center = await destinationCenter(first);
+    // 目的地查不到時用行程已定位地點的中間位置限定範圍（js/map.js），免得查到別的國家的同名地點
+    const center = (await destinationCenter(first)) || (typeof pointsCenter === 'function' ? pointsCenter(first) : null);
     for (let i = 0; i < todo.length; i++) {
       organizing = `正在查位置 ${i + 1} / ${todo.length}：${todo[i].name}`;
       refreshPlaces(tripId);
-      results.set(todo[i].id, await geoLookup(todo[i].name, center, first.destination || ''));
+      const hit = await geoLookup(todo[i].name, center, first.destination || '');
+      results.set(todo[i].id, hit && center && distKm(center, hit) > 300 ? null : hit); // 離這趟太遠：多半是同名的別處
     }
   } catch (err) {
     console.warn('定位失敗', err);
