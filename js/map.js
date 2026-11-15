@@ -53,11 +53,25 @@ function actGeoKey(a) {
  * 一個行程在地圖上的狀態：
  *   ok＝有座標（{ lat, lng }）、none＝找不到、todo＝還沒定位、skip＝沒有地點也沒有連結（不放在地圖上）
  */
+// 有 Google 地圖連結時一律以連結為準：完整網址直接取座標；短網址（maps.app.goo.gl）請後端展開，
+// 展開得到的座標存成 geoKey＝「url:連結」；展開失敗（連結失效、沒登入）才用名稱查
+const mapUrlTried = new Set(); // 這次開啟期間已經請後端展開過的連結
+function urlGeoKey(a) {
+  return `url:${(a.mapUrl || '').trim()}`;
+}
+function fromLink(a) {
+  return !!((typeof coordsFromMapUrl === 'function' && coordsFromMapUrl(a.mapUrl)) || ((a.mapUrl || '').trim() && a.geoKey === urlGeoKey(a) && a.geo === 'ok'));
+}
+
 function actGeo(a) {
   const loc = actGeoQuery(a);
-  if (!loc && !(a.mapUrl || '').trim()) return { state: 'skip' };
-  const fromUrl = typeof coordsFromMapUrl === 'function' ? coordsFromMapUrl(a.mapUrl) : null;
+  const url = (a.mapUrl || '').trim();
+  if (!loc && !url) return { state: 'skip' };
+  const fromUrl = typeof coordsFromMapUrl === 'function' ? coordsFromMapUrl(url) : null;
   if (fromUrl) return { state: 'ok', ...fromUrl };
+  const okCoords = a.geo === 'ok' && a.lat !== '' && a.lng !== '' && Number.isFinite(Number(a.lat)) && Number.isFinite(Number(a.lng));
+  if (url && a.geoKey === urlGeoKey(a) && okCoords) return { state: 'ok', lat: Number(a.lat), lng: Number(a.lng) };
+  if (url && typeof cloudOn === 'function' && cloudOn() && !mapUrlTried.has(url)) return { state: 'todo', viaUrl: true }; // 先展開連結
   if (a.geoKey === actGeoKey(a)) {
     if (a.geo === 'ok' && a.lat !== '' && a.lng !== '' && Number.isFinite(Number(a.lat)) && Number.isFinite(Number(a.lng))) {
       return { state: 'ok', lat: Number(a.lat), lng: Number(a.lng) };
@@ -119,7 +133,7 @@ function geoOutliers(t, dates) {
   const ok = geoConfirmed();
   return dates.flatMap((d, i) => (t.days[d] || []).map((a) => ({ a, d, i, g: actGeo(a) }))
     .filter(({ a, g }) => {
-      if (g.state !== 'ok' || ok.has(`${a.id}|${actGeoKey(a)}`)) return false;
+      if (g.state !== 'ok' || fromLink(a) || ok.has(`${a.id}|${actGeoKey(a)}`)) return false; // 連結的位置以連結為準
       if (homeHint(a)) return !inHome(g); // 台灣的地名：不在台灣才算有誤
       const c = pointsCenter(t, a.id);
       return c && distKm(c, g) > GEO_OUTLIER_KM;
@@ -153,7 +167,7 @@ function distanceList(t, days) {
   const open = `https://www.google.com/maps/dir/${d.points.map((p) => `${p.lat},${p.lng}`).join('/')}`;
   return `
     <ol class="map-dist-steps" style="--day:${d.color}">
-      ${d.points.map((p, i) => `<li><span class="map-dist-no">${p.n}</span>${p.a.time ? `<span class="muted">${esc(timeLabel(p.a))}</span> ` : ''}${esc(p.a.title)}${actGeoQuery(p.a) ? ` <button type="button" class="link-btn map-regeo-sm no-print" data-action="map-regeo" data-force="1" data-date="${esc(d.date)}" data-id="${esc(p.a.id)}" title="位置不對？在這趟旅程的範圍內重新查">🔄 重新查</button>` : ''}${segs[i] ? `<span class="map-dist-seg">↓ ${fmtDist(segs[i].km)}</span>` : ''}</li>`).join('')}
+      ${d.points.map((p, i) => `<li><span class="map-dist-no">${p.n}</span>${p.a.time ? `<span class="muted">${esc(timeLabel(p.a))}</span> ` : ''}${esc(p.a.title)}${fromLink(p.a) ? ' <small class="muted" title="位置來自 Google 地圖連結">🔗</small>' : ''}${actGeoQuery(p.a) && !fromLink(p.a) ? ` <button type="button" class="link-btn map-regeo-sm no-print" data-action="map-regeo" data-force="1" data-date="${esc(d.date)}" data-id="${esc(p.a.id)}" title="位置不對？在這趟旅程的範圍內重新查">🔄 重新查</button>` : ''}${segs[i] ? `<span class="map-dist-seg">↓ ${fmtDist(segs[i].km)}</span>` : ''}</li>`).join('')}
     </ol>
     <p class="map-dist-total">${segs.length ? `直線距離合計 <b>${fmtDist(total)}</b>（${segs.length} 段）` : '這天只有 1 個地點'}
       ・<a href="${esc(open)}" target="_blank" rel="noopener">在 Google 地圖開啟這些地點</a></p>`;
@@ -186,7 +200,7 @@ function mapView(t, dates) {
       <p id="map-status" class="map-status muted" ${mapGeoStatus || todo ? '' : 'hidden'}>${esc(mapGeoStatus || (todo ? `還有 ${todo} 個地點等著定位…` : ''))}</p>
       <div id="trip-map" class="trip-map" role="region" aria-label="行程地圖"><p class="map-loading muted">${navigator.onLine === false ? '📴 離線中，地圖需要網路。' : '地圖載入中…'}</p></div>
       ${distanceList(t, days)}
-      <p class="muted hint">圖釘的數字是當天的順序，同一天依行程時間順序用直線連起來${mapDay === 'all' ? '；選某一天可以看每段的直線距離' : '，線上標的是兩點之間的直線距離（不是實際走的路程）'}。點圖釘可以開 Google 導航。已定位 ${located} 個${skip ? `，${skip} 個行程沒填地點` : ''}。位置是用 OpenStreetMap 查的，不一定準；貼上電腦版 Google 地圖網址列的完整連結（裡面有座標）會最準。</p>
+      <p class="muted hint">圖釘的數字是當天的順序，同一天依行程時間順序用直線連起來${mapDay === 'all' ? '；選某一天可以看每段的直線距離' : '，線上標的是兩點之間的直線距離（不是實際走的路程）'}。點圖釘可以開 Google 導航。已定位 ${located} 個${skip ? `，${skip} 個行程沒填地點` : ''}。<br>位置怎麼抓：①有「Google 地圖連結」就一律用連結的位置（標 🔗，最準；手機分享的短網址也可以，要登入）→ ②沒有連結才用「地點」（沒填就用標題）查 OpenStreetMap → ③查不到再用 Google 查。查錯時貼上 Google 地圖連結最快。</p>
     </section>
     ${outliers.length ? `
       <section class="panel">
@@ -335,7 +349,7 @@ function drawTripMap(t, dates, refit = false) {
   if (saved) map.setView(saved.center, saved.zoom, { animate: false });
   else if (bounds.length) map.fitBounds(bounds, { padding: [32, 32], maxZoom: 15, animate: false });
   else fitDestination(t, map);
-  setTimeout(() => map.invalidateSize(), 0); // 分頁剛切換時容器大小可能還沒定
+  setTimeout(() => { if (tripMap && tripMap.map === map && document.body.contains(tripMap.el)) map.invalidateSize(); }, 0); // 已經重畫掉的舊地圖不要碰 // 分頁剛切換時容器大小可能還沒定
 }
 
 // 沒有任何圖釘時，先看目的地（查過的中心點記在這台裝置）
@@ -357,14 +371,22 @@ async function geocodeActivities(tripId) {
   // 還沒定位的照常查（OpenStreetMap → Google）；之前標成找不到的，登入時用 Google 再查一次
   const todo = first ? allActivities(first)
     .filter((a) => actGeo(a).state === 'todo' || (cloudOn() && actGeo(a).state === 'none' && actGeoQuery(a) && !mapGoogleTried.has(actGeoKey(a))))
-    .map((a) => ({ id: a.id, key: actGeoKey(a), q: actGeoQuery(a), googleOnly: actGeo(a).state === 'none', home: homeHint(a) })) : [];
+    .map((a) => ({ id: a.id, key: actGeoKey(a), q: actGeoQuery(a), googleOnly: actGeo(a).state === 'none', home: homeHint(a), url: actGeo(a).viaUrl ? a.mapUrl.trim() : '' })) : [];
   if (!todo.length) return setMapStatus('');
   mapGeoBusy = true;
   const results = new Map();
   try {
     const tripC = await tripCenter(first); // 目的地查不到時用其他地點的中間位置，免得查到別的國家
     for (let i = 0; i < todo.length; i++) {
-      setMapStatus(`📍 定位中 ${i + 1}/${todo.length}：${todo[i].q}`);
+      setMapStatus(`📍 定位中 ${i + 1}/${todo.length}：${todo[i].q || '地圖連結'}`);
+      // 有連結：先請後端展開，拿到座標就用（以連結為準，不檢查距離）
+      if (todo[i].url) {
+        mapUrlTried.add(todo[i].url);
+        let linked = null;
+        try { linked = (await Cloud.call('resolveMapUrl', { url: todo[i].url })).hit; } catch (err) { console.warn('展開地圖連結失敗', err); }
+        if (linked) { results.set(todo[i].id, { ...linked, viaUrl: true }); continue; }
+        if (!todo[i].q) { results.set(todo[i].id, null); continue; }
+      }
       mapGoogleTried.add(todo[i].key); // 這次開啟期間 Google 查過了（geoLookup 查不到時也會問 Google），不要再重查
       const center = todo[i].home ? HOME_CENTER : tripC; // 台灣的地名在台灣找
       const dest = todo[i].home ? '台灣' : (first.destination || '');
@@ -389,7 +411,7 @@ async function geocodeActivities(tripId) {
     if (actGeoKey(a) !== want.key) continue; // 查詢期間地點被改過，這次的結果不算
     const hit = results.get(a.id);
     if (!hit && want.googleOnly) continue; // Google 也查不到：維持找不到，不用存檔
-    Object.assign(a, hit ? { lat: hit.lat, lng: hit.lng, geo: 'ok', geoKey: want.key } : { lat: '', lng: '', geo: 'none', geoKey: want.key });
+    Object.assign(a, hit ? { lat: hit.lat, lng: hit.lng, geo: 'ok', geoKey: hit.viaUrl ? urlGeoKey(a) : want.key } : { lat: '', lng: '', geo: 'none', geoKey: want.key });
     changed++;
   }
   if (!changed) return;
@@ -420,8 +442,23 @@ async function regeoActivity(tripId, date, id, force = false) {
   if (!a0) return;
   const q = actGeoQuery(a0);
   const key = actGeoKey(a0);
-  if (!q) return toast('這個行程沒有地點可以查，請填「地點」或貼 Google 地圖連結');
   if (coordsFromMapUrl(a0.mapUrl)) return toast('這個行程的位置來自 Google 地圖連結，要改請換連結');
+  // 有連結：以連結為準，先展開連結
+  if ((a0.mapUrl || '').trim() && cloudOn()) {
+    toast('正在讀 Google 地圖連結的位置…');
+    let linked = null;
+    try { linked = (await Cloud.call('resolveMapUrl', { url: a0.mapUrl.trim() })).hit; } catch (err) { console.warn(err); }
+    const t1 = getTrip(tripId);
+    const a1 = t1 && (t1.days[date] || []).find((x) => x.id === id);
+    if (linked && a1 && a1.mapUrl === a0.mapUrl) {
+      Object.assign(a1, { lat: linked.lat, lng: linked.lng, geo: 'ok', geoKey: urlGeoKey(a1) });
+      commitTrip(t1);
+      toast('已改用 Google 地圖連結的位置');
+      if (currentTrip() && currentTrip().id === tripId && currentTab === 'map') { mapViews.delete(viewKey(tripId)); renderTrip(t1); }
+      return;
+    }
+  }
+  if (!q) return toast('這個行程沒有地點可以查，請填「地點」或貼 Google 地圖連結');
   toast(`正在這趟旅程的範圍內查「${q}」…`);
   const home = homeHint(a0);
   const center = home ? HOME_CENTER : await tripCenter(t0, id); // 台灣的地名在台灣找

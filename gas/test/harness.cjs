@@ -113,7 +113,7 @@ const ctx = {
   }) },
   // 只有 postback 暫存（pb_）與照片上傳紀錄（up_）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
   CacheService: { getScriptCache: () => ({
-    get: (k) => (/^(pb_|up_|tr_|invest_rid_|geo_)/.test(k) && cache.has(k) ? cache.get(k) : null),
+    get: (k) => (/^(pb_|up_|tr_|invest_rid_|geo_|murl_)/.test(k) && cache.has(k) ? cache.get(k) : null),
     put(k, v) { cache.set(k, v); },
     remove(k) { cache.delete(k); },
   }) },
@@ -176,6 +176,13 @@ const ctx = {
       if (url.endsWith('/v2/bot/richmenu')) {
         sent.push({ url, body: JSON.parse(opt.payload) });
         return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ richMenuId: `menu-${sent.length}` }) };
+      }
+      // 地圖短網址：flags.mapRedirects[url] = 下一個網址（302），flags.mapPage[url] = 200 的內容
+      if (/maps\.app\.goo\.gl|google\.com\/maps/.test(url) && (flags.mapRedirects || flags.mapPage)) {
+        flags.mapFetches = (flags.mapFetches || 0) + 1;
+        const next = (flags.mapRedirects || {})[url];
+        if (next) return { getResponseCode: () => 302, getHeaders: () => ({ Location: next }), getContentText: () => '' };
+        return { getResponseCode: () => 200, getHeaders: () => ({}), getContentText: () => (flags.mapPage || {})[url] || '<html></html>' };
       }
       if (url.includes('/content')) {
         return { getResponseCode: () => 200, getBlob: () => ({ getContentType: () => 'image/jpeg', setName() { return this; } }) };

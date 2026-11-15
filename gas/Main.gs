@@ -149,6 +149,10 @@ function apiAction_(userId, body) {
     case 'uploadShopImage':
       return { fileId: uploadShopImage_(userId, body.dataUrl, ['activity', 'metro'].includes(body.kind) ? body.kind : 'shop') };
 
+    case 'resolveMapUrl':
+      // Google 地圖連結（含 maps.app.goo.gl 短網址）→ 座標；有連結時以連結為準
+      return { hit: resolveMapUrl_(body.url) };
+
     case 'geocode':
       // 地點查詢（Google）：網站 OpenStreetMap 查不到時用；連外部服務，不用拿鎖
       {

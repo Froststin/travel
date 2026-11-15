@@ -1676,6 +1676,28 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   check('單人旅程記帳：日幣旅程沒寫單位＝日幣、只有自己分攤', se && se.currency === '' && se.amount === 1200 && se.splitWith.length === 1 && se.splitWith[0] === se.paidBy && r.text.includes('已記帳'), JSON.stringify(se) + r.text);
 }
 
+/* ---------- Google 地圖連結（短網址）→ 座標：有連結以連結為準 ---------- */
+{
+  flags.mapRedirects = {
+    'https://maps.app.goo.gl/TSA123': 'https://www.google.com/maps/place/%E8%87%BA%E5%8C%97%E6%9D%BE%E5%B1%B1%E6%A9%9F%E5%A0%B4/@25.0697,121.5519,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d25.0677!4d121.5524',
+    'https://maps.app.goo.gl/TWOHOP': 'https://maps.app.goo.gl/TWOHOP2',
+    'https://maps.app.goo.gl/TWOHOP2': 'https://www.google.com/maps?q=35.5494,139.7798',
+  };
+  flags.mapPage = {};
+  const r1 = api('resolveMapUrl', { url: 'https://maps.app.goo.gl/TSA123' });
+  check('地圖連結：短網址展開後用地點本身的座標（!3d!4d）', r1.ok && r1.hit && r1.hit.lat === 25.0677 && r1.hit.lng === 121.5524, JSON.stringify(r1));
+  const r2 = api('resolveMapUrl', { url: 'https://maps.app.goo.gl/TWOHOP' });
+  check('地圖連結：多次轉址也跟得到', r2.hit && r2.hit.lat === 35.5494, JSON.stringify(r2));
+  const before = flags.mapFetches;
+  api('resolveMapUrl', { url: 'https://maps.app.goo.gl/TSA123' });
+  check('地圖連結：同一個連結用快取', flags.mapFetches === before);
+  check('地圖連結：不是 Google 的網址不處理', api('resolveMapUrl', { url: 'https://evil.example.com/x' }).hit === null);
+  check('地圖連結：完整網址直接取座標', api('resolveMapUrl', { url: 'https://www.google.com/maps/@25.1,121.5,15z' }).hit.lat === 25.1);
+  check('地圖連結：要登入', api('resolveMapUrl', { url: 'https://maps.app.goo.gl/TSA123' }, 'bad').status === 401);
+  flags.mapRedirects = null;
+  flags.mapPage = null;
+}
+
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');
 const path = require('path');

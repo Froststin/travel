@@ -1195,3 +1195,57 @@ function geocodePlace_(q, center, dest) {
   cache.put(key, 'none', 21600);
   return null;
 }
+
+/* ---------- Google 地圖連結 → 座標（短網址要照轉址展開，網頁不能直接讀別的網站的轉址，所以由後端做） ---------- */
+const MAP_URL_HOST_RE = /^https:\/\/(?:maps\.app\.goo\.gl|goo\.gl|g\.co|(?:www\.|maps\.)?google\.[a-z.]+)\//i;
+
+/** 網址裡的座標：!3d…!4d…（地點本身）→ q／query／ll／destination=lat,lng → @lat,lng（畫面中心） */
+function coordsInMapUrl_(url) {
+  const s = String(url || '');
+  const m = s.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
+    || s.match(/[?&](?:q|query|ll|destination)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i)
+    || s.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lng = Number(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6 } : null;
+}
+
+/**
+ * 展開 Google 地圖連結（maps.app.goo.gl 短網址等）找出座標；只接受 Google 的網址，最多跟 6 次轉址。結果快取 1 天
+ * @return {{lat, lng} | null}
+ */
+function resolveMapUrl_(url) {
+  let u = cleanUrl_(url);
+  if (!u || !MAP_URL_HOST_RE.test(u)) return null;
+  const direct = coordsInMapUrl_(u);
+  if (direct) return direct;
+  const cache = CacheService.getScriptCache();
+  const key = `murl_${Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, u)).slice(0, 40)}`;
+  const hit = cache.get(key);
+  if (hit) return hit === 'none' ? null : JSON.parse(hit);
+  let out = null;
+  for (let i = 0; i < 6 && !out; i++) {
+    let res;
+    try {
+      res = UrlFetchApp.fetch(u, { followRedirects: false, muteHttpExceptions: true, headers: { 'Accept-Language': 'zh-TW' } });
+    } catch (err) {
+      console.warn('展開地圖連結失敗', err);
+      return null; // 連線問題：不快取
+    }
+    const code = res.getResponseCode();
+    const headers = res.getHeaders ? res.getHeaders() : {};
+    const loc = headers.Location || headers.location || '';
+    if (code >= 300 && code < 400 && loc) {
+      u = /^https?:\/\//i.test(loc) ? loc : `https://www.google.com${loc}`;
+      if (!MAP_URL_HOST_RE.test(u.replace(/^http:/i, 'https:'))) break; // 轉到不是 Google 的網址就不跟
+      out = coordsInMapUrl_(u);
+      continue;
+    }
+    // 不轉址了：從網頁內容找座標（有些頁面把座標放在內容裡）
+    if (code === 200) out = coordsInMapUrl_(res.getContentText().slice(0, 200000));
+    break;
+  }
+  cache.put(key, out ? JSON.stringify(out) : 'none', 86400);
+  return out;
+}

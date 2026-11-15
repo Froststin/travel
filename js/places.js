@@ -248,7 +248,7 @@ async function organizePlaces(tripId) {
   if (organizing) return;
   const first = getTrip(tripId);
   // 之前找不到的也再查一次（可能只是當時連線失敗）
-  const todo = ((first && first.places) || []).filter((p) => p.geo !== 'ok').map((p) => ({ id: p.id, name: placeQuery(p) }));
+  const todo = ((first && first.places) || []).filter((p) => p.geo !== 'ok').map((p) => ({ id: p.id, name: placeQuery(p), url: (p.mapUrl || '').trim() }));
   if (!todo.length) return toast('都整理好了。新加的地點、或改過地址的地點才需要再整理');
   const results = new Map();
   organizing = '準備中……';
@@ -259,6 +259,12 @@ async function organizePlaces(tripId) {
     for (let i = 0; i < todo.length; i++) {
       organizing = `正在查位置 ${i + 1} / ${todo.length}：${todo[i].name}`;
       refreshPlaces(tripId);
+      // 有 Google 地圖連結（含短網址）：以連結為準
+      if (todo[i].url && cloudOn()) {
+        let linked = null;
+        try { linked = (await Cloud.call('resolveMapUrl', { url: todo[i].url })).hit; } catch (err) { console.warn(err); }
+        if (linked) { results.set(todo[i].id, { ...linked, geoName: 'Google 地圖連結', area: await geoArea(linked.lat, linked.lng) }); continue; }
+      }
       const home = typeof HOME_HINT_RE !== 'undefined' && HOME_HINT_RE.test(todo[i].name);
       const c = home ? HOME_CENTER : center; // 台灣的地名在台灣找
       const hit = await geoLookup(todo[i].name, c, home ? '台灣' : (first.destination || ''));
