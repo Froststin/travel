@@ -52,7 +52,8 @@ const HELP_TEXT = [
   '・看備忘／備忘 10/29 → 查看',
   '',
   '【記帳】算進預算與分帳',
-  '・晚餐 1700 我付、12/4 計程車 2300円 小明付',
+  '・晚餐 1700 我付、晚餐 1700 台幣 霜付、12/4 計程車 2300 日幣 小明付',
+  '　（「付」可以省略：旅平險 904 霜；幣別可寫台幣、日幣、韓元、美金…，沒寫＝旅程幣別）',
   '・門票 3000 我付 我和小明 → 只有這兩人分攤（沒寫＝大家平分）',
   '・記帳 → 查看這趟的帳；網站預算頁可以修改、按「結清」',
   '',
@@ -138,11 +139,13 @@ function handleText_(ctx, rawText) {
   if (/^(取消|算了|不用了|不要)$/.test(text)) return say_(ctx, textMsg_('好的，已取消。'));
   if (handleInvestText_(ctx, text)) return;
   if (/^(?:記帳|帳目|帳本|記帳清單|看帳)$/.test(text)) return cmdExpenseView_(ctx);
-  const exp = parseExpense_(text);
+  // 記帳：沒寫「付」時，名字要是某趟旅程的成員才算
+  const isMember = (name) => ctx.trips.some((t) => { const hit = expenseMember_(t, name); return hit && hit !== 'ambiguous'; });
+  const exp = parseExpense_(text, isMember);
   if (exp) return cmdExpenseAdd_(ctx, exp);
   // 看起來像記帳（有金額又有「付」）卻認不出來：教正確寫法，不要丟給一般查詢
-  if (/\d/.test(text) && /付/.test(text) && text.length <= 60 && !EXPENSE_SKIP_RE.test(text) && !/^(?:記帳\s*)?(?:結算|分帳)/.test(text)) {
-    return say_(ctx, textMsg_('要記帳嗎？請照「項目 金額 誰付」的順序寫，例如：\n・晚餐 1700 我付\n・12/4 計程車 2300円 小明付\n・門票 3000 我付 我和小明（指定分攤的人）', [qMsg_('記帳'), ...defaultQuick_()]));
+  if (/\d/.test(text) && /付/.test(text) && text.length <= 60 && !EXPENSE_SKIP_RE.test(text)) {
+    return say_(ctx, textMsg_(EXPENSE_HINT, [qMsg_('記帳'), ...defaultQuick_()]));
   }
   if ((m = text.match(/^(?:匯出|備份|離線版?|下載|pdf)(?:\s*(?:行程|旅程|pdf))?\s*(.*)$/i)) && text.length <= 30) return cmdExport_(ctx, m[1]);
   if (text.length <= 15 && /網站|網頁|連結|網址|link|開啟|打開/i.test(text)) return cmdSite_(ctx);
@@ -239,7 +242,8 @@ function cmdQuery_(ctx, text) {
     return say_(ctx, tripFlex_(base), tripOverviewText_(base));
   }
 
-  return say_(ctx, textMsg_(`找不到跟「${kw}」有關的行程 🤔\n可以試試「今天」「明天吃什麼」「清水寺幾點」，或輸入「說明」看所有用法。`));
+  // 訊息裡有數字：可能是想記帳但格式不對，順便附上記帳的寫法
+  return say_(ctx, textMsg_(`找不到跟「${kw}」有關的行程 🤔\n可以試試「今天」「明天吃什麼」「清水寺幾點」，或輸入「說明」看所有用法。${/\d/.test(text) ? `\n\n${EXPENSE_HINT}` : ''}`));
 }
 
 function replySearchHits_(ctx, kw, hits) {
@@ -1034,22 +1038,63 @@ function cmdRemoveMember_(ctx, name) {
   ]));
 }
 
-/* ---------- 記帳：「晚餐 1700 我付」「12/4 計程車 2300円 小明付」「門票 3000 我付 我和小明」 ---------- */
-// 一定要有「…付」才算記帳；開頭是其他指令的（修改、刪除、新增、買…）不算
-const EXPENSE_RE = /^(?:記帳\s*)?(?:(\d{1,2}\/\d{1,2}|今天|昨天|前天|明天)\s*)?(.+?)\s*((?:NT\$|\$|¥|￥)?\s*\d[\d,]*(?:\.\d+)?\s*(?:元|塊|円|日圓|日幣|台幣|臺幣)?)\s*([^\s\d]\S{0,19}?)付(?:\s+(.+))?$/; // 付款人名字可以有數字，但不能數字開頭（免得吃掉金額）
-const EXPENSE_SKIP_RE = /^(?:修改|更改|改|刪除|移除|刪掉|新增|加入|\+|買到?了?|已買|不買|要買|記得買|想買|想去|不去|導航|日誌|備忘)/;
+/* ---------- 記帳：「晚餐 1700 我付」「晚餐 1700 台幣 霜付」「旅平險 904 霜」「門票 3000 我付 我和小明」 ---------- */
+// 格式：[日期] 項目 金額 [幣別] 誰[付] [分攤的人]；空格可有可無
+// 有寫「付」一定當記帳（名字對不到時回覆成員名單）；沒寫「付」時，名字要是旅程成員（或「我」）才算，免得把一般查詢當成記帳
+const EXPENSE_SKIP_RE = /^(?:修改|更改|改|刪除|移除|刪掉|新增|加入|\+|買到?了?|已買|不買|要買|記得買|想買|想去|不去|導航|日誌|備忘|結算|分帳)/;
+// 幣別寫法 → 幣別代碼（長的寫在前面，免得「日圓」被「元」吃掉）
+const EXPENSE_CURRENCIES = [
+  [/^(?:新台幣|新臺幣|台幣|臺幣|NTD|NT\$|NT|TWD|元|塊)/i, 'TWD'],
+  [/^(?:日幣|日圓|日元|円|JPY|¥|￥)/i, 'JPY'],
+  [/^(?:韓元|韓幣|韓圓|KRW|₩)/i, 'KRW'],
+  [/^(?:美金|美元|USD|US\$)/i, 'USD'],
+  [/^(?:人民幣|RMB|CNY)/i, 'CNY'],
+  [/^(?:港幣|港元|HKD|HK\$)/i, 'HKD'],
+  [/^(?:歐元|EUR|€)/i, 'EUR'],
+  [/^(?:泰銖|泰幣|THB)/i, 'THB'],
+  [/^(?:新幣|新加坡幣|SGD)/i, 'SGD'],
+  [/^(?:英鎊|GBP|£)/i, 'GBP'],
+];
+const EXPENSE_HINT = '要記帳的話，請照「項目 金額 [幣別] 誰付」寫，例如：\n・晚餐 1700 我付\n・晚餐 1700 台幣 霜付\n・12/4 計程車 2300 日幣 小明付\n・門票 3000 我付 我和小明（指定分攤的人）';
 
-/** @return {{dateToken, title, amount, currency, payer, split} | null} */
-function parseExpense_(text) {
-  const m = text.match(EXPENSE_RE);
-  if (!m || EXPENSE_SKIP_RE.test(m[2])) return null;
-  const amt = m[3].replace(/,/g, '').replace(/\s+/g, '');
-  const cc = extractCost_(amt);
-  const amount = cc ? cc.cost : Number((amt.match(/\d+(?:\.\d+)?/) || [])[0]);
-  if (!(amount > 0)) return null;
-  // 記帳的「元／塊」一律是台幣（共用的 extractCost_ 把它當旅程幣別，行程花費維持原本的行為）
-  const currency = /元|塊/.test(amt) && !/日圓|韓元/.test(amt) ? 'TWD' : (cc ? cc.currency : '');
-  return { dateToken: m[1] || '', title: m[2].trim().slice(0, 40), amount, currency, payer: m[4], split: (m[5] || '').trim() };
+function expenseCurrency_(s) {
+  for (const [re, code] of EXPENSE_CURRENCIES) {
+    const m = s.match(re);
+    if (m) return { code, rest: s.slice(m[0].length) };
+  }
+  return { code: '', rest: s };
+}
+
+/**
+ * 解析記帳。isMember(name)：沒寫「付」時用來確認最後那個名字是不是成員
+ * 金額的位置不一定（項目名稱可能有數字，例如「7-11 咖啡 120 我付」），所以每個數字都試，第一個說得通的就用
+ * @return {{dateToken, title, amount, currency, payer, split, hasPay} | null}
+ */
+function parseExpense_(text, isMember) {
+  let body = text.replace(/^記帳\s*/, '');
+  let dateToken = '';
+  const dm = body.match(/^(\d{1,2}\/\d{1,2}|今天|昨天|前天|明天)\s*/);
+  if (dm) { dateToken = dm[1]; body = body.slice(dm[0].length); }
+  if (!body || EXPENSE_SKIP_RE.test(body)) return null;
+  const numRe = /(NT\$|US\$|HK\$|\$|¥|￥|₩|€|£)?\s*(\d[\d,]*(?:\.\d+)?)/g;
+  let m;
+  while ((m = numRe.exec(body))) {
+    const title = body.slice(0, m.index).trim();
+    if (!title || /^\d/.test(title) && !/\D/.test(title)) continue;
+    const amount = Number(m[2].replace(/,/g, ''));
+    if (!(amount > 0)) continue;
+    // 金額前面的符號（NT$、¥…）或後面的幣別字
+    let currency = m[1] ? expenseCurrency_(m[1]).code : '';
+    let rest = body.slice(m.index + m[0].length).trim();
+    if (!currency) { const c = expenseCurrency_(rest); currency = c.code; rest = c.rest.trim(); }
+    // 剩下的：「霜付」「霜付 我和小明」「霜」「霜 我和小明」
+    const pm = rest.match(/^([^\s\d][^\s]{0,19}?)付(?:\s+(.+))?$/) || rest.match(/^([^\s\d][^\s]{0,19})(?:\s+(.+))?$/);
+    if (!pm) continue;
+    const hasPay = rest.startsWith(`${pm[1]}付`);
+    if (!hasPay && !(/^(?:我|自己|本人)$/.test(pm[1]) || (isMember && isMember(pm[1])))) continue;
+    return { dateToken, title: title.slice(0, 40), amount, currency, payer: pm[1], split: (pm[2] || '').trim(), hasPay };
+  }
+  return null;
 }
 
 /**

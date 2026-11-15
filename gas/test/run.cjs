@@ -1540,7 +1540,27 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   ex = exTrip().expenses;
   check('LINE 記帳：項目名稱有數字（7-11 咖啡）也認得', ex[ex.length - 1].title === '7-11 咖啡' && ex[ex.length - 1].amount === 120, JSON.stringify(ex[ex.length - 1]));
   r = say('我付了1200', 'U7');
-  check('LINE 記帳：像記帳但順序不對時教寫法，不丟給一般查詢', r.text.includes('項目 金額 誰付'), r.text);
+  check('LINE 記帳：像記帳但順序不對時教寫法，不丟給一般查詢', r.text.includes('誰付」寫'), r.text);
+  // 使用者回報：「旅平險不便險 904 霜」（沒寫付）、想寫幣別「晚餐 1700 台幣 霜付」
+  let nX = exTrip().expenses.length;
+  r = say('旅平險不便險 904 Name-U7', 'U7');
+  ex = exTrip().expenses;
+  check('LINE 記帳：「付」可以省略（名字是成員）', ex.length === nX + 1 && ex[ex.length - 1].title === '旅平險不便險' && ex[ex.length - 1].amount === 904 && ex[ex.length - 1].paidBy === k7, r.text);
+  r = say('晚餐 1700 台幣 Name-U8付', 'U7');
+  ex = exTrip().expenses;
+  check('LINE 記帳：可以寫幣別「台幣」', ex[ex.length - 1].title === '晚餐' && ex[ex.length - 1].amount === 1700 && ['', 'TWD'].includes(ex[ex.length - 1].currency) && ex[ex.length - 1].paidBy === k8, JSON.stringify(ex[ex.length - 1]));
+  r = say('門票 30 美金 我付', 'U7');
+  ex = exTrip().expenses;
+  check('LINE 記帳：美金記成 USD', ex[ex.length - 1].currency === 'USD' && ex[ex.length - 1].amount === 30, JSON.stringify(ex[ex.length - 1]));
+  r = say('伴手禮 2300日幣 我', 'U7');
+  ex = exTrip().expenses;
+  check('LINE 記帳：沒空格的日幣、省略付', ex[ex.length - 1].title === '伴手禮' && ex[ex.length - 1].currency === 'JPY' && ex[ex.length - 1].amount === 2300, JSON.stringify(ex[ex.length - 1]));
+  r = say('保險 500 U8', 'U7');
+  ex = exTrip().expenses;
+  check('LINE 記帳：省略付時名字寫一部分也認得（只對到一個人）', ex[ex.length - 1].title === '保險' && ex[ex.length - 1].paidBy === k8, JSON.stringify(ex[ex.length - 1]) + r.text);
+  nX = exTrip().expenses.length;
+  r = say('清水寺 10 點', 'U7');
+  check('LINE 記帳：沒寫付、名字也不是成員就不當記帳（照常查詢，附上記帳寫法）', exTrip().expenses.length === nX && r.text.includes('誰付」寫'), r.text);
   r = say('記帳', 'U7');
   check('LINE「記帳」列出這趟的帳', r.text.includes('🧾') && r.text.includes('晚餐') && r.text.includes('計程車'), r.text);
 
