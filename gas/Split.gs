@@ -6,7 +6,7 @@
  * 分帳結算：每筆有填「誰付的」的花費（行程花費＋車資，換算成台幣），由 splitWith 的人平分（沒選＝所有成員）。
  * 購物清單（自己的與旅伴的）有填「誰付的」的也算進來（單價 × 數量），照勾的分攤的人平分；
  * 沒填誰付的：只有自己分攤就是自己買的，不算；有分給別人卻沒填誰付的，列為「沒填誰付的」。
- * 已勾「已買」的購物視為已經付款、自己結清了，不列入分帳（使用者 2026-11-15 指定）。
+ * 購物的打勾（已買）只代表付過錢，照樣算進分帳（使用者 2026-11-15 確認）；真正「分完帳」的是記帳的「已結清」。
  * 記帳（trip.expenses）：待分帳的照分攤的人算，結清的不列入。
  * 回傳每個人付了多少、應分攤多少，以及最少筆數的轉帳建議。
  */
@@ -38,10 +38,6 @@ function settlement_(trip) {
   const meKey = (members.find((m) => m.me) || members.find((m) => m.sharer) || {}).key || '';
   const shopLists = [{ owner: meKey, items: trip.shopping || [] }].concat((trip.othersShopping || []).map((g) => ({ owner: g.key, items: g.items || [] })));
   for (const g of shopLists) for (const s of g.items) {
-    if (s.done) { // 已勾「已買」＝已經付款、帳自己對好了，不列入分帳（每人花費照算）
-      if (s.paidBy && shopTwd_(s, cur) > 0) settled++;
-      continue;
-    }
     const amount = shopTwd_(s, cur);
     if (!(amount > 0)) continue;
     const who = shopSharers_(s, g.owner, everyone);
@@ -155,7 +151,7 @@ function settleText_(trip) {
   const name = (p) => `${p.name}${p.me ? '（你）' : ''}`;
   const lines = [`🤝 ${trip.name} 分帳`];
   if (!s.total) {
-    if (s.settled) lines.push('', `已買的購物、已結清的記帳共 ${s.settled} 筆視為已經結清，目前沒有要轉帳的。`);
+    if (s.settled) lines.push('', `已結清的記帳 ${s.settled} 筆，目前沒有要轉帳的。`);
     else lines.push('', '還沒有填「誰付的」的花費。', '到網站的行程或購物清單裡，可以選誰付的、哪些人分攤。');
   } else {
     lines.push(`已填付款人的花費共 ${ntd_(s.total)}`, '');
@@ -165,8 +161,7 @@ function settleText_(trip) {
     else lines.push('大家都打平了 🎉');
   }
   if (s.unassigned) lines.push('', `※ 還有 ${s.unassigned} 筆花費沒填誰付的，沒有算進來。`);
-  const hasShop = (trip.shopping || []).length || (trip.othersShopping || []).some((g) => (g.items || []).length);
-  if (hasShop) lines.push('', '※ 購物清單已勾「已買」的視為已經結清，不列入分帳。');
+  if ((trip.expenses || []).some((x) => x.settled)) lines.push('', '※ 記帳按了「已結清」的不列入。');
   return lines.join('\n');
 }
 

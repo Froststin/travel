@@ -800,7 +800,7 @@ function cmdShopMark_(ctx, body, mode) {
     saveTrip_(ctx.userId, trip);
     items.forEach((s) => lines.push(mode === 'remove'
       ? `🗑️ 已從購物清單拿掉：${s.text}`
-      : `✅ 買到了：${s.text}${Number(s.price) ? ` ${shopMoneyText_(s, trip.currency)}${notes.get(s) || ''}` : ''}${s.paidBy && Number(s.price) > 0 && !wasDone.has(s) ? '\n　（有填誰付的：勾了已買就視為已結清，不列入分帳）' : ''}`));
+      : `✅ 買到了：${s.text}${Number(s.price) ? ` ${shopMoneyText_(s, trip.currency)}${notes.get(s) || ''}` : ''}`));
     const left = trip.shopping.filter((s) => !s.done).length;
     lines.push(left ? `「${trip.name}」還有 ${left} 樣沒買` : `「${trip.name}」的東西都買齊了 🎉`);
   }

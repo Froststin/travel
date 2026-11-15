@@ -1325,7 +1325,7 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   sp.shopping.push({ id: 'paid-line', text: '代買的耳機', price: 3000, quantity: 1, paidBy: k7, splitWith: [k7, k8] });
   api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
   r = say('買到 代買的耳機', 'U7');
-  check('LINE 買到：有填誰付的會提醒已結清不列入分帳', r.text.includes('視為已結清'), r.text);
+  check('LINE 買到：打勾只代表付過錢，不會說從分帳移除', r.text.includes('買到了') && !r.text.includes('結清'), r.text);
   r = say('買到 代買的耳機', 'U7');
   check('LINE 買到：原本就買過的不再提醒', !r.text.includes('視為已結清'), r.text);
   check('LINE 買到：數量 1 的照舊', splitTrip().shopping.find((x) => x.text === '毛巾').price === 120 && !r.text.includes('共 1 個'), r.text);
@@ -1469,7 +1469,7 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   check('購物卡片：只分給別人、沒填誰付的會提醒；只有自己不提醒', vmF.runInContext('shopPayerChip(__t2, __s1)', fctx).includes('還沒填誰付的') && vmF.runInContext('shopPayerChip(__t2, __s2)', fctx) === '');
   fctx.__s3 = { paidBy: '', splitWith: [ka] };
   fctx.__s4 = { paidBy: '', splitWith: [ka, kb], done: true };
-  check('購物卡片：已買的不提醒還沒填誰付的', !vmF.runInContext('shopPayerChip(__t2, __s4)', fctx).includes('還沒填誰付的'));
+  check('購物卡片：已買（付過）但分給別人、沒填誰付的，照樣提醒', vmF.runInContext('shopPayerChip(__t2, __s4)', fctx).includes('還沒填誰付的'));
   check('購物卡片：旅伴清單用旅伴當主人判斷（他只分給我＝要提醒）', vmF.runInContext(`shopPayerChip(__t2, __s3, '${kb}')`, fctx).includes('還沒填誰付的'));
   const st2f = vmF.runInContext('settlement(__t2)', fctx);
   const st2b = run('settlement_(__t2)');
@@ -1485,11 +1485,11 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   ctx.__t3 = JSON.parse(JSON.stringify(ft3));
   const st3f = vmF.runInContext('settlement(__t3)', fctx);
   const st3b = run('settlement_(__t3)');
-  check('分帳：已勾已買的購物不列入（網站與後端），也不提醒沒填誰付的', near(st3f.total, 400) && st3f.unassigned === 0 && near(st3b.total, 400) && st3b.unassigned === 0, `${st3f.total}/${st3b.total} ${st3f.unassigned}/${st3b.unassigned}`);
-  check('分帳：已買略過的筆數另外算（有填誰付的才算）', st3f.settled === 1 && st3b.settled === 1);
-  ctx.__t3x = Object.assign(JSON.parse(JSON.stringify(ft3)), { name: '測試', shopping: ft3.shopping.filter((x) => x.done) });
+  check('分帳：購物打勾（已買）只代表付過錢，照樣算進分帳（網站與後端）', near(st3f.total, 1400) && st3f.unassigned === 1 && near(st3b.total, 1400) && st3b.unassigned === 1 && st3f.settled === 0 && st3b.settled === 0, `${st3f.total}/${st3b.total} ${st3f.unassigned}/${st3b.unassigned}`);
+  // 記帳的「已結清」才是分完帳：全部結清時說明，不列入
+  ctx.__t3x = Object.assign(JSON.parse(JSON.stringify(ft3)), { name: '測試', shopping: [], expenses: [{ id: 'ex1', title: '晚餐', amount: 500, paidBy: ka, splitWith: [], settled: true }] });
   const txt3 = run('settleText_(__t3x)');
-  check('LINE 結算：全部已買時說明已結清，並註明已買不列入', txt3.includes('共 1 筆視為已經結清') && txt3.includes('已勾「已買」'), txt3);
+  check('LINE 結算：記帳全部結清時說明，並註明結清的不列入', txt3.includes('已結清的記帳 1 筆') && txt3.includes('「已結清」的不列入'), txt3);
   check('每人花費：已買的照算（1900 兩人各 950）', near(vmF.runInContext(`memberShares(__t3, ['2026-12-01'])`, fctx).total, 1900) && near(run('memberShares_(__t3)').rows.find((p) => p.key === kb).total, 950));
   ctx.__vals = [1, 1, 1];
   check('佔比：三人平分也是 100%（34/33/33）', run('sharePcts_(__vals, 3)').join() === '34,33,33');

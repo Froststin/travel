@@ -4,7 +4,8 @@
  * 分帳：每筆花費可以記「誰付的」和「哪些人分攤」（沒選＝所有成員），預算頁算出誰該給誰多少
  * 成員用後端給的代號（members[].key）辨識；只有雲端共用、兩個人以上的旅程才有
  * 算法和後端 gas/Split.gs 的 settlement_ 一樣；購物（自己的與旅伴的）勾了誰就由誰分攤（見 shopSharers），
- * 要填了「誰付的」才算轉帳；分給別人卻沒填誰付的，列為「沒填誰付的」；已勾「已買」的視為已結清，不列入
+ * 要填了「誰付的」才算轉帳；分給別人卻沒填誰付的，列為「沒填誰付的」。
+ * 購物的打勾（已買）只代表付過錢，照樣算進分帳（使用者 2026-11-15 確認）；真正「分完帳」的是記帳的「已結清」
  * ============================================================ */
 
 // 可以分帳的成員（沒有就回傳空陣列）
@@ -45,10 +46,6 @@ function settlement(t) {
   const meKey = (members.find((m) => m.me) || members.find((m) => m.sharer) || {}).key || '';
   const shopLists = [{ owner: meKey, items: t.shopping || [] }].concat((t.othersShopping || []).map((g) => ({ owner: g.key, items: g.items || [] })));
   for (const g of shopLists) for (const s of g.items) {
-    if (s.done) { // 已勾「已買」＝已經付款、帳自己對好了，不列入分帳（每人花費照算）
-      if (s.paidBy && shopCost([s], t.currency) > 0) settled++;
-      continue;
-    }
     const amount = shopCost([s], t.currency);
     if (!(amount > 0)) continue;
     const who = shopSharers(s, g.owner, everyone);
@@ -173,13 +170,13 @@ const personName = (p) => `${p.name}${p.me ? '（我）' : ''}`;
 function settleView(t, forStatic = false) {
   if (!splitMembers(t).length) return '';
   const s = settlement(t);
-  const help = '在行程的花費下面、或購物清單的 ✎ 裡選「誰付的」和分攤的人（行程沒改就是大家平分；購物預設只有自己）。購物清單已勾「已買」的視為已經結清，不列入分帳。';
+  const help = '在行程的花費下面、或購物清單的 ✎ 裡選「誰付的」和分攤的人（行程沒改就是大家平分；購物預設只有自己）。記帳分完後按「已結清」就不再列入。';
   if (!s.total) {
     return forStatic ? '' : `
       <section class="panel">
         <h3>🤝 分帳</h3>
         ${s.unassigned ? `<p class="rate-warn">⚠️ 有 ${s.unassigned} 筆分給旅伴的花費還沒填誰付的。</p>` : ''}
-        ${s.settled ? `<p>✅ 已買的購物、已結清的記帳共 ${s.settled} 筆視為已經結清，目前沒有要轉帳的。</p>` : ''}
+        ${s.settled ? `<p>✅ 已結清的記帳 ${s.settled} 筆，目前沒有要轉帳的。</p>` : ''}
         <p class="muted">${help}填好後這裡會算出誰該給誰多少，LINE 輸入「結算」也查得到。</p>
       </section>`;
   }
@@ -218,9 +215,9 @@ function shopPayerChip(t, s, owner = null) {
   const who = shopSharers(s, me, ms.map((m) => m.key));
   const n = who.length;
   // 已勾「已買」＝已經結清，不提醒誰付的
-  if (!s.paidBy) return who.some((k) => k !== me) ? `<span class="payer-chip">👥 ${n} 人分${s.done ? '' : '・還沒填誰付的'}</span>` : '';
+  if (!s.paidBy) return who.some((k) => k !== me) ? `<span class="payer-chip">👥 ${n} 人分・還沒填誰付的</span>` : '';
   const m = ms.find((x) => x.key === s.paidBy);
-  return `<span class="payer-chip" title="${n} 個人分攤">👤 ${esc(m ? (m.me ? '我' : m.name) : '已退出的旅伴')}付${n > 1 ? `・${n} 人分` : ''}${s.done ? '・已結清' : ''}</span>`;
+  return `<span class="payer-chip" title="${n} 個人分攤">👤 ${esc(m ? (m.me ? '我' : m.name) : '已退出的旅伴')}付${n > 1 ? `・${n} 人分` : ''}${s.done ? '・已付' : ''}</span>`;
 }
 
 /* ---------- 行程與購物表單（form：哪一個表單；box／list：分帳區塊與分攤勾選的位置） ---------- */

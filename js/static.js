@@ -166,7 +166,7 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
   const settleHtml = st && !st.total && st.settled ? `
     <section id="settle">
       <h2>🤝 分帳</h2>
-      <p>已買的購物、已結清的記帳共 ${st.settled} 筆視為已經結清，目前沒有要轉帳的。</p>
+      <p>已結清的記帳 ${st.settled} 筆，目前沒有要轉帳的。</p>
     </section>` : st && st.total ? `
     <section id="settle">
       <h2>🤝 分帳</h2>
@@ -175,7 +175,6 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
       </tbody></table>
       <p>${st.transfers.length ? st.transfers.map((x) => `💸 ${esc(personName(x.from))} 付給 ${esc(personName(x.to))} <b>${ntd(x.amount)}</b>`).join('<br>') : '大家都打平了 🎉'}</p>
       ${st.unassigned ? `<p class="small muted">※ 還有 ${st.unassigned} 筆花費沒填誰付的，沒有算進來。</p>` : ''}
-      <p class="small muted">※ 購物清單已勾「已買」的視為已經結清，不列入分帳。</p>
     </section>` : '';
 
   const items = t.shopping || [];
