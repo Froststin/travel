@@ -119,6 +119,18 @@ function syncPlaces(t) {
 }
 
 /* ---------- 定位（OpenStreetMap） ---------- */
+/**
+ * 全網站共用的定位節流：OpenStreetMap 規定每秒最多查一次。
+ * 地圖分頁的背景定位和想去清單的「整理」可能同時在跑，所以每次查詢前先排一個時段，彼此錯開
+ */
+let geoNextAt = 0;
+async function geoThrottle() {
+  const now = performance.now(); // 不受系統時間調整影響
+  const at = Math.max(now, geoNextAt);
+  geoNextAt = at + GEO_GAP_MS;
+  if (at > now) await new Promise((r) => setTimeout(r, at - now));
+}
+
 async function geoSearch(q, center) {
   const params = new URLSearchParams({ format: 'jsonv2', limit: '1', addressdetails: '1', 'accept-language': 'zh-TW', q });
   // 限定在目的地附近（約 150 公里內），避免同名的地方跑到別的國家
@@ -126,6 +138,7 @@ async function geoSearch(q, center) {
     params.set('viewbox', [center.lng - 1.6, center.lat + 1.3, center.lng + 1.6, center.lat - 1.3].join(','));
     params.set('bounded', '1');
   }
+  await geoThrottle();
   const res = await fetch(`${GEO_URL}?${params}`);
   if (!res.ok) throw new Error(`定位服務沒有回應（${res.status}）`);
   const hit = (await res.json())[0];
@@ -165,8 +178,7 @@ function geoCandidates(query) {
 async function geoSearchSmart(query, center) {
   const tries = geoCandidates(query);
   for (let i = 0; i < tries.length; i++) {
-    if (i) await geoPause();
-    const hit = await geoSearch(tries[i], center);
+    const hit = await geoSearch(tries[i], center); // 間隔由 geoThrottle 控制
     // 用簡化過的名稱查到的可能是別家分店，寫在查到的名稱後面，提醒點開地圖確認
     if (hit) return i ? { ...hit, geoName: `${hit.geoName}（用「${tries[i]}」查的，請確認）`.slice(0, 80) } : hit;
   }
@@ -177,6 +189,7 @@ async function geoSearchSmart(query, center) {
 async function geoArea(lat, lng) {
   try {
     const params = new URLSearchParams({ format: 'jsonv2', lat, lon: lng, zoom: '14', 'accept-language': 'zh-TW' });
+    await geoThrottle();
     const res = await fetch(`${GEO_URL.replace('/search', '/reverse')}?${params}`);
     const a = (await res.json()).address || {};
     return areaName(a);
@@ -185,7 +198,6 @@ async function geoArea(lat, lng) {
   }
 }
 
-const geoPause = () => new Promise((r) => setTimeout(r, GEO_GAP_MS));
 
 // 目的地的中心點（記在這台裝置，下次不用再查）
 async function destinationCenter(t) {
@@ -197,7 +209,6 @@ async function destinationCenter(t) {
   } catch { /* 忽略 */ }
   if (saved[key]) return saved[key];
   const hit = await geoSearch(key, null);
-  await geoPause();
   if (!hit) return null;
   saved[key] = { lat: hit.lat, lng: hit.lng };
   try {
@@ -221,7 +232,6 @@ async function organizePlaces(tripId) {
     for (let i = 0; i < todo.length; i++) {
       organizing = `正在查位置 ${i + 1} / ${todo.length}：${todo[i].name}`;
       refreshPlaces(tripId);
-      if (i) await geoPause();
       results.set(todo[i].id, await geoSearchSmart(todo[i].name, center));
     }
   } catch (err) {

@@ -1291,6 +1291,28 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   check('備忘：沒有歸屬旅程的不能改成整趟通用', (api('updateJournal', { id, entry: { text: 'x', date: '' } }, 'good:U7').error || '').includes('沒有歸屬的旅程'));
 }
 
+// LINE「買到 X 金額」：金額是實際付的總額，數量多於 1 時換算成單價
+{
+  sp = splitTrip();
+  sp.shopping.push({ id: 'buy-q3', text: '御守組合', price: 0, quantity: 3, priceCurrency: '', payment: 'unsure', paidBy: '', splitWith: [] });
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  r = say('買到 御守組合 900', 'U7');
+  const it = splitTrip().shopping.find((x) => x.id === 'buy-q3');
+  check('LINE 買到：數量 3、付 900 → 單價 300，小計 900', it.done && it.price === 300 && it.quantity === 3 && r.text.includes('共 3 個'), `${JSON.stringify(it)} ${r.text}`);
+  r = say('買到 毛巾 120', 'U7');
+  sp = splitTrip();
+  sp.shopping.push({ id: 'buy-r3', text: '和菓子', price: 0, quantity: 3 }, { id: 'buy-jpy', text: '手帕', price: 0, quantity: 2 });
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  r = say('買到 和菓子 1000', 'U7');
+  const r3 = splitTrip().shopping.find((x) => x.id === 'buy-r3');
+  check('LINE 買到：除不盡時單價保留小數，小計跟付的差不到 0.02', r3.price === 333.33 && Math.abs(r3.price * 3 - 1000) < 0.02 && r.text.includes('333.33'), `${r3.price} ${r.text}`);
+  r = say('買到 手帕 1000円', 'U7');
+  ctx.__x = run('toTWD_(1000, "JPY")');
+  const hj = splitTrip().shopping.find((x) => x.id === 'buy-jpy');
+  check('LINE 買到：寫円時先換成旅程幣別再除以數量', Math.abs(hj.price - Math.round((Math.round(ctx.__x * 100) / 100 / 2) * 100) / 100) < 0.011, `${hj.price} ${ctx.__x}`);
+  check('LINE 買到：數量 1 的照舊', splitTrip().shopping.find((x) => x.text === '毛巾').price === 120 && !r.text.includes('共 1 個'), r.text);
+}
+
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');
 const path = require('path');

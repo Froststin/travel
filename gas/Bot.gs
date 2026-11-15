@@ -42,7 +42,7 @@ const HELP_TEXT = [
   '・買 面膜 @藥妝店 → 記在那個行程（行程改天會跟著走）',
   '　（金額會計入預算的「購物」；寫 円／¥ 會換算成旅程的幣別）',
   '・購物清單、明天要買什麼 → 查看（照片和備註到網站上加）',
-  '・買到 抹茶粉、買到 抹茶粉 480円（順便改成實際的單價）',
+  '・買到 抹茶粉、買到 抹茶粉 480円（順便改成實際付的金額；數量多於 1 時會自動換算成單價）',
   '　（數量、付款狀態、誰付的到網站上改；有填誰付的會算進「結算」）',
   '・不買 八橋',
   '',
@@ -747,11 +747,20 @@ function cmdShopMark_(ctx, body, mode) {
     if (!hit) { missing.push(name); continue; }
     if (mode === 'done') {
       hit.item.done = true;
-      // 「買到 抹茶粉 480円」：順便改成實際金額
+      // 「買到 抹茶粉 480円」：順便改成實際付的金額（總額）。數量多於 1 時除以數量存成單價，小計才會等於實際付的
       if (want.cost != null) {
-        const cc = costInCurrency_(want.cost, want.currency, shopCur_(hit.item, hit.trip.currency)); // 換成這一樣自己的幣別（單價）
-        hit.item.price = cc.cost;
-        notes.set(hit.item, cc.note);
+        const cc = costInCurrency_(want.cost, want.currency, shopCur_(hit.item, hit.trip.currency)); // 換成這一樣自己的幣別
+        const q = cleanQty_(hit.item.quantity);
+        const cur = shopCur_(hit.item, hit.trip.currency);
+        hit.item.price = q > 1 ? Math.round((cc.cost / q) * 100) / 100 : cc.cost;
+        if (q > 1) {
+          // 單價可能有小數（1000 ÷ 3 = 333.33），照實際存的寫，不要取整數
+          const unit = Number.isInteger(hit.item.price) ? fmtMoney_(hit.item.price, cur) : `${hit.item.price} ${cur}`;
+          const warn = cc.note.startsWith('\n⚠️') ? `\n⚠️ 查不到 ${want.currency} 的匯率，總額先直接記成 ${cc.cost}，請到網站確認金額` : cc.note;
+          notes.set(hit.item, `${warn}（共 ${q} 個，單價記成 ${unit}）`);
+        } else {
+          notes.set(hit.item, cc.note);
+        }
       }
     }
     changed.set(hit.trip, (changed.get(hit.trip) || []).concat([hit.item]));

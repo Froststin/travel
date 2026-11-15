@@ -245,8 +245,7 @@ async function geocodeActivities(tripId) {
     const center = await destinationCenter(first);
     for (let i = 0; i < todo.length; i++) {
       setMapStatus(`📍 定位中 ${i + 1}/${todo.length}：${todo[i].q}`);
-      if (i) await geoPause();
-      results.set(todo[i].id, await geoSearchSmart(todo[i].q, center));
+      results.set(todo[i].id, await geoSearchSmart(todo[i].q, center)); // 間隔由 geoThrottle 控制
     }
   } catch (err) {
     console.warn('地圖定位失敗', err);
