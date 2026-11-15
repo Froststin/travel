@@ -113,7 +113,7 @@ const ctx = {
   }) },
   // 只有 postback 暫存（pb_）與照片上傳紀錄（up_）真的存起來；其他（登入、匯率）維持不快取，每次測試都重新查
   CacheService: { getScriptCache: () => ({
-    get: (k) => (/^(pb_|up_|tr_|invest_rid_)/.test(k) && cache.has(k) ? cache.get(k) : null),
+    get: (k) => (/^(pb_|up_|tr_|invest_rid_|geo_)/.test(k) && cache.has(k) ? cache.get(k) : null),
     put(k, v) { cache.set(k, v); },
     remove(k) { cache.delete(k); },
   }) },
@@ -137,6 +137,12 @@ const ctx = {
       return files.find((f) => f.id === id) || { setTrashed() {}, getBlob: () => ({ getContentType: () => 'image/jpeg', getBytes: () => [1, 2, 3] }) };
     },
   },
+  // Google 地點查詢：flags.geocode(q, bounds) 決定回傳什麼；flags.geocodeThrow 模擬額度用完
+  Maps: { newGeocoder: () => {
+    const g = { bounds: null, setLanguage() { return g; }, setBounds(...b) { g.bounds = b; return g; },
+      geocode(q) { flags.geocodeCalls = (flags.geocodeCalls || 0) + 1; if (flags.geocodeThrow) throw new Error('quota'); return flags.geocode ? flags.geocode(q, g.bounds) : { status: 'ZERO_RESULTS', results: [] }; } };
+    return g;
+  } },
   HtmlService: { createHtmlOutput: (html) => ({ html, meta: {}, setTitle(t) { this.title = t; return this; }, addMetaTag(k, v) { this.meta[k] = v; return this; } }) },
   ContentService: { createTextOutput: (s) => ({ s, setMimeType() { return this; } }), MimeType: { JSON: 'json' } },
   UrlFetchApp: {

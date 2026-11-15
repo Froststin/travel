@@ -220,6 +220,32 @@
     </form>
   </dialog>
 
+  <!-- 記帳 -->
+  <dialog id="expense-dialog">
+    <form id="expense-form" class="form">
+      <h2 id="expense-dialog-title">記一筆</h2>
+      <label>項目<input name="title" required maxlength="40" placeholder="例如：晚餐、計程車"></label>
+      <div class="form-row keep">
+        <label>金額
+          <span class="fare-input">
+            <input type="number" name="amount" min="0" step="any" inputmode="decimal" required placeholder="0">
+            <select name="currency" aria-label="幣別"></select>
+          </span>
+        </label>
+        <label>日期<select name="date"></select></label>
+      </div>
+      <div id="expense-split-fields" class="split-fields" hidden>
+        <label>誰付的<select name="paidBy"></select></label>
+        <div class="split-with"><span>分攤的人（全勾＝大家平分）</span><div id="expense-split-with-list" class="chip-checks"></div></div>
+      </div>
+      <p class="form-hint muted">記帳會算進預算；共用旅程還會算進分帳（付清後按「待分帳」改成「已結清」）。</p>
+      <div class="form-actions">
+        <button type="button" class="btn" data-action="close-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- 修改備忘 -->
   <dialog id="memo-dialog">
     <form id="memo-form" class="form">
@@ -325,6 +351,7 @@
   <script src="js/ui.js"></script>
   <script src="js/today.js"></script>
   <script src="js/split.js"></script>
+  <script src="js/expenses.js"></script>
   <script src="js/bookings.js"></script>
   <script src="js/drag.js"></script>
   <script src="js/shopphoto.js"></script>

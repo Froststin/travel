@@ -27,6 +27,7 @@ let mapRail = false;
 let mapGeoStatus = '';      // 定位中的進度文字
 let mapGeoBusy = false;
 const mapGeoFailed = new Map(); // tripId → 上次定位失敗的時間
+const mapGoogleTried = new Set(); // 這次開啟期間已經用 Google 再查過的「地點|連結」，不要一直重查
 const mapViews = new Map();     // `${tripId}|${day}` → { center, zoom }：重新畫面時維持原本看的位置
 
 function dayColor(i) {
@@ -130,11 +131,12 @@ function mapView(t, dates) {
     ${missing.length ? `
       <section class="panel">
         <h3>找不到位置<span class="muted shop-day-total">${missing.length} 個</span></h3>
-        <p class="muted hint">點一下改「地點」的寫法（店名或地標比門牌容易查到），或在「更多」貼上 Google 地圖網址列的完整連結，存檔後會重新定位。</p>
+        <p class="muted hint">${cloudOn() ? 'OpenStreetMap 和 Google 都查不到的地點。' : '用 LINE 登入後，OpenStreetMap 查不到的會自動改用 Google 查。'}點名稱可以改「地點」的寫法（店名或地標比門牌容易查到）；或按「🔍 Google 地圖」用名稱搜尋，找到後按「分享」複製連結，貼到行程的「Google 地圖連結」，存檔後就會用那個位置。</p>
         <ul class="shop-list">${missing.map(({ a, d, i }) => `
           <li class="map-missing">
             <span class="chip" style="background:${dayColor(i)};color:#fff">Day ${i + 1}</span>
             <button type="button" class="link-btn" data-action="open-activity" data-date="${esc(d)}" data-id="${esc(a.id)}">${esc(a.title)}${a.location ? `<small class="muted">📍 ${esc(a.location)}</small>` : ''}</button>
+            <a class="btn btn-sm no-print" href="${esc(mapUrl(a.location || a.title))}" target="_blank" rel="noopener" title="用名稱在 Google 地圖找；找到後按「分享」複製連結，貼到這個行程的「Google 地圖連結」">🔍 Google 地圖</a>
           </li>`).join('')}</ul>
       </section>` : ''}`;
 }
@@ -279,7 +281,10 @@ async function geocodeActivities(tripId) {
   if (mapGeoBusy || navigator.onLine === false) return;
   if (Date.now() - (mapGeoFailed.get(tripId) || 0) < MAP_GEO_RETRY_MS) return;
   const first = getTrip(tripId);
-  const todo = first ? allActivities(first).filter((a) => actGeo(a).state === 'todo').map((a) => ({ id: a.id, key: actGeoKey(a), q: a.location.trim() })) : [];
+  // 還沒定位的照常查（OpenStreetMap → Google）；之前標成找不到的，登入時用 Google 再查一次
+  const todo = first ? allActivities(first)
+    .filter((a) => actGeo(a).state === 'todo' || (cloudOn() && actGeo(a).state === 'none' && (a.location || '').trim() && !mapGoogleTried.has(actGeoKey(a))))
+    .map((a) => ({ id: a.id, key: actGeoKey(a), q: a.location.trim(), googleOnly: actGeo(a).state === 'none' })) : [];
   if (!todo.length) return setMapStatus('');
   mapGeoBusy = true;
   const results = new Map();
@@ -287,7 +292,8 @@ async function geocodeActivities(tripId) {
     const center = await destinationCenter(first);
     for (let i = 0; i < todo.length; i++) {
       setMapStatus(`📍 定位中 ${i + 1}/${todo.length}：${todo[i].q}`);
-      results.set(todo[i].id, await geoSearchSmart(todo[i].q, center)); // 間隔由 geoThrottle 控制
+      mapGoogleTried.add(todo[i].key); // 這次開啟期間 Google 查過了（geoLookup 查不到時也會問 Google），不要再重查
+      results.set(todo[i].id, todo[i].googleOnly ? await googleGeocode(todo[i].q, center) : await geoLookup(todo[i].q, center)); // 間隔由 geoThrottle 控制
     }
   } catch (err) {
     console.warn('地圖定位失敗', err);
@@ -305,6 +311,7 @@ async function geocodeActivities(tripId) {
     const want = todo.find((x) => x.id === a.id);
     if (actGeoKey(a) !== want.key) continue; // 查詢期間地點被改過，這次的結果不算
     const hit = results.get(a.id);
+    if (!hit && want.googleOnly) continue; // Google 也查不到：維持找不到，不用存檔
     Object.assign(a, hit ? { lat: hit.lat, lng: hit.lng, geo: 'ok', geoKey: want.key } : { lat: '', lng: '', geo: 'none', geoKey: want.key });
     changed++;
   }

@@ -24,6 +24,12 @@ const CATEGORY_INFO = {
   shopping: { label: '購物', icon: '🛍️', color: '#db2777' },
   other: { label: '其他', icon: '📌', color: '#64748b' },
 };
+// 預算分類的顯示名稱：行程類別之外，還有「記帳」
+const EXPENSE_CAT_INFO = { label: '記帳', icon: '🧾', color: '#0891b2' };
+function catInfo_(k) {
+  return k === 'expense' ? EXPENSE_CAT_INFO : CATEGORY_INFO[catKey_(k)];
+}
+
 // 新增行程時，依標題猜類別
 const CATEGORY_GUESS = [
   ['stay', /飯店|酒店|旅館|民宿|入住|退房|住宿|hotel|check-?in|check-?out/i],

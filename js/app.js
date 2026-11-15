@@ -643,9 +643,18 @@ function budgetData(t, dates) {
   const shop = shoppingIndex(t, dates, shopItems);
   const shopTotal = shopCost(shopItems, t.currency);
   const looseShop = shopCost(shopItems, t.currency) - dates.reduce((s, d) => s + shopCost(shoppingOn(t, shop, d), t.currency), 0);
-  const spent = sumCost(all, t.currency) + shopTotal;
+  // 記帳（js/expenses.js）：結清與否都是花掉的錢，算進預算
+  const exps = t.expenses || [];
+  const expAmt = (x) => twdOrRaw(x.amount, x.currency || t.currency);
+  const expTotal = exps.reduce((s, x) => s + expAmt(x), 0);
+  const expOn = (d) => exps.filter((x) => x.date === d).reduce((s, x) => s + expAmt(x), 0);
+  const expLoose = exps.filter((x) => !dates.includes(x.date)).reduce((s, x) => s + expAmt(x), 0);
+  // 某一天的全部花費（行程＋要買的＋記帳）、不指定日期的（購物＋記帳）
+  const dayTotal = (d) => sumCost(t.days[d] || [], t.currency) + shopCost(shoppingOn(t, shop, d), t.currency) + expOn(d);
+  const looseTotal = looseShop + expLoose;
+  const spent = sumCost(all, t.currency) + shopTotal + expTotal;
   const budget = twdOrRaw(t.budget, t.currency);
-  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency)), ...all.filter((a) => Number(a.cost)).map((a) => costCurrency(a, t.currency)), ...shopItems.filter((x) => Number(x.price)).map((x) => shopCur(x, t.currency))])].filter((c) => c && c !== 'TWD');
+  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency)), ...all.filter((a) => Number(a.cost)).map((a) => costCurrency(a, t.currency)), ...shopItems.filter((x) => Number(x.price)).map((x) => shopCur(x, t.currency)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || t.currency)])].filter((c) => c && c !== 'TWD');
   const remain = budget - spent;
   const over = budget > 0 && remain < 0;
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
@@ -659,13 +668,15 @@ function budgetData(t, dates) {
         + (k === 'transport' ? twdOrRaw(a.travelCost, fareCurrency(a, t.currency)) : 0), 0)
         + (k === 'shopping' ? shopTotal : 0),
     }))
+    .concat([{ key: 'expense', label: '記帳', icon: '🧾', sum: expTotal }])
     .filter((x) => x.sum > 0)
     .sort((a, b) => b.sum - a.sum);
   const maxCat = Math.max(1, ...byCat.map((x) => x.sum));
 
-  const missing = missingRates(all, t.currency, t.budget, shopItems);
+  const missing = [...new Set(missingRates(all, t.currency, t.budget, shopItems)
+    .concat(exps.filter((x) => Number(x.amount)).map((x) => x.currency || t.currency).filter((c) => c !== 'TWD' && !(fx.rates[c] && fx.rates[c].rate))))];
   const shares = shared && typeof memberShares === 'function' ? memberShares(t, dates) : null;
-  return { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares };
+  return { shop, shopTotal, looseShop, looseTotal, dayTotal, expTotal, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares };
 }
 
 /** 預算頁的「👥 每人花費」：每人的總計、佔比，最後是全部總計（共用旅程才有） */
@@ -687,7 +698,7 @@ function sharesPanel(shares) {
 }
 
 function budgetView(t, dates) {
-  const { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares } = budgetData(t, dates);
+  const { shopTotal, looseTotal, dayTotal, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares } = budgetData(t, dates);
   const cols = shares ? shares.rows : [];
   // 共用旅程：格子裡只寫數字（標題註明 NT$），手機上才放得下每個人
   const amt = (n) => (cols.length ? Math.round(Number(n) || 0).toLocaleString() : ntd(n));
@@ -728,9 +739,9 @@ function budgetView(t, dates) {
         <tbody>
           ${dates.map((d, i) => {
             const list = t.days[d] || [];
-            return `<tr class="row-link" data-action="jump-day" data-date="${d}" title="看這天的行程"><td><a href="#day-${d}">Day ${i + 1}${cols.length ? `<br><small>${+d.slice(5, 7)}/${+d.slice(8)}</small>` : `・${prettyDate(d)}`}</a></td>${countCell(list.length)}<td${cols.length ? ' class="num"' : ''}>${amt(sumCost(list, t.currency) + shopCost(shoppingOn(t, shop, d), t.currency))}</td>${personCells((p) => p.days[d] || 0)}</tr>`;
+            return `<tr class="row-link" data-action="jump-day" data-date="${d}" title="看這天的行程"><td><a href="#day-${d}">Day ${i + 1}${cols.length ? `<br><small>${+d.slice(5, 7)}/${+d.slice(8)}</small>` : `・${prettyDate(d)}`}</a></td>${countCell(list.length)}<td${cols.length ? ' class="num"' : ''}>${amt(dayTotal(d))}</td>${personCells((p) => p.days[d] || 0)}</tr>`;
           }).join('')}
-          ${looseShop > 0.005 ? `<tr><td>🛒 購物清單${cols.length ? '<br><small>不指定日期</small>' : '（不指定日期）'}</td>${countCell('—')}<td${cols.length ? ' class="num"' : ''}>${amt(looseShop)}</td>${personCells((p) => p.loose)}</tr>` : ''}
+          ${looseTotal > 0.005 ? `<tr><td>不指定日期${cols.length ? '<br>' : ''}<small>（購物、記帳）</small></td>${countCell('—')}<td${cols.length ? ' class="num"' : ''}>${amt(looseTotal)}</td>${personCells((p) => p.loose)}</tr>` : ''}
           ${cols.length ? `<tr class="total-row"><td>總計</td><td class="num">${amt(spent)}</td>${personCells((p) => p.total)}</tr>` : ''}
         </tbody>
       </table>
@@ -738,31 +749,70 @@ function budgetView(t, dates) {
       ${shopTotal ? `<p class="muted hint">※ 含${shared ? '所有旅伴的' : ''}購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
       ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
     </section>
+    ${typeof expensesPanel === 'function' ? expensesPanel(t, dates) : ''}
     ${typeof settleView === 'function' ? settleView(t) : ''}`;
 }
 
-function packingView(t) {
-  const items = t.packing || [];
+/* ---------- 行李：共用（t.packing，成員都能改）＋我的（t.myPacking，雲端共用旅程才有）＋旅伴的（只能看） ---------- */
+function packingShared(t) {
+  return cloudOn() && Array.isArray(t.members) && t.members.length > 1;
+}
+
+// list：'shared'＝共用、'mine'＝我的
+function packList(t, list) {
+  if (list === 'mine') return (t.myPacking ||= []);
+  return (t.packing ||= []);
+}
+
+function packItems(items, list, editable) {
+  return items.length ? `
+    <ul class="packing-list">
+      ${items.map((i) => `
+        <li class="${i.done ? 'done' : ''}">
+          ${editable
+            ? `<label><input type="checkbox" data-action="toggle-pack" data-list="${list}" data-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.text)}</span></label>
+               <button class="icon-btn no-print" data-action="delete-pack" data-list="${list}" data-id="${esc(i.id)}" title="刪除" aria-label="刪除">✕</button>`
+            : `<span class="pack-ro"><span aria-hidden="true">${i.done ? '☑' : '☐'}</span> <span>${esc(i.text)}</span></span>`}
+        </li>`).join('')}
+    </ul>` : '';
+}
+
+function packSection(t, list, title, hint) {
+  const items = packList(t, list);
   const done = items.filter((i) => i.done).length;
   const pct = items.length ? (done / items.length) * 100 : 0;
   return `
     <section class="panel">
-      <form id="packing-form" class="packing-form no-print">
+      ${title ? `<h3>${title}</h3>` : ''}
+      ${hint ? `<p class="muted hint">${hint}</p>` : ''}
+      <form class="packing-form pack-add no-print" data-list="${list}">
         <input name="text" placeholder="新增物品，例如：相機" maxlength="80" required aria-label="物品名稱">
         <button type="submit" class="btn btn-primary">加入</button>
       </form>
       <div class="packing-summary">已準備 ${done} / ${items.length}</div>
       <div class="progress" style="margin-bottom:16px"><span style="width:${pct}%"></span></div>
-      ${items.length ? `
-        <ul class="packing-list">
-          ${items.map((i) => `
-            <li class="${i.done ? 'done' : ''}">
-              <label><input type="checkbox" data-action="toggle-pack" data-id="${esc(i.id)}" ${i.done ? 'checked' : ''}><span>${esc(i.text)}</span></label>
-              <button class="icon-btn no-print" data-action="delete-pack" data-id="${esc(i.id)}" title="刪除" aria-label="刪除">✕</button>
-            </li>`).join('')}
-        </ul>` : '<p class="muted">清單是空的，可以自己新增，或加入常用物品。</p>'}
-      <button class="btn no-print" data-action="pack-preset">＋ 加入常用物品</button>
+      ${packItems(items, list, true) || '<p class="muted">清單是空的，可以自己新增，或加入常用物品。</p>'}
+      <button class="btn no-print" data-action="pack-preset" data-list="${list}">＋ 加入常用物品</button>
     </section>`;
+}
+
+function packingView(t) {
+  // 只有自己（或離線）時：原本只有一份；之前有記過「我的」就照樣列出來
+  if (!packingShared(t)) {
+    return (t.myPacking || []).length
+      ? `${packSection(t, 'shared', '🧳 共用', '')}${packSection(t, 'mine', '🙋 我的', '')}`
+      : packSection(t, 'shared', '', '');
+  }
+  const me = (t.members.find((m) => m.me) || {}).name;
+  const others = (t.othersPacking || []).filter((g) => g && Array.isArray(g.items) && g.items.length);
+  return `
+    ${packSection(t, 'shared', '🧳 共用', '大家一起帶的東西（轉接頭、藥品……），每個人都能新增、打勾。')}
+    ${packSection(t, 'mine', `🙋 我的${me ? `（${esc(me)}）` : ''}`, '只有自己的東西，旅伴看得到但不能改。')}
+    ${others.map((g, i) => `
+      <details class="shop-owner shop-owner-other owner-${i % 4}" open>
+        <summary><span class="shop-owner-name">👤 ${esc(g.name)} 的行李</span><span class="chip">只能看</span><span class="muted shop-owner-sum">已準備 ${g.items.filter((x) => x.done).length} / ${g.items.length}</span></summary>
+        <section class="panel">${packItems(g.items, '', false)}</section>
+      </details>`).join('')}`;
 }
 
 /* ---------- 旅伴（雲端模式才有） ---------- */
@@ -942,7 +992,7 @@ tripForm.addEventListener('submit', (e) => {
     route();
   } else {
     const src = copyTripFrom && getTrip(copyTripFrom);
-    const t = src ? copyTrip(src, data) : { id: uid(), ...data, days: {}, packing: [], shopping: [], places: [], bookings: [], metroMaps: [], createdAt: Date.now() };
+    const t = src ? copyTrip(src, data) : { id: uid(), ...data, days: {}, packing: [], shopping: [], places: [], bookings: [], metroMaps: [], expenses: [], createdAt: Date.now() };
     state.trips.push(t);
     commitTrip(t);
     tripDialog.close();
@@ -960,6 +1010,7 @@ function copyTrip(src, data) {
   raw.shopping = (src.shopping || []).map((s) => ({ ...s, date: move(s.date), done: false }));
   raw.packing = (src.packing || []).map((p) => ({ ...p, done: false }));
   raw.bookings = (src.bookings || []).map((b) => ({ ...b, date: move(b.date), endDate: move(b.endDate), code: '' }));
+  raw.expenses = []; // 記帳是那一趟實際花的錢，複製成新旅程時不帶
   const t = normalizeTrip(raw);
   const dropped = Object.entries(raw.days).filter(([d]) => d < data.startDate || d > data.endDate).reduce((n, [, l]) => n + l.length, 0);
   if (dropped) setTimeout(() => toast(`有 ${dropped} 個行程在新的日期範圍外，沒有複製`), 2600);
@@ -1248,6 +1299,13 @@ function normalizeTrip(raw) {
       : [],
     bookings: typeof cleanBookings === 'function' ? cleanBookings(raw.bookings) : [],
     // 地鐵圖：只帶這台裝置上還有圖檔的（雲端的檔案屬於原本的旅程，不沿用）
+    expenses: Array.isArray(raw.expenses)
+      ? raw.expenses.filter((x) => x && typeof x.title === 'string' && x.title.trim()).slice(0, 300).map((x) => ({
+        id: uid(), date: DATE_RE.test(x.date) && x.date >= raw.startDate && x.date <= raw.endDate ? x.date : '', title: str(x.title, 40).trim(),
+        amount: Math.max(0, Number(x.amount) || 0), currency: CURRENCIES.includes(x.currency) ? x.currency : '',
+        paidBy: '', splitWith: [], settled: !!x.settled, createdAt: Date.now(), // 成員代號是原本那個旅程的，不沿用
+      }))
+      : [],
     metroMaps: Array.isArray(raw.metroMaps)
       ? raw.metroMaps.filter((m) => m && typeof m.image === 'string' && /^data:image\/jpeg;base64,/.test(m.image)).slice(0, 10)
         .map((m) => ({ id: uid(), name: str(m.name, 30), image: m.image, fileId: '' }))
@@ -1447,7 +1505,7 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'toggle-pack': {
-      const item = t?.packing.find((x) => x.id === el.dataset.id);
+      const item = t && packList(t, el.dataset.list).find((x) => x.id === el.dataset.id);
       if (item) {
         item.done = el.checked;
         commitTrip(t);
@@ -1456,8 +1514,9 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'delete-pack': {
-      const item = t?.packing.find((x) => x.id === el.dataset.id);
-      if (item) withUndo(t, `已刪除「${item.text}」`, () => { t.packing = t.packing.filter((x) => x.id !== item.id); });
+      const key = el.dataset.list === 'mine' ? 'myPacking' : 'packing';
+      const item = t && packList(t, el.dataset.list).find((x) => x.id === el.dataset.id);
+      if (item) withUndo(t, `已刪除「${item.text}」`, () => { t[key] = t[key].filter((x) => x.id !== item.id); });
       break;
     }
     case 'pick-shop-photo':
@@ -1550,9 +1609,10 @@ document.addEventListener('click', (e) => {
     }
     case 'pack-preset':
       if (t) {
-        const existing = new Set(t.packing.map((x) => x.text));
+        const list = packList(t, el.dataset.list);
+        const existing = new Set(list.map((x) => x.text));
         const added = PACKING_PRESET.filter((text) => !existing.has(text));
-        t.packing.push(...added.map((text) => ({ id: uid(), text, done: false })));
+        list.push(...added.map((text) => ({ id: uid(), text, done: false })));
         commitTrip(t);
         renderTrip(t);
         toast(added.length ? `已加入 ${added.length} 項常用物品` : '常用物品都已經在清單裡了');
@@ -1588,15 +1648,16 @@ document.addEventListener('submit', (e) => {
     if (t && raw) addPlaces(t, raw);
     return;
   }
-  if (e.target.id !== 'packing-form') return;
+  if (!e.target.matches('form.pack-add')) return;
   e.preventDefault();
   const t = currentTrip();
+  const list = e.target.dataset.list;
   const text = e.target.elements.namedItem('text').value.trim();
   if (!t || !text) return;
-  t.packing.push({ id: uid(), text: text.slice(0, 80), done: false });
+  packList(t, list).push({ id: uid(), text: text.slice(0, 80), done: false });
   commitTrip(t);
   renderTrip(t);
-  $('#packing-form input').focus();
+  app.querySelector(`form.pack-add[data-list="${list}"] input`)?.focus();
 });
 
 // 點對話框外圍（backdrop）時關閉；有改過沒存的先問一下（見 js/ui.js 的 closeDialog）

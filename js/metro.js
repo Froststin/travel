@@ -13,6 +13,64 @@ const metroFile = $('#metro-file');
 const metroViewer = $('#metro-viewer');
 let metroAdding = false;
 
+/**
+ * 常用城市的地鐵圖（目的地或旅程名稱符合時顯示在最上面）
+ *   maps：授權允許轉載的圖（直接從 Wikimedia 載入，不存進 repo），圖下註明作者與授權
+ *   links：官方路線圖（有著作權，只放連結）
+ */
+const CITY_METRO = [{
+  match: /東京|东京|tokyo/i,
+  title: '東京常用地鐵圖',
+  note: 'Wikimedia 的圖是 2020 年版，之後新開的路段或改名的車站可能沒有，最新請看官方路線圖。',
+  maps: [
+    {
+      id: 'city-tokyo-ja', name: '東京地鐵路線圖（日文）',
+      thumb: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Tokyo_metro_map.png/500px-Tokyo_metro_map.png',
+      image: 'https://upload.wikimedia.org/wikipedia/commons/8/8a/Tokyo_metro_map.png',
+      page: 'https://commons.wikimedia.org/wiki/File:Tokyo_metro_map.png',
+      credit: 'Hisagi（氷鷺）, CC BY-SA 3.0, via Wikimedia Commons',
+    },
+    {
+      id: 'city-tokyo-en', name: '東京地鐵路線圖（英文）',
+      thumb: 'https://upload.wikimedia.org/wikipedia/commons/thumb/5/53/Tokyo_metro_map_en.png/500px-Tokyo_metro_map_en.png',
+      image: 'https://upload.wikimedia.org/wikipedia/commons/5/53/Tokyo_metro_map_en.png',
+      page: 'https://commons.wikimedia.org/wiki/File:Tokyo_metro_map_en.png',
+      credit: 'Hisagi（氷鷺）, CC BY-SA 3.0, via Wikimedia Commons',
+    },
+  ],
+  links: [
+    { name: '東京 Metro 路線圖（英文頁面）', url: 'https://www.tokyometro.jp/en/subwaymap/index.html' },
+    { name: '東京 Metro 路線圖 PDF（英文）', url: 'https://www.tokyometro.jp/station/pdf/202305/202305_number_en.pdf' },
+    { name: '都營地下鐵 路線圖（東京都交通局）', url: 'https://www.kotsu.metro.tokyo.jp/subway/map/' },
+    { name: '都營＋Metro 全路線圖 PDF（日文）', url: 'https://www.kotsu.metro.tokyo.jp/subway/line.pdf' },
+    { name: 'JR 東日本 首都圈鐵道＋地鐵路線圖 PDF（英文）', url: 'https://www.jreast.co.jp/e/routemaps/pdf/routemap_majorrailsub.pdf' },
+  ],
+}];
+
+function cityMetro(t) {
+  const text = `${t.destination || ''} ${t.name || ''}`;
+  return CITY_METRO.find((c) => c.match.test(text)) || null;
+}
+
+function cityMetroPanel(t) {
+  const c = cityMetro(t);
+  if (!c) return '';
+  return `
+    <section class="panel">
+      <h3>🗾 ${esc(c.title)}</h3>
+      <ul class="metro-grid">${c.maps.map((m) => `
+        <li class="metro-card">
+          <button type="button" class="metro-thumb" data-action="view-city-metro" data-id="${esc(m.id)}" aria-label="放大看 ${esc(m.name)}"><img src="${esc(m.thumb)}" alt="${esc(m.name)}" loading="lazy"></button>
+          <div class="metro-meta"><span class="metro-name">${esc(m.name)}</span></div>
+          <small class="muted metro-credit">圖：<a href="${esc(m.page)}" target="_blank" rel="noopener">「${esc(m.name)}」${esc(m.credit)}</a>・<a href="https://creativecommons.org/licenses/by-sa/3.0/deed.zh_TW" target="_blank" rel="noopener">CC BY-SA 3.0 授權條款</a></small>
+        </li>`).join('')}</ul>
+      <p class="muted hint">${esc(c.note)}</p>
+      <h4 class="metro-links-title">官方路線圖</h4>
+      <ul class="metro-links">${c.links.map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.name)}</a></li>`).join('')}</ul>
+      <p class="muted hint">官方圖有著作權，這裡只放連結；可以下載後用下面的「上傳地鐵圖」存進這趟旅程（離線也能看）。</p>
+    </section>`;
+}
+
 function canEditMetro(t, m) {
   return !cloudOn() || m.mine !== false || isTripOwner(t);
 }
@@ -31,6 +89,7 @@ function metroView(t) {
   const maps = t.metroMaps || [];
   const full = maps.length >= MAX_METRO_MAPS;
   return `
+    ${cityMetroPanel(t)}
     <section class="panel">
       <div class="shop-day-head">
         <div class="packing-summary">共 ${maps.length} 張地鐵圖</div>
@@ -232,6 +291,12 @@ document.addEventListener('click', (e) => {
     case 'view-metro':
       if (m) openMetroViewer(m);
       break;
+    case 'view-city-metro': {
+      const c = t && cityMetro(t);
+      const cm = c && c.maps.find((x) => x.id === el.dataset.id);
+      if (cm) openMetroViewer({ name: `${cm.name}｜${cm.credit}`, image: cm.image }); // 原圖 4000px，從 Wikimedia 載入；標題列帶出處
+      break;
+    }
     case 'rename-metro': {
       if (!m || !canEditMetro(t, m)) break;
       const name = prompt('地鐵圖的名稱', m.name || '');

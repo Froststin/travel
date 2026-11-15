@@ -312,7 +312,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && H.sheets.Activities.data[0].includes('paidBy') && H.sheets.Trips.data[0].includes('bookings') && H.sheets.Users.data[0].includes('sessionsFrom') && props.SCHEMA_VERSION === '13');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && H.sheets.Activities.data[0].includes('paidBy') && H.sheets.Trips.data[0].includes('bookings') && H.sheets.Users.data[0].includes('sessionsFrom') && props.SCHEMA_VERSION === '14');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -485,7 +485,7 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '13');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '14');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
@@ -1132,7 +1132,7 @@ check('數量：不是純數量的不搬', qty('紅色 2 個') === 0 && qty('M �
   const m2 = mine.find((x) => x.id === 'mig-2');
   check('升級：純數量備註搬到數量、備註清空', m1 && m1.quantity === 3 && m1.note === '' && m1.price === 500 && m1.payment === 'unsure', JSON.stringify(m1));
   check('升級：其他備註保留、數量 1', m2 && m2.quantity === 1 && m2.note === '紅色 2 個', JSON.stringify(m2));
-  check('升級：搬之前先備份 Shopping 工作表', !!H.sheets.Shopping_backup_v13 && H.sheets.Shopping_backup_v13.data.some((r) => r[0] === 'mig-1' && r.includes('3盒')) && props.SCHEMA_VERSION === '13');
+  check('升級：搬之前先備份 Shopping 工作表', !!H.sheets.Shopping_backup_v13 && H.sheets.Shopping_backup_v13.data.some((r) => r[0] === 'mig-1' && r.includes('3盒')) && props.SCHEMA_VERSION === '14');
 }
 
 // 購物欄位：付款狀態、數量、幣別、分帳
@@ -1489,10 +1489,130 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   check('分帳：已買略過的筆數另外算（有填誰付的才算）', st3f.settled === 1 && st3b.settled === 1);
   ctx.__t3x = Object.assign(JSON.parse(JSON.stringify(ft3)), { name: '測試', shopping: ft3.shopping.filter((x) => x.done) });
   const txt3 = run('settleText_(__t3x)');
-  check('LINE 結算：全部已買時說明已結清，並註明已買不列入', txt3.includes('已買的 1 筆購物視為已經結清') && txt3.includes('已勾「已買」'), txt3);
+  check('LINE 結算：全部已買時說明已結清，並註明已買不列入', txt3.includes('共 1 筆視為已經結清') && txt3.includes('已勾「已買」'), txt3);
   check('每人花費：已買的照算（1900 兩人各 950）', near(vmF.runInContext(`memberShares(__t3, ['2026-12-01'])`, fctx).total, 1900) && near(run('memberShares_(__t3)').rows.find((p) => p.key === kb).total, 950));
   ctx.__vals = [1, 1, 1];
   check('佔比：三人平分也是 100%（34/33/33）', run('sharePcts_(__vals, 3)').join() === '34,33,33');
+}
+
+/* ---------- 記帳（LINE「晚餐 1700 我付」）、個人行李、Google 定位 ---------- */
+{
+  // split-trip：U7（主人）、U8（旅伴），2026-11-01～；flags.today = 2026-10-29（旅程開始前）
+  const exTrip = () => splitTrip();
+  const before = (exTrip().expenses || []).length;
+  r = say('晚餐 1700 我付', 'U7');
+  let ex = exTrip().expenses;
+  const e1 = ex[ex.length - 1];
+  check('LINE 記帳：「晚餐 1700 我付」記一筆（不在旅程期間＝不指定日期、大家平分、待分帳）', ex.length === before + 1 && e1.title === '晚餐' && e1.amount === 1700 && e1.paidBy === k7 && !e1.splitWith.length && !e1.settled && e1.date === '' && r.text.includes('已記帳') && r.text.includes('待分帳'), `${JSON.stringify(e1)} ${r.text}`);
+  const tripStart = exTrip().startDate;
+  const md = `${+tripStart.slice(5, 7)}/${+tripStart.slice(8)}`;
+  r = say(`${md} 計程車 2300円 Name-U8付`, 'U7');
+  ex = exTrip().expenses;
+  const e2 = ex[ex.length - 1];
+  check('LINE 記帳：日期、日幣、用名字指定誰付的', e2.date === tripStart && e2.currency === 'JPY' && e2.amount === 2300 && e2.paidBy === k8, JSON.stringify(e2));
+  r = say(`${md} 門票 1,000 我付 我和Name-U7`, 'U8');
+  ex = exTrip().expenses;
+  const e3 = ex[ex.length - 1];
+  check('LINE 記帳：千分位、旅伴傳的「我付」是旅伴、指定全部的人＝大家平分', e3.amount === 1000 && e3.paidBy === k8 && !e3.splitWith.length, JSON.stringify(e3));
+  r = say('咖啡 300 小美付', 'U7');
+  check('LINE 記帳：找不到付款人時不記、列出成員', r.text.includes('找不到「小美」') && r.text.includes('Name-U8') && exTrip().expenses.length === ex.length, r.text);
+  const nBefore = exTrip().expenses.length;
+  say('修改 晚餐 1800 我付', 'U7');
+  say('買 抹茶 500 我付', 'U7');
+  check('LINE 記帳：修改、買等指令不會被當成記帳', exTrip().expenses.length === nBefore);
+  // 審查補測：「元」是台幣、日期黏著項目、名字有歧義、其他指令不誤判
+  r = say(`${md}午餐 850元 我付`, 'U7');
+  ex = exTrip().expenses;
+  const e4 = ex[ex.length - 1];
+  check('LINE 記帳：日期黏著項目名稱也認得、台幣旅程的「元」就是旅程幣別', e4.title === '午餐' && ['', 'TWD'].includes(e4.currency) && e4.date === tripStart && r.text.includes('Name-U7（你）付'), `${JSON.stringify(e4)} ${r.text}`);
+  const nB = exTrip().expenses.length;
+  r = say('果汁 120 Name付', 'U7');
+  check('LINE 記帳：名字對到好幾位成員時請寫完整，不記', r.text.includes('好幾位') && exTrip().expenses.length === nB, r.text);
+  say('導航 清水寺', 'U7');
+  say('想去 晴空塔', 'U7');
+  check('LINE 記帳：導航、想去不會被當成記帳', exTrip().expenses.length === nB);
+  r = say('記帳', 'U7');
+  check('LINE「記帳」列出這趟的帳', r.text.includes('🧾') && r.text.includes('晚餐') && r.text.includes('計程車'), r.text);
+
+  // 分帳：待分帳的算、結清的不算；每人花費都算
+  ctx.__t = exTrip();
+  const st = run('settlement_(__t)');
+  ctx.__t.expenses = ctx.__t.expenses.map((x) => Object.assign({}, x, { settled: x.id === e1.id }));
+  const st2 = run('settlement_(__t)');
+  check('分帳：結清的記帳不列入，待分帳的照算', Math.abs((st.total - st2.total) - 1700) < 0.01 && st2.settled >= 1, `${st.total} ${st2.total}`);
+  const ms = run('memberShares_(__t)');
+  ctx.__t2 = exTrip();
+  check('每人花費：記帳照算（結清的也算）', Math.abs(run('memberShares_(__t)').total - run('memberShares_(__t2)').total) < 0.01);
+  check('預算：記帳算成「記帳」分類', run('budgetSummary_(__t2)').cats.some(([k, v]) => k === 'expense' && v > 1700));
+
+  // 網站存檔：保留記帳、舊版網頁沒送不會清掉、LINE 存檔不會清掉
+  sp = exTrip();
+  sp.expenses = sp.expenses.map((x) => (x.id === e2.id ? Object.assign({}, x, { settled: true, title: '改名的計程車' }) : x));
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U8');
+  check('記帳：旅伴也可以修改、結清', exTrip().expenses.some((x) => x.id === e2.id && x.settled && x.title === '改名的計程車'));
+  const n1 = exTrip().expenses.length;
+  sp = exTrip();
+  delete sp.expenses;
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  say('買 毛巾3', 'U7');
+  check('記帳：舊版網頁沒送、LINE 存檔都不會清掉', exTrip().expenses.length === n1);
+  const v = api('view', { token: api('viewLink', { tripId: 'split-trip' }, 'good:U7').url.split('view=')[1] });
+  check('記帳：線上檢視頁換掉成員代號', v.ok && v.trip.expenses.length === n1 && v.trip.expenses.every((x) => !x.paidBy || /^v\d+$|^gone$/.test(x.paidBy)) && !JSON.stringify(v.trip.expenses).includes(k7));
+  check('說明有記帳', say('說明', 'U7').text.includes('【記帳】'));
+
+  // 個人行李：各自一份，旅伴看得到、改不到
+  sp = exTrip();
+  sp.packing = [{ id: 'pk-s', text: '轉接頭', done: false }];
+  sp.myPacking = [{ id: 'pk-7', text: 'U7 的相機', done: true }];
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  let sp8 = splitTrip('U8');
+  check('行李：共用的大家都看得到；自己的在 myPacking，旅伴的在 othersPacking', sp8.packing.some((p) => p.id === 'pk-s') && !sp8.myPacking.length && sp8.othersPacking.some((g) => g.items.some((p) => p.id === 'pk-7' && p.done)));
+  sp8.myPacking = [{ id: 'pk-8', text: 'U8 的雨傘' }];
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  check('行李：存檔只換自己的，旅伴的不動', exTrip().myPacking.map((p) => p.id).join() === 'pk-7' && splitTrip('U8').myPacking.map((p) => p.id).join() === 'pk-8');
+  sp = exTrip();
+  delete sp.myPacking;
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  check('行李：舊版網頁沒送 myPacking 不會清掉', exTrip().myPacking.length === 1);
+  const vv = api('view', { token: api('viewLink', { tripId: 'split-trip' }, 'good:U7').url.split('view=')[1] });
+  check('行李：線上檢視頁不公開個人行李', vv.ok && !('myPacking' in vv.trip) && !('othersPacking' in vv.trip));
+  r = say('行李', 'U7');
+  check('LINE「行李」列出共用＋自己的', r.text.includes('轉接頭') && !r.text.includes('U8 的雨傘'), r.text);
+
+  // Google 定位
+  flags.geocode = (q, bounds) => (q === '找得到的店'
+    ? { status: 'OK', results: [{ formatted_address: '日本東京都某某區', geometry: { location: { lat: 35.7, lng: 139.8 } }, address_components: [{ long_name: '台東區', types: ['sublocality_level_1'] }], _b: bounds }] }
+    : { status: 'ZERO_RESULTS', results: [] });
+  flags.geocodeCalls = 0;
+  const g1 = api('geocode', { q: '找得到的店', center: { lat: 35.68, lng: 139.76 } });
+  check('Google 定位：查得到回傳座標與區', g1.ok && g1.hit && g1.hit.lat === 35.7 && g1.hit.area === '台東區', JSON.stringify(g1));
+  check('Google 定位：查不到回傳空的', api('geocode', { q: '不存在的地方' }).hit === null);
+  const calls = flags.geocodeCalls;
+  api('geocode', { q: '找得到的店', center: { lat: 35.68, lng: 139.76 } });
+  check('Google 定位：同樣的查詢用快取', flags.geocodeCalls === calls);
+  flags.geocodeThrow = true;
+  check('Google 定位：額度用完時回傳空的、不出錯', api('geocode', { q: '另一家店' }).ok && api('geocode', { q: '另一家店' }).hit === null);
+  flags.geocodeThrow = false;
+  check('Google 定位：要登入', api('geocode', { q: '找得到的店' }, 'bad').status === 401);
+  flags.geocode = (q, bounds) => ({ status: 'OK', results: [{ formatted_address: 'x', geometry: { location: { lat: 1, lng: 2 } }, _b: bounds }] });
+  let seenBounds = 'unset';
+  const orig = flags.geocode;
+  flags.geocode = (q, bounds) => { seenBounds = bounds; return orig(q, bounds); };
+  api('geocode', { q: '中心是空的', center: { lat: null, lng: null } });
+  check('Google 定位：中心點是空的就不限定範圍（不會落在 0,0）', seenBounds === null, JSON.stringify(seenBounds));
+  flags.geocode = null;
+}
+
+/* ---------- 單人旅程記帳：只有自己分攤，旅伴之後加入也不會被拿去平分 ---------- */
+{
+  api('saveTrip', { trip: { id: 'solo-trip', name: '一個人的旅行', startDate: '2026-10-28', endDate: '2026-10-30', currency: 'JPY', days: {}, packing: [] }, baseUpdatedAt: '' }, 'good:U9');
+  r = say('拉麵 1200 我付', 'U9');
+  const solo = api('list', {}, 'good:U9').trips.find((t) => t.id === 'solo-trip');
+  const se = solo.expenses[0];
+  r = say('咖啡 500元 我付', 'U9');
+  const se2 = api('list', {}, 'good:U9').trips.find((t) => t.id === 'solo-trip').expenses[1];
+  check('LINE 記帳：日幣旅程寫「元」記成台幣', se2 && se2.currency === 'TWD' && se2.amount === 500, JSON.stringify(se2));
+  check('單人旅程記帳：日幣旅程沒寫單位＝日幣、只有自己分攤', se && se.currency === '' && se.amount === 1200 && se.splitWith.length === 1 && se.splitWith[0] === se.paidBy && r.text.includes('已記帳'), JSON.stringify(se) + r.text);
 }
 
 /* ---------- 網站版本號 ---------- */

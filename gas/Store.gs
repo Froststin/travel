@@ -6,10 +6,11 @@
  * 備忘（原本叫日誌，工作表沿用 Journal）以 tripId 歸屬到旅程，同旅程的成員都看得到；date 空字串＝整趟旅程通用。
  * 購物清單每個人各一份：Shopping 每一列記 tripId＋userId，只能改自己的；同旅程的成員看得到彼此的（唯讀）。
  * 地鐵圖（Trips.metroMaps）整個旅程共用：成員都能新增，只有上傳的人或主人能刪除。
+ * 記帳（Trips.expenses）整個旅程共用：成員都能新增、修改、刪除；算進預算與分帳（結清的不算分帳）。
  * ============================================================ */
 
 const TABLES = {
-  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places', 'bookings', 'metroMaps'],
+  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places', 'bookings', 'metroMaps', 'expenses'],
   Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency', 'costCurrency', 'fileId', 'paidBy', 'splitWith', 'lat', 'lng', 'geo', 'geoKey'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
@@ -17,8 +18,9 @@ const TABLES = {
   // price 是單價（priceCurrency，空＝旅程幣別），小計＝單價 × quantity；payment：pre 先付／post 後付／unsure 不確定
   Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done', 'note', 'fileId', 'payment', 'quantity', 'priceCurrency', 'paidBy', 'splitWith'],
   Views: ['token', 'tripId', 'userId', 'createdAt'], // 免登入的線上檢視連結
+  Packing: ['id', 'tripId', 'userId', 'text', 'done'], // 個人的行李清單（共用的那份在 Trips.packing）
 };
-const SCHEMA_VERSION = '13';
+const SCHEMA_VERSION = '14';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
@@ -26,6 +28,7 @@ const MAX_SHOPPING = 200; // 每個旅程的購物清單上限
 const MAX_PLACES = 100; // 每個旅程的待去清單上限
 const MAX_BOOKINGS = 50; // 每個旅程的住宿／交通資訊上限
 const MAX_METRO_MAPS = 10; // 每個旅程的地鐵圖上限
+const MAX_EXPENSES = 300; // 每個旅程的記帳上限
 const PAYMENTS = ['pre', 'post', 'unsure'];
 const MAX_QTY = 999;
 const BOOKING_TYPES = ['flight', 'stay', 'train', 'bus', 'car', 'ticket', 'other'];
@@ -383,6 +386,10 @@ function sanitizeTrip_(raw) {
       .slice(0, 50)
       .map((m) => ({ id: m.id, name: str_(m.name, 30).trim(), fileId: cleanFileId_(m.fileId) }))
     : null; // null＝沒送這個欄位（舊版網頁），存檔時沿用原本的
+  // 記帳：一樣，舊版網頁沒送就沿用原本的
+  const expenses = Array.isArray(raw.expenses) ? sanitizeExpenses_(raw.expenses, valid) : null;
+  // 個人行李（存檔者自己的）：舊版網頁沒送就不動
+  const myPacking = Array.isArray(raw.myPacking) ? sanitizePacking_(raw.myPacking) : null;
   return {
     id: cleanId_(raw.id) || Utilities.getUuid(),
     name: str_(raw.name, 60) || '未命名旅程',
@@ -398,8 +405,52 @@ function sanitizeTrip_(raw) {
     places,
     bookings,
     metroMaps,
+    expenses,
+    myPacking,
     createdAt: Number(raw.createdAt) || Date.now(),
   };
+}
+
+function sanitizePacking_(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((p) => p && typeof p.text === 'string' && p.text.trim())
+    .slice(0, 300)
+    .map((p) => ({ id: cleanId_(p.id) || Utilities.getUuid(), text: str_(p.text, 80).trim(), done: !!p.done }));
+}
+
+function loadPacking_(tripId, userId) {
+  return readTable_('Packing').filter((p) => p.tripId === tripId && p.userId === userId)
+    .map((p) => ({ id: p.id, text: p.text, done: p.done === '1' }));
+}
+
+/**
+ * 記帳：{ id, date（空＝不指定）, title, amount, currency（空＝旅程幣別）, paidBy, splitWith（空＝所有成員）, settled, createdAt }
+ * valid：旅程的日期（Set），不在裡面的日期改成不指定
+ */
+function sanitizeExpenses_(list, valid) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((x) => x && typeof x.title === 'string' && x.title.trim())
+    .slice(0, MAX_EXPENSES)
+    .map((x) => ({
+      id: cleanId_(x.id) || Utilities.getUuid(),
+      date: valid && valid.has(x.date) ? x.date : '',
+      title: str_(x.title, 40).trim(),
+      amount: Math.max(0, Math.round((Number(x.amount) || 0) * 100) / 100),
+      currency: CURRENCY_CODES.includes(x.currency) ? x.currency : '',
+      ...splitFields_(x),
+      settled: !!x.settled,
+      createdAt: Number(x.createdAt) || Date.now(),
+    }));
+}
+
+function expensesOf_(row) {
+  try {
+    const list = JSON.parse((row && row.expenses) || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch (err) {
+    return [];
+  }
 }
 
 /* ---------- 待去清單（整個旅程共用） ---------- */
@@ -739,6 +790,9 @@ function rowToTrip_(row, acts, viewerId) {
   } catch (err) {
     bookings = [];
   }
+  const expenses = expensesOf_(row).map((x) => Object.assign({}, x, splitFields_(x)));
+  // 行李：packing＝共用的；myPacking＝自己的（可以改）；othersPacking＝旅伴的（只能看）
+  const myPacking = loadPacking_(row.id, viewerId);
   const members = membersOf_(row);
   const metroMaps = metroOf_(row).map((m) => ({
     id: m.id, name: m.name, fileId: m.fileId, by: m.userId === viewerId ? 'me' : memberKey_(row.id, m.userId),
@@ -760,6 +814,11 @@ function rowToTrip_(row, acts, viewerId) {
     places,
     bookings,
     metroMaps,
+    expenses,
+    myPacking,
+    othersPacking: membersOf_(row).filter((m) => m.userId !== viewerId)
+      .map((m) => ({ name: m.name, key: memberKey_(row.id, m.userId), items: loadPacking_(row.id, m.userId) }))
+      .filter((g) => g.items.length),
     createdAt: Number(row.createdAt) || 0,
     updatedAt: row.updatedAt,
     role: roleIn_(viewerId, row),
@@ -807,6 +866,10 @@ function saveTrip_(userId, trip) {
     shopping: '', // 舊欄位，已改存 Shopping 工作表
     places: JSON.stringify(sanitizePlaces_(trip.places, new Set(Object.values(trip.days || {}).flat().map((a) => a.id)))),
     bookings: JSON.stringify(sanitizeBookings_(trip.bookings)),
+    // 記帳：網站（sanitizeTrip_ 後是陣列）或 LINE 機器人（loadTrips_ 讀出來的）送來的才換；沒送（舊版網頁）沿用原本的
+    expenses: Array.isArray(trip.expenses)
+      ? JSON.stringify(sanitizeExpenses_(trip.expenses, new Set(dateRange_(trip.startDate, trip.endDate))))
+      : (existing ? existing.expenses || '' : '[]'),
   };
   // 網站送來的才有 metroMaps；LINE 機器人存檔時（沒有這個欄位）沿用原本的
   // （舊版網頁也沒有，sanitizeTrip_ 會給 null，不能當成「全部刪掉」）
@@ -827,6 +890,11 @@ function saveTrip_(userId, trip) {
     return r;
   });
   replaceRows_('Shopping', (s) => s.tripId === trip.id && s.userId === userId, shopRows);
+  // 個人行李：只換存檔這個人自己的（網站或 LINE 機器人送來的才換）
+  if (Array.isArray(trip.myPacking)) {
+    replaceRows_('Packing', (p) => p.tripId === trip.id && p.userId === userId,
+      sanitizePacking_(trip.myPacking).map((p) => ({ id: p.id, tripId: trip.id, userId, text: p.text, done: p.done ? '1' : '' })));
+  }
   const kept = new Set(shopRows.map((r) => r.fileId));
   trashFiles_(before.filter((id) => !kept.has(id)), `s:${userId}`); // 被換掉或跟著項目刪掉的照片
   // 行程的照片：原本就掛在同一個行程上的，或是存檔的人剛上傳的，才收；被換掉或跟著行程刪掉的丟到垃圾桶
@@ -879,6 +947,7 @@ function deleteTrip_(userId, tripId) {
   trashFiles_(readTable_('Shopping').filter((s) => s.tripId === tripId && s.fileId).map((s) => s.fileId));
   trashFiles_(readTable_('Activities').filter((a) => a.tripId === tripId && a.fileId).map((a) => a.fileId));
   replaceRows_('Shopping', (s) => s.tripId === tripId, []);
+  replaceRows_('Packing', (p) => p.tripId === tripId, []);
   return 'deleted';
 }
 
@@ -954,12 +1023,14 @@ function viewData_(token) {
   // 旅伴的購物（有填誰付的、或有分給別人的才帶：分帳與每人花費要用；他自己買的不外流）
   const others = (trip.othersShopping || []).map((g) => ({ name: g.name, key: g.key, items: g.items.filter((s) => s.paidBy || (s.splitWith || []).some((k) => k !== g.key)) })).filter((g) => g.items.length);
   delete trip.othersShopping;
+  delete trip.othersPacking;
+  delete trip.myPacking; // 分享者的個人行李不公開
   delete trip.role;
   delete trip.metroMaps;
   // 成員代號換成這一頁專用的（v0、v1……），分帳照樣算得出來，但不外流真正的代號
   const alias = new Map(trip.members.map((m, i) => [m.key, `v${i}`]));
   const hide = (k) => alias.get(k) || (k ? 'gone' : '');
-  for (const a of Object.values(trip.days).flat().concat(trip.shopping || [])) {
+  for (const a of Object.values(trip.days).flat().concat(trip.shopping || [], trip.expenses || [])) {
     a.paidBy = hide(a.paidBy);
     a.splitWith = a.splitWith.map(hide);
   }
@@ -1066,4 +1137,46 @@ function apiError_(status, message) {
   const err = new Error(message);
   err.status = status;
   return err;
+}
+
+/* ---------- 地點查詢（Google）：OpenStreetMap 查不到時，網站改請後端用 Google 找 ---------- */
+/**
+ * 用 Apps Script 內建的 Maps 服務查地點（不用金鑰、不用綁付款帳戶；個人帳號每天約 1,000 次）
+ * center：{ lat, lng } 目的地附近，查詢時優先找這一帶，避免同名地點跑到別的國家。結果快取 6 小時
+ * @return {{lat, lng, geoName, area} | null}
+ */
+function geocodePlace_(q, center) {
+  const query = str_(q, 200).trim();
+  if (!query) return null;
+  const c = center && typeof center.lat === 'number' && typeof center.lng === 'number' && Math.abs(center.lat) <= 90 && Math.abs(center.lng) <= 180
+    ? { lat: Number(center.lat), lng: Number(center.lng) } : null;
+  const cache = CacheService.getScriptCache();
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, `${query}|${c ? `${c.lat.toFixed(2)},${c.lng.toFixed(2)}` : ''}`);
+  const key = `geo_${Utilities.base64EncodeWebSafe(digest).slice(0, 40)}`;
+  const hit = cache.get(key);
+  if (hit) return hit === 'none' ? null : JSON.parse(hit);
+  let res;
+  try {
+    const g = Maps.newGeocoder().setLanguage('zh-TW');
+    if (c) g.setBounds(c.lat - 1.3, c.lng - 1.6, c.lat + 1.3, c.lng + 1.6);
+    res = g.geocode(query);
+  } catch (err) {
+    console.warn('Google 地點查詢失敗', err);
+    return null; // 用完額度或暫時失敗：不快取，下次再試
+  }
+  const top = res && res.status === 'OK' && res.results && res.results[0];
+  if (!top || !top.geometry || !top.geometry.location) {
+    cache.put(key, 'none', 21600);
+    return null;
+  }
+  const comp = (type) => ((top.address_components || []).find((x) => (x.types || []).includes(type)) || {}).long_name || '';
+  const out = {
+    lat: Math.round(Number(top.geometry.location.lat) * 1e6) / 1e6,
+    lng: Math.round(Number(top.geometry.location.lng) * 1e6) / 1e6,
+    geoName: str_(top.formatted_address || query, 80),
+    area: str_(comp('sublocality_level_1') || comp('locality') || comp('administrative_area_level_2') || comp('administrative_area_level_1'), 40),
+  };
+  if (!(Math.abs(out.lat) <= 90 && Math.abs(out.lng) <= 180)) return null;
+  cache.put(key, JSON.stringify(out), 21600);
+  return out;
 }

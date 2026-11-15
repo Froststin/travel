@@ -44,7 +44,7 @@ document.addEventListener('toggle', (e) => {
  * 按了復原就把旅程換回刪除前的內容再存一次（雲端的照片會從垃圾桶拿回來，見後端 restoreFile_）。
  */
 function withUndo(t, message, mutate) {
-  const { othersShopping, ...rest } = t;
+  const { othersShopping, othersPacking, ...rest } = t;
   const before = JSON.parse(JSON.stringify(rest));
   mutate();
   commitTrip(t);
@@ -54,7 +54,7 @@ function withUndo(t, message, mutate) {
     duration: 6000,
     onAction: () => {
       // 版本號、角色、成員以現在的為準，其他換回刪除前
-      const keep = { updatedAt: t.updatedAt, role: t.role, members: t.members, othersShopping: t.othersShopping };
+      const keep = { updatedAt: t.updatedAt, role: t.role, members: t.members, othersShopping: t.othersShopping, othersPacking: t.othersPacking };
       for (const k of Object.keys(t)) delete t[k];
       Object.assign(t, before, keep);
       if (!keep.updatedAt) delete t.updatedAt;

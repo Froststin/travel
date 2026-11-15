@@ -185,6 +185,26 @@ async function geoSearchSmart(query, center) {
   return null;
 }
 
+/**
+ * OpenStreetMap 查不到時，請後端用 Google 的地點查詢（Apps Script 內建 Maps 服務，不用金鑰）以名稱找位置。
+ * 要登入雲端才能用；沒登入或查不到回傳 null
+ */
+async function googleGeocode(query, center) {
+  if (!cloudOn()) return null;
+  try {
+    const { hit } = await Cloud.call('geocode', { q: query, center });
+    return hit ? { ...hit, geoName: `${hit.geoName}（Google）`.slice(0, 80) } : null;
+  } catch (err) {
+    console.warn('Google 地點查詢失敗', err);
+    return null;
+  }
+}
+
+/** 先查 OpenStreetMap，查不到再用 Google */
+async function geoLookup(query, center) {
+  return (await geoSearchSmart(query, center)) || googleGeocode(query, center);
+}
+
 // 由座標查所在的區（用來當分組的名稱），查不到就算了
 async function geoArea(lat, lng) {
   try {
@@ -232,7 +252,7 @@ async function organizePlaces(tripId) {
     for (let i = 0; i < todo.length; i++) {
       organizing = `正在查位置 ${i + 1} / ${todo.length}：${todo[i].name}`;
       refreshPlaces(tripId);
-      results.set(todo[i].id, await geoSearchSmart(todo[i].name, center));
+      results.set(todo[i].id, await geoLookup(todo[i].name, center));
     }
   } catch (err) {
     console.warn('定位失敗', err);
@@ -319,7 +339,7 @@ function placesView(t, dates) {
         <button class="btn btn-line no-print" data-action="organize-places" ${organizing || !(pending.length + missing.length) ? 'disabled' : ''}>🧭 整理待去清單</button>
       </div>
       ${organizing ? `<p class="place-progress">${esc(organizing)}</p>` : ''}
-      <p class="muted hint">「整理」會查出每個地點的位置，把距離近（約 ${GROUP_KM} 公里內）的分成一組，方便排在同一天；之後可以整組或單獨排進某一天。
+      <p class="muted hint">「整理」會查出每個地點的位置${cloudOn() ? '（OpenStreetMap 查不到的會再用 Google 查）' : ''}，把距離近（約 ${GROUP_KM} 公里內）的分成一組，方便排在同一天；之後可以整組或單獨排進某一天。
         位置是用 OpenStreetMap 查的，不一定準：每個地點下面會寫查到的是哪裡，查錯或找不到時按 ✎ 改 Google 地圖的地址（或貼上地圖連結）再整理一次。</p>
       ${places.length ? '' : '<p class="muted shop-empty">還沒有想去的地方。先把想去的都丟進來，再按「整理」分組。</p>'}
     </section>

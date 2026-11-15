@@ -51,6 +51,11 @@ const HELP_TEXT = [
   '・直接傳照片 → 自動記到今天的備忘',
   '・看備忘／備忘 10/29 → 查看',
   '',
+  '【記帳】算進預算與分帳',
+  '・晚餐 1700 我付、12/4 計程車 2300円 小明付',
+  '・門票 3000 我付 我和小明 → 只有這兩人分攤（沒寫＝大家平分）',
+  '・記帳 → 查看這趟的帳；網站預算頁可以修改、按「結清」',
+  '',
   '【旅伴】',
   '・邀請 → 產生邀請訊息，轉傳給旅伴',
   '・加入 邀請碼 → 加入別人的旅程',
@@ -132,6 +137,9 @@ function handleText_(ctx, rawText) {
   if (/^(說明|幫助|help|指令|怎麼用|使用說明|功能|\?)$/i.test(text)) return say_(ctx, textMsg_(HELP_TEXT));
   if (/^(取消|算了|不用了|不要)$/.test(text)) return say_(ctx, textMsg_('好的，已取消。'));
   if (handleInvestText_(ctx, text)) return;
+  if (/^(?:記帳|帳目|帳本|記帳清單|看帳)$/.test(text)) return cmdExpenseView_(ctx);
+  const exp = parseExpense_(text);
+  if (exp) return cmdExpenseAdd_(ctx, exp);
   if ((m = text.match(/^(?:匯出|備份|離線版?|下載|pdf)(?:\s*(?:行程|旅程|pdf))?\s*(.*)$/i)) && text.length <= 30) return cmdExport_(ctx, m[1]);
   if (text.length <= 15 && /網站|網頁|連結|網址|link|開啟|打開/i.test(text)) return cmdSite_(ctx);
   if ((m = text.match(/^(?:新旅程|新增旅程|建立旅程)\s*([\s\S]*)$/))) return cmdNewTrip_(ctx, m[1]);
@@ -337,7 +345,7 @@ function cmdBudget_(ctx) {
   const cats = b.cats;
   if (cats.length) {
     lines.push('', '分類：');
-    cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${ntd_(v)}`));
+    cats.forEach(([k, v]) => lines.push(`${catInfo_(k).icon} ${catInfo_(k).label} ${ntd_(v)}`));
   }
   // 共用旅程：每人花費（照分攤的人平分）與全部總計
   const shares = memberShares_(trip);
@@ -367,13 +375,15 @@ function cmdBookings_(ctx) {
 function cmdPacking_(ctx) {
   if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
   const trip = activeTrip_(ctx.trips, ctx.today);
-  const items = trip.packing || [];
+  // 共用的＋自己的（共用旅程才分得出來）
+  const mine = trip.myPacking || [];
+  const items = (trip.packing || []).concat(mine);
   if (!items.length) return say_(ctx, textMsg_(`「${trip.name}」的行李清單還是空的，可以到網站上新增。`));
   const todo = items.filter((i) => !i.done);
   const lines = [`🧳 ${trip.name} 行李：已準備 ${items.length - todo.length} / ${items.length}`];
   if (todo.length) {
     lines.push('', '還沒準備：');
-    todo.slice(0, 30).forEach((i) => lines.push(`☐ ${i.text}`));
+    todo.slice(0, 30).forEach((i) => lines.push(`☐ ${i.text}${mine.includes(i) && (trip.members || []).length > 1 ? '（我的）' : ''}`));
   } else {
     lines.push('全部準備好了 🎉');
   }
@@ -1018,4 +1028,110 @@ function cmdRemoveMember_(ctx, name) {
   return say_(ctx, textMsg_(`確定要把 ${hit.m.name} 移出「${trip.name}」嗎？`, [
     qPostback_('確定移除', { a: 'rmm', t: row.id, u: hit.m.userId }, `移除成員 ${hit.m.name}`), qMsg_('取消'),
   ]));
+}
+
+/* ---------- 記帳：「晚餐 1700 我付」「12/4 計程車 2300円 小明付」「門票 3000 我付 我和小明」 ---------- */
+// 一定要有「…付」才算記帳；開頭是其他指令的（修改、刪除、新增、買…）不算
+const EXPENSE_RE = /^(?:記帳\s*)?(?:(\d{1,2}\/\d{1,2}|今天|昨天|前天|明天)\s*)?(.+?)\s+((?:NT\$|\$|¥|￥)?\s*\d[\d,]*(?:\.\d+)?\s*(?:元|塊|円|日圓|日幣|台幣|臺幣)?)\s*([^\s\d]\S{0,19}?)付(?:\s+(.+))?$/; // 付款人名字可以有數字，但不能數字開頭（免得吃掉金額）
+const EXPENSE_SKIP_RE = /^(?:修改|更改|改|刪除|移除|刪掉|新增|加入|\+|買到?了?|已買|不買|要買|記得買|想買|想去|不去|導航|日誌|備忘)/;
+
+/** @return {{dateToken, title, amount, currency, payer, split} | null} */
+function parseExpense_(text) {
+  const m = text.match(EXPENSE_RE);
+  if (!m || EXPENSE_SKIP_RE.test(m[2])) return null;
+  const amt = m[3].replace(/,/g, '').replace(/\s+/g, '');
+  const cc = extractCost_(amt);
+  const amount = cc ? cc.cost : Number((amt.match(/\d+(?:\.\d+)?/) || [])[0]);
+  if (!(amount > 0)) return null;
+  // 記帳的「元／塊」一律是台幣（共用的 extractCost_ 把它當旅程幣別，行程花費維持原本的行為）
+  const currency = /元|塊/.test(amt) && !/日圓|韓元/.test(amt) ? 'TWD' : (cc ? cc.currency : '');
+  return { dateToken: m[1] || '', title: m[2].trim().slice(0, 40), amount, currency, payer: m[4], split: (m[5] || '').trim() };
+}
+
+/**
+ * 名字對到旅程成員：「我／自己」＝傳訊息的人；其他先找名字完全一樣的，再找包含的
+ * 包含的有好幾個人（例如「小」對到小明、小美）時回傳 'ambiguous'，請使用者講清楚
+ */
+function expenseMember_(trip, name) {
+  const ms = trip.members || [];
+  if (/^(?:我|自己|本人)$/.test(name)) return ms.find((x) => x.me) || null;
+  const exact = ms.filter((x) => x.name === name);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return 'ambiguous';
+  const part = ms.filter((x) => x.name.includes(name) || name.includes(x.name));
+  return part.length === 1 ? part[0] : (part.length ? 'ambiguous' : null);
+}
+
+// 分攤名單：先比對完整的成員名字（名字裡可能有「和」），剩下的再用「和、跟、與、、」切開
+function expenseSplitNames_(trip, text) {
+  let rest = ` ${text} `;
+  const names = [];
+  const ms = (trip.members || []).slice().sort((a, b) => b.name.length - a.name.length);
+  for (const m of ms) {
+    if (m.name && rest.includes(m.name)) { names.push(m.name); rest = rest.split(m.name).join(' '); }
+  }
+  return names.concat(rest.split(/[和跟與、,，\s]+/).filter(Boolean));
+}
+
+function cmdExpenseAdd_(ctx, exp) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('要先建立旅程才能記帳喔，例如：新旅程 京都 10/28-10/30'));
+  let trip;
+  let date = '';
+  if (exp.dateToken) {
+    const d = extractDate_(exp.dateToken, { today: ctx.today, trips: ctx.trips });
+    trip = d && ctx.trips.find((t) => t.startDate <= d.date && d.date <= t.endDate);
+    if (!trip) return say_(ctx, textMsg_(`${exp.dateToken} 沒有旅程喔，要記在哪一天呢？`));
+    date = d.date;
+  } else {
+    trip = ctx.trips.find((t) => t.startDate <= ctx.today && ctx.today <= t.endDate);
+    if (trip) date = ctx.today;
+    else trip = activeTrip_(ctx.trips, ctx.today); // 不在旅程期間：記在目前或即將出發的那趟、不指定日期
+  }
+  const names = (trip.members || []).map((x) => x.name).join('、');
+  const payer = expenseMember_(trip, exp.payer);
+  if (payer === 'ambiguous') return say_(ctx, textMsg_(`「${exp.payer}」對到好幾位成員，請寫完整的名字。\n成員：${names}`));
+  if (!payer) return say_(ctx, textMsg_(`「${trip.name}」的成員裡找不到「${exp.payer}」。\n成員：${names}\n例如：晚餐 1700 我付`));
+  let splitWith = [];
+  if (exp.split) {
+    const parts = expenseSplitNames_(trip, exp.split);
+    const found = parts.map((p) => expenseMember_(trip, p));
+    const bad = parts.filter((p, i) => !found[i] || found[i] === 'ambiguous');
+    if (bad.length) return say_(ctx, textMsg_(`分攤的人裡「${bad.join('、')}」對不到成員（找不到或對到好幾位），請寫完整的名字。\n成員：${names}`));
+    splitWith = [...new Set(found.map((x) => x.key))];
+    if (splitWith.length === (trip.members || []).length) splitWith = []; // 全部的人＝大家平分
+  }
+  // 只有自己的旅程：記成只有自己分攤，免得之後旅伴加入時舊帳被拿去平分
+  if ((trip.members || []).length < 2) splitWith = [payer.key];
+  const item = {
+    id: Utilities.getUuid(), date, title: exp.title, amount: exp.amount,
+    currency: exp.currency && exp.currency !== trip.currency ? exp.currency : '',
+    paidBy: payer.key, splitWith, settled: false, createdAt: Date.now(),
+  };
+  trip.expenses = (trip.expenses || []).concat([item]);
+  if (trip.expenses.length > MAX_EXPENSES) return say_(ctx, textMsg_(`每趟旅程最多記 ${MAX_EXPENSES} 筆帳。`));
+  saveTrip_(ctx.userId, trip);
+  const cur = item.currency || trip.currency;
+  const n = splitWith.length || (trip.members || []).length || 1;
+  const twd = twdOrRaw_(item.amount, cur);
+  const who = splitWith.length ? splitWith.map((k) => ((trip.members || []).find((x) => x.key === k) || {}).name).join('、') + ' 分攤' : (n > 1 ? `${n} 人平分` : '');
+  const lines = [
+    `🧾 已記帳：${date ? `${prettyDate_(date)} ` : ''}${item.title} ${showMoney_(item.amount, cur)}`,
+    `${payer.name}${payer.me ? '（你）' : ''}付${who ? `・${who}` : ''}${n > 1 ? `（每人約 ${ntd_(twd / n)}）` : ''}・待分帳`,
+    `「${trip.name}」${date ? '' : '（不指定日期）'}`,
+  ];
+  return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('記帳'), qMsg_('結算'), qUri_('在網站修改', tripLiffUrl_(trip.id)), ...defaultQuick_()]));
+}
+
+function cmdExpenseView_(ctx) {
+  if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
+  const trip = activeTrip_(ctx.trips, ctx.today);
+  const list = (trip.expenses || []).slice().sort((a, b) => Number(a.settled) - Number(b.settled) || (a.date || '9').localeCompare(b.date || '9') || a.createdAt - b.createdAt);
+  if (!list.length) return say_(ctx, textMsg_(`「${trip.name}」還沒有記帳。\n例如：晚餐 1700 我付`));
+  const name = (k) => { const m = (trip.members || []).find((x) => x.key === k); return m ? (m.me ? '你' : m.name) : '已退出的旅伴'; };
+  const total = list.reduce((s, x) => s + twdOrRaw_(x.amount, x.currency || trip.currency), 0);
+  const lines = [`🧾 ${trip.name} 記帳（共 ${list.length} 筆，${ntd_(total)}）`];
+  list.slice(0, 40).forEach((x) => lines.push(`${x.settled ? '✅' : '⏳'} ${x.date ? `${x.date.slice(5).replace('-', '/')} ` : ''}${x.title} ${showMoney_(x.amount, x.currency || trip.currency)}｜${name(x.paidBy)}付${x.settled ? '・已結清' : '・待分帳'}`));
+  if (list.length > 40) lines.push(`……還有 ${list.length - 40} 筆，到網站看全部`);
+  lines.push('', '輸入「結算」看誰該給誰多少；到網站預算頁可以修改或按「結清」。');
+  return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('結算'), qUri_('在網站看', tripLiffUrl_(trip.id)), ...defaultQuick_()]));
 }

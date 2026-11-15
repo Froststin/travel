@@ -6,10 +6,10 @@
  * version.json 用來檢查新版（見 app.js 的 checkForUpdate），永遠直接上網問
  * ============================================================ */
 
-const CACHE = 'travel-shell-v2';
+const CACHE = 'travel-shell-v3';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'manifest.webmanifest',
-  'js/config.js', 'js/app.js', 'js/shopping.js', 'js/ui.js', 'js/today.js', 'js/split.js', 'js/bookings.js', 'js/drag.js',
+  'js/config.js', 'js/app.js', 'js/shopping.js', 'js/ui.js', 'js/today.js', 'js/split.js', 'js/expenses.js', 'js/bookings.js', 'js/drag.js',
   'js/shopphoto.js', 'js/cloud.js', 'js/static.js', 'js/places.js', 'js/map.js', 'js/metro.js', 'js/line.js', 'js/pwa.js', 'js/boot.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png',
 ];

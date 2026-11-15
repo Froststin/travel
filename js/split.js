@@ -62,6 +62,18 @@ function settlement(t) {
     person(s.paidBy).paid += amount;
     who.forEach((k) => { person(k).share += amount / who.length; });
   }
+  // 記帳：待分帳的照分攤的人算；結清的不列入（和後端 settlement_ 一樣）
+  for (const x of t.expenses || []) {
+    const amount = twdOrRaw(x.amount, x.currency || t.currency);
+    if (!(amount > 0)) continue;
+    if (x.settled) { if (x.paidBy) settled++; continue; }
+    if (!x.paidBy) { unassigned++; continue; }
+    const who = Array.isArray(x.splitWith) && x.splitWith.length ? x.splitWith : everyone;
+    if (!who.length) continue;
+    total += amount;
+    person(x.paidBy).paid += amount;
+    who.forEach((k) => { person(k).share += amount / who.length; });
+  }
   const rows = [...people.values()].map((p) => ({ ...p, net: p.paid - p.share }));
   return { rows, transfers: settleTransfers(rows), unassigned, total, settled };
 }
@@ -107,6 +119,8 @@ function memberShares(t, dates) {
     for (const d of dates) for (const s of shoppingOn(t, idx, d)) add(who(s), shopCost([s], t.currency), d);
     for (const s of idx.loose) add(who(s), shopCost([s], t.currency), '');
   }
+  // 記帳：照分攤的人（沒選＝全部成員），結清的也算（是花掉的錢）
+  for (const x of t.expenses || []) add(split(x), twdOrRaw(x.amount, x.currency || t.currency), dates.includes(x.date) ? x.date : '');
   const rows = [...people.values()].filter((p) => !p.gone || p.total > 0.005);
   return { rows, total, pcts: sharePcts(rows.map((p) => p.total), total) };
 }
@@ -165,7 +179,7 @@ function settleView(t, forStatic = false) {
       <section class="panel">
         <h3>🤝 分帳</h3>
         ${s.unassigned ? `<p class="rate-warn">⚠️ 有 ${s.unassigned} 筆分給旅伴的花費還沒填誰付的。</p>` : ''}
-        ${s.settled ? `<p>✅ 已買的 ${s.settled} 筆購物視為已經結清，目前沒有要轉帳的。</p>` : ''}
+        ${s.settled ? `<p>✅ 已買的購物、已結清的記帳共 ${s.settled} 筆視為已經結清，目前沒有要轉帳的。</p>` : ''}
         <p class="muted">${help}填好後這裡會算出誰該給誰多少，LINE 輸入「結算」也查得到。</p>
       </section>`;
   }

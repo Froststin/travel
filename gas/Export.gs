@@ -19,12 +19,14 @@ function budgetSummary_(trip, withOthers = true) {
   const all = dateRange_(trip.startDate, trip.endDate).flatMap((d) => trip.days[d] || []);
   const shops = (trip.shopping || []).concat(withOthers && (trip.members || []).length > 1 ? (trip.othersShopping || []).flatMap((g) => g.items || []) : []);
   const shopSum = shops.reduce((s, x) => s + shopTwd_(x, cur), 0);
-  const byCat = { shopping: shopSum };
+  // 記帳（不分結清與否，都是花掉的錢）
+  const exps = trip.expenses || [];
+  const byCat = { shopping: shopSum, expense: exps.reduce((sum, x) => sum + twdOrRaw_(x.amount, x.currency || cur), 0) };
   all.forEach((a) => {
     byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, a.costCurrency || cur);
     byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
   });
-  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency), ...shops.filter((x) => Number(x.price)).map((x) => shopCur_(x, cur))])].filter((c) => c && c !== 'TWD');
+  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency), ...shops.filter((x) => Number(x.price)).map((x) => shopCur_(x, cur)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || cur)])].filter((c) => c && c !== 'TWD');
   return {
     spent: Object.values(byCat).reduce((s, v) => s + v, 0),
     budget: trip.budget ? twdOrRaw_(trip.budget, cur) : 0,
@@ -85,7 +87,7 @@ function exportHtml_(trip, exportedAt, web) {
       ${trip.budget ? `<tr><td>總預算</td><td class="money">${e(showMoney_(trip.budget, trip.currency))}</td></tr>` : ''}
       <tr><td>預估花費</td><td class="money">${e(ntd_(b.spent))}</td></tr>
       ${trip.budget ? `<tr><td>${b.budget - b.spent >= 0 ? '剩餘' : '超出預算'}</td><td class="money">${e(ntd_(Math.abs(b.budget - b.spent)))}</td></tr>` : ''}
-      ${b.cats.map(([k, v]) => `<tr class="transit"><td>　${e(CATEGORY_INFO[k].label)}</td><td class="money">${e(ntd_(v))}</td></tr>`).join('')}
+      ${b.cats.map(([k, v]) => `<tr class="transit"><td>　${e(catInfo_(k).label)}</td><td class="money">${e(ntd_(v))}</td></tr>`).join('')}
     </table>
     ${b.foreign.length ? `<p class="sub">金額皆換算成台幣：${e(b.foreign.map(rateText_).join('；'))}</p>` : ''}
     ${b.missing.length ? `<p class="sub"><b>查不到 ${e(b.missing.join('、'))} 的匯率，這些金額暫時直接當成台幣加總，數字不準。</b></p>` : ''}`;
@@ -103,7 +105,7 @@ function exportHtml_(trip, exportedAt, web) {
   const st = (trip.members || []).length > 1 ? settlement_(trip) : null;
   const settle = st && !st.total && st.settled ? `
     <h2>分帳</h2>
-    <p>已買的 ${st.settled} 筆購物視為已經結清，目前沒有要轉帳的。</p>` : st && st.total ? `
+    <p>已買的購物、已結清的記帳共 ${st.settled} 筆視為已經結清，目前沒有要轉帳的。</p>` : st && st.total ? `
     <h2>分帳</h2>
     <table>
       ${st.rows.map((p) => `<tr><td>${e(p.name)}</td><td class="money">付了 ${e(ntd_(p.paid))}</td><td class="money">應分攤 ${e(ntd_(p.share))}</td></tr>`).join('')}

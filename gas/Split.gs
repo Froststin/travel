@@ -7,6 +7,7 @@
  * 購物清單（自己的與旅伴的）有填「誰付的」的也算進來（單價 × 數量），照勾的分攤的人平分；
  * 沒填誰付的：只有自己分攤就是自己買的，不算；有分給別人卻沒填誰付的，列為「沒填誰付的」。
  * 已勾「已買」的購物視為已經付款、自己結清了，不列入分帳（使用者 2026-11-15 指定）。
+ * 記帳（trip.expenses）：待分帳的照分攤的人算，結清的不列入。
  * 回傳每個人付了多少、應分攤多少，以及最少筆數的轉帳建議。
  */
 function settlement_(trip) {
@@ -54,6 +55,18 @@ function settlement_(trip) {
     person(s.paidBy).paid += amount;
     who.forEach((k) => { person(k).share += amount / who.length; });
   }
+  // 記帳：待分帳的照分攤的人算；結清的不列入（跟購物「已買」一樣）
+  for (const x of trip.expenses || []) {
+    const amount = twdOrRaw_(x.amount, x.currency || cur);
+    if (!(amount > 0)) continue;
+    if (x.settled) { if (x.paidBy) settled++; continue; }
+    if (!x.paidBy) { unassigned++; continue; }
+    const who = x.splitWith && x.splitWith.length ? x.splitWith : everyone;
+    if (!who.length) continue;
+    total += amount;
+    person(x.paidBy).paid += amount;
+    who.forEach((k) => { person(k).share += amount / who.length; });
+  }
   const rows = [...people.values()].map((p) => Object.assign(p, { net: p.paid - p.share }));
   return { rows, transfers: settleTransfers_(rows), unassigned, total, settled };
 }
@@ -91,6 +104,8 @@ function memberShares_(trip) {
   for (const g of lists) {
     for (const s of g.items) add(shopSharers_(s, g.owner, everyone), shopTwd_(s, cur));
   }
+  // 記帳：照分攤的人（沒選＝全部成員），結清的也算（是花掉的錢）
+  for (const x of trip.expenses || []) add(split(x), twdOrRaw_(x.amount, x.currency || cur));
   const rows = [...people.values()].filter((p) => everyone.includes(p.key) || p.total > 0.005);
   return { rows, total, pcts: sharePcts_(rows.map((p) => p.total), total) };
 }
@@ -140,7 +155,7 @@ function settleText_(trip) {
   const name = (p) => `${p.name}${p.me ? '（你）' : ''}`;
   const lines = [`🤝 ${trip.name} 分帳`];
   if (!s.total) {
-    if (s.settled) lines.push('', `已買的 ${s.settled} 筆購物視為已經結清，目前沒有要轉帳的。`);
+    if (s.settled) lines.push('', `已買的購物、已結清的記帳共 ${s.settled} 筆視為已經結清，目前沒有要轉帳的。`);
     else lines.push('', '還沒有填「誰付的」的花費。', '到網站的行程或購物清單裡，可以選誰付的、哪些人分攤。');
   } else {
     lines.push(`已填付款人的花費共 ${ntd_(s.total)}`, '');

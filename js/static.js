@@ -2,7 +2,8 @@
 
 /* ============================================================
  * 匯出靜態網頁：把一個旅程做成單一 HTML 檔
- * 樣式內嵌、沒有 JavaScript、不依賴這個網站或雲端，可以離線開啟、列印或轉傳。
+ * 樣式內嵌、不依賴這個網站或雲端，可以離線開啟、列印或轉傳。
+ * 只有一小段 JavaScript：購物、行李清單可以打勾，記在打開檔案的那台裝置（擋 JavaScript 時照樣能看，只是不能勾）。
  * 內容是匯出當下的快照（金額用當時的匯率換算好），之後的修改要重新匯出。
  * ============================================================ */
 
@@ -39,6 +40,9 @@ ol,ul { list-style:none; margin:0; padding:0; }
 .buy { margin-top:4px; padding:4px 10px; border-left:3px solid var(--buy); font-size:.92rem; }
 .buy li, .check li { padding:2px 0; }
 .done { text-decoration:line-through; color:var(--muted); }
+label.tick { display:inline-flex; align-items:baseline; gap:6px; cursor:pointer; }
+label.tick input { width:18px; height:18px; margin:0; flex:none; position:relative; top:3px; accent-color:var(--pri); }
+label.tick input:checked + span { text-decoration:line-through; color:var(--muted); }
 table { width:100%; border-collapse:collapse; }
 th,td { padding:7px 6px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
 td.num, th.num { text-align:right; white-space:nowrap; }
@@ -63,8 +67,14 @@ function staticShopImg(s) {
   return src ? `<img class="shopimg" src="${esc(src)}" alt="">` : '';
 }
 
+// 可以打勾的項目：離線匯出的檔案裡點一下就能勾（同一樣東西出現在好幾個地方會一起變）；線上檢視頁只能看
+let staticOnline = false;
+function staticTick(key, done, text) {
+  return `<label class="tick"><input type="checkbox" data-k="${esc(key)}" ${done ? 'checked' : ''}${staticOnline ? ' disabled' : ''}><span>${esc(text)}</span></label>`;
+}
+
 function staticShopItems(items, currency) {
-  return items.map((s) => `<li>${staticShopImg(s)}${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${Number(s.price) || cleanQty(s.quantity) > 1 ? ` <span class="muted small">${shopMoneyHtml(s, currency)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</li>`).join('');
+  return items.map((s) => `<li>${staticShopImg(s)}${staticTick(`s:${s.id}`, s.done, s.text)}${Number(s.price) || cleanQty(s.quantity) > 1 ? ` <span class="muted small">${shopMoneyHtml(s, currency)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</li>`).join('');
 }
 
 /**
@@ -73,6 +83,7 @@ function staticShopItems(items, currency) {
  * @param {Map<string,string>} photos 日誌照片（fileId → data URL），沒有的照片會顯示文字說明
  */
 function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map()) {
+  staticOnline = online;
   const dates = dateRange(t.startDate, t.endDate);
   const shop = shoppingIndex(t, dates);
   const b = budgetData(t, dates);
@@ -130,8 +141,8 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
       ${b.byCat.length ? `<table><thead><tr><th>分類</th><th class="num">花費</th></tr></thead><tbody>
         ${b.byCat.map((x) => `<tr><td>${x.icon} ${x.label}</td><td class="num">${ntd(x.sum)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">行程項目還沒有填寫花費。</p>'}
       <table style="margin-top:12px"><thead><tr><th>日期</th><th class="num">花費</th></tr></thead><tbody>
-        ${dates.map((d, i) => `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td class="num">${ntd(sumCost(t.days[d] || [], t.currency) + shopCost(shoppingOn(t, b.shop, d), t.currency))}</td></tr>`).join('')}
-        ${b.looseShop > 0.005 ? `<tr><td>🛒 購物清單（不指定日期）</td><td class="num">${ntd(b.looseShop)}</td></tr>` : ''}
+        ${dates.map((d, i) => `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td class="num">${ntd(b.dayTotal(d))}</td></tr>`).join('')}
+        ${b.looseTotal > 0.005 ? `<tr><td>不指定日期（購物、記帳）</td><td class="num">${ntd(b.looseTotal)}</td></tr>` : ''}
       </tbody></table>
       ${b.shares ? `<table style="margin-top:12px"><thead><tr><th>每人花費</th><th class="num">總計</th></tr></thead><tbody>
         ${b.shares.rows.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${ntd(p.total)}</td></tr>`).join('')}
@@ -155,7 +166,7 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
   const settleHtml = st && !st.total && st.settled ? `
     <section id="settle">
       <h2>🤝 分帳</h2>
-      <p>已買的 ${st.settled} 筆購物視為已經結清，目前沒有要轉帳的。</p>
+      <p>已買的購物、已結清的記帳共 ${st.settled} 筆視為已經結清，目前沒有要轉帳的。</p>
     </section>` : st && st.total ? `
     <section id="settle">
       <h2>🤝 分帳</h2>
@@ -178,11 +189,15 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
       </tbody></table>
     </section>` : '';
 
-  const packing = (t.packing || []).length ? `
+  // 行李：共用的＋自己的（雲端共用旅程才有「我的」）
+  const packLists = [['', t.packing || []], ['我的', t.myPacking || []]].filter(([, l]) => l.length);
+  const packing = packLists.length ? `
     <section id="packing">
       <h2>🧳 行李清單</h2>
-      <p class="small muted">已準備 ${t.packing.filter((p) => p.done).length} / ${t.packing.length}</p>
-      <ul class="check cols">${t.packing.map((p) => `<li>${p.done ? '☑' : '☐'} <span${p.done ? ' class="done"' : ''}>${esc(p.text)}</span></li>`).join('')}</ul>
+      ${packLists.map(([label, list]) => `
+      ${label || packLists.length > 1 ? `<h3 class="small muted">${label || '共用'}</h3>` : ''}
+      <p class="small muted">已準備 ${list.filter((p) => p.done).length} / ${list.length}</p>
+      <ul class="check cols">${list.map((p) => `<li>${staticTick(`p:${p.id}`, p.done, p.text)}</li>`).join('')}</ul>`).join('')}
     </section>` : '';
 
   const journalHtml = journal.length ? `
@@ -248,11 +263,29 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
   ${t.notes ? `<p>${esc(t.notes).replace(/\n/g, '<br>')}</p>` : ''}
   ${online
     ? `<p class="notice">唯讀的線上檢視頁，${exportedAt} 的內容；重新整理就會更新。<br>要編輯請到旅程手帖：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`
-    : `<p class="notice">這是 ${exportedAt} 匯出的離線版本，不需要網路就能看（地圖連結除外），之後的修改不會出現在這裡。<br>最新內容：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`}
+    : `<p class="notice">這是 ${exportedAt} 匯出的離線版本，不需要網路就能看（地圖連結除外），之後的修改不會出現在這裡。購物、行李清單可以直接打勾（記在這台裝置，不會同步回網站）。<br>最新內容：<a href="${esc(siteUrl)}">${esc(siteUrl)}</a></p>`}
   <nav>${nav}</nav>
   ${bookingsHtml}${days}${placesHtml}${budget}${settleHtml}${shopping}${packing}${journalHtml}${metroHtml}
   <footer>旅程手帖・${exportedAt} ${online ? '的內容' : '匯出'}</footer>
 </main>
+${online ? '' : `<script>
+// 購物、行李可以打勾：記在這台裝置（localStorage），重開還在；同一樣東西在好幾個地方會一起變
+(function () {
+  var key = 'travel-static:${esc(t.id)}';
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem(key)) || {}; } catch (e) {}
+  var boxes = document.querySelectorAll('input[data-k]');
+  Array.prototype.forEach.call(boxes, function (c) {
+    if (Object.prototype.hasOwnProperty.call(saved, c.getAttribute('data-k'))) c.checked = saved[c.getAttribute('data-k')];
+    c.addEventListener('change', function () {
+      var k = c.getAttribute('data-k');
+      saved[k] = c.checked;
+      Array.prototype.forEach.call(boxes, function (o) { if (o.getAttribute('data-k') === k) o.checked = c.checked; });
+      try { localStorage.setItem(key, JSON.stringify(saved)); } catch (e) {}
+    });
+  });
+})();
+</script>`}
 </body>
 </html>`;
 }
@@ -260,7 +293,7 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
 function staticShopRow(t, s, dayLabel) {
   const a = s.activityId && Object.values(t.days).flat().find((x) => x.id === s.activityId);
   return `<tr><td class="small muted" style="white-space:nowrap">${dayLabel}</td>
-    <td>${staticShopImg(s)}${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${a ? ` <span class="small muted">📍 ${esc(a.title)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</td>
+    <td>${staticShopImg(s)}${staticTick(`s:${s.id}`, s.done, s.text)}${a ? ` <span class="small muted">📍 ${esc(a.title)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</td>
     <td class="num">${shopMoneyHtml(s, t.currency)}</td></tr>`;
 }
 

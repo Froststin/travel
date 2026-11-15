@@ -149,6 +149,18 @@ function apiAction_(userId, body) {
     case 'uploadShopImage':
       return { fileId: uploadShopImage_(userId, body.dataUrl, ['activity', 'metro'].includes(body.kind) ? body.kind : 'shop') };
 
+    case 'geocode':
+      // 地點查詢（Google）：網站 OpenStreetMap 查不到時用；連外部服務，不用拿鎖
+      {
+        // 額度是部署者帳號共用的（每天約 1,000 次），每人每天最多 200 次
+        const cache = CacheService.getScriptCache();
+        const key = `geoq_${Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, userId)).slice(0, 20)}_${todayStr_()}`;
+        const used = Number(cache.get(key)) || 0;
+        if (used >= 200) return { hit: null, limited: true };
+        cache.put(key, String(used + 1), 86400);
+        return { hit: geocodePlace_(body.q, body.center) };
+      }
+
     case 'shopPhotos':
       return { photos: shopPhotos_(userId, body.fileIds) };
 

@@ -20,6 +20,7 @@
   --cat-stay: #7c3aed;
   --cat-shopping: #db2777;
   --cat-other: #64748b;
+  --cat-expense: #0891b2;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -934,3 +935,23 @@ dialog { overscroll-behavior: contain; }
 .map-dist-seg { flex-basis: 100%; padding-left: 10px; margin-left: 10px; border-left: 2px dashed var(--day, var(--primary)); color: var(--muted); font-size: .85rem; }
 .map-dist-total { margin: 8px 0; }
 .map-dist-list { list-style: none; margin: 12px 0 4px; padding: 0; display: grid; gap: 4px; font-size: .9rem; }
+
+/* ---------- 記帳 ---------- */
+.expense-list { list-style: none; margin: 0; padding: 0; }
+.expense-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 0; border-top: 1px dashed var(--border); }
+.expense-item:first-child { border-top: none; }
+.expense-item.settled { opacity: .65; }
+.expense-main { flex: 1 1 10em; min-width: 0; display: grid; }
+.expense-title { font-weight: 600; overflow-wrap: anywhere; }
+.expense-amount { font-variant-numeric: tabular-nums; text-align: right; }
+.expense-amount small { display: block; color: var(--muted); font-size: .75rem; }
+.expense-actions { display: inline-flex; align-items: center; gap: 4px; }
+.small { font-size: .82rem; }
+
+/* ---------- 行李：旅伴的（只能看） ---------- */
+.pack-ro { display: inline-flex; gap: 6px; }
+
+/* ---------- 地鐵：常用城市地鐵圖 ---------- */
+.metro-credit { display: block; padding: 0 10px 8px; overflow-wrap: anywhere; }
+.metro-links-title { margin: 14px 0 6px; font-size: .95rem; }
+.metro-links { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
