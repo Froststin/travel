@@ -4,7 +4,8 @@
 
 /**
  * 分帳結算：每筆有填「誰付的」的花費（行程花費＋車資，換算成台幣），由 splitWith 的人平分（沒選＝所有成員）。
- * 購物清單（自己的與旅伴的）有填「誰付的」的也算進來（單價 × 數量）；沒填的當作自己買的，不算、也不列為沒填。
+ * 購物清單（自己的與旅伴的）有填「誰付的」的也算進來（單價 × 數量），照勾的分攤的人平分；
+ * 沒填誰付的：只有自己分攤就是自己買的，不算；有分給別人卻沒填誰付的，列為「沒填誰付的」。
  * 回傳每個人付了多少、應分攤多少，以及最少筆數的轉帳建議。
  */
 function settlement_(trip) {
@@ -31,11 +32,17 @@ function settlement_(trip) {
     person(a.paidBy).paid += amount;
     who.forEach((k) => { person(k).share += amount / who.length; });
   }
-  const shops = (trip.shopping || []).concat(...(trip.othersShopping || []).map((g) => g.items || []));
-  for (const s of shops) {
+  const meKey = (members.find((m) => m.me) || members.find((m) => m.sharer) || {}).key || '';
+  const shopLists = [{ owner: meKey, items: trip.shopping || [] }].concat((trip.othersShopping || []).map((g) => ({ owner: g.key, items: g.items || [] })));
+  for (const g of shopLists) for (const s of g.items) {
     const amount = shopTwd_(s, cur);
-    if (!(amount > 0) || !s.paidBy) continue;
-    const who = s.splitWith && s.splitWith.length ? s.splitWith : everyone;
+    if (!(amount > 0)) continue;
+    const who = shopSharers_(s, g.owner, everyone);
+    // 沒填誰付的：只有自己分攤就是自己買的，不算；有分給別人卻沒填誰付的，提醒一下
+    if (!s.paidBy) {
+      if (who.some((k) => k !== g.owner)) unassigned++;
+      continue;
+    }
     if (!who.length) continue;
     total += amount;
     person(s.paidBy).paid += amount;
@@ -46,8 +53,8 @@ function settlement_(trip) {
 }
 
 /**
- * 每人花費（LINE「預算」用）：每筆照「分攤的人」平分（沒勾＝全部成員），行程花費有沒有填誰付的都一樣；
- * 購物沒填「誰付的」算在清單主人身上。和網站 js/split.js 的 memberShares 同算法（這裡只算整趟總計）。
+ * 每人花費（LINE「預算」用）：每筆照「分攤的人」平分；行程沒勾＝全部成員，購物照 shopSharers_（勾了誰就是誰）。
+ * 有沒有填誰付的都一樣分。和網站 js/split.js 的 memberShares 同算法（這裡只算整趟總計）。
  * @return {null | { rows: [{ key, name, me, total }], total, pcts: number[] }} pcts 和 rows 同順序、加起來 100；不是共用旅程時回傳 null
  */
 function memberShares_(trip) {
@@ -76,10 +83,20 @@ function memberShares_(trip) {
   }
   const lists = [{ owner: ownerOfMine, items: trip.shopping || [] }].concat((trip.othersShopping || []).map((g) => ({ owner: g.key, items: g.items || [] })));
   for (const g of lists) {
-    for (const s of g.items) add(s.paidBy ? split(s) : (g.owner ? [g.owner] : everyone), shopTwd_(s, cur));
+    for (const s of g.items) add(shopSharers_(s, g.owner, everyone), shopTwd_(s, cur));
   }
   const rows = [...people.values()].filter((p) => everyone.includes(p.key) || p.total > 0.005);
   return { rows, total, pcts: sharePcts_(rows.map((p) => p.total), total) };
+}
+
+/**
+ * 購物由誰分攤：勾了誰就由誰平分（不管有沒有填誰付的）；
+ * 沒勾（舊資料）時，有填誰付的＝大家平分，沒填＝清單主人自己買的。和網站 shopSharers 一樣
+ */
+function shopSharers_(s, owner, everyone) {
+  if (s.splitWith && s.splitWith.length) return s.splitWith;
+  if (s.paidBy) return everyone;
+  return owner ? [owner] : everyone;
 }
 
 /** 佔比（整數 %）：最大餘數法，加起來一定是 100（和網站 sharePcts 一樣） */

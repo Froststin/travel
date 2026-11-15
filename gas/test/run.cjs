@@ -630,7 +630,7 @@ const viewToken = (res.url || '').split('?view=')[1];
 check('產生連結：指到網站、帶 40 碼代碼，再要一次是同一個', res.ok && /^[a-f0-9]{40}$/.test(viewToken) && res.url.startsWith('https://froststin.github.io/travel/?view=') && api('viewLink', { tripId: vTrip.id }).url === res.url, JSON.stringify(res));
 let vd = api('view', { token: viewToken }, '');
 check('檢視資料：不用登入，憑代碼拿到行程與分享者自己的購物清單', vd.ok && vd.trip.id === vTrip.id && vd.trip.shopping.some((s) => s.text === '檢視頁測試用') && Object.values(vd.trip.days).flat().some((a) => a.title === '<b>夜景</b>') && Array.isArray(vd.journal), JSON.stringify(vd).slice(0, 200));
-check('檢視資料：旅伴的清單只帶有填誰付的（分帳用）、不外流 LINE userId 與成員代號', (vd.trip.othersShopping || []).every((g) => g.items.every((x) => x.paidBy)) && !('role' in vd.trip) && vd.trip.members.every((m) => ['key,name,role', 'key,name,role,sharer'].includes(Object.keys(m).sort().join()) && /^v\d+$/.test(m.key)) && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
+check('檢視資料：旅伴的清單只帶有填誰付的或分給別人的（分帳用）、不外流 LINE userId 與成員代號', (vd.trip.othersShopping || []).every((g) => g.items.every((x) => x.paidBy || x.splitWith.some((k) => k !== g.key))) && !('role' in vd.trip) && vd.trip.members.every((m) => ['key,name,role', 'key,name,role,sharer'].includes(Object.keys(m).sort().join()) && /^v\d+$/.test(m.key)) && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
 check('檢視資料：亂猜的代碼拿不到東西', api('view', { token: 'a'.repeat(40) }, '').status === 404 && api('view', { token: { $ne: '' } }, '').status === 404 && api('view', {}, '').status === 404);
 check('產生連結需要登入、而且要是旅程成員', api('viewLink', { tripId: vTrip.id }, '').status === 401 && api('viewLink', { tripId: vTrip.id }, 'good:U3').status === 403);
 let page = getPage({ view: viewToken });
@@ -1282,6 +1282,13 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   const v = api('view', { token: link.split('view=')[1] });
   const items = (v.trip.othersShopping || []).flatMap((g) => g.items);
   check('檢視頁：帶上旅伴有填誰付的購物，沒填的不帶', items.some((x) => x.id === 'v8') && !items.some((x) => x.id === 'v8b'));
+  // 沒填誰付的、但有分給別人的也要帶（每人花費才算得對）；只分給自己的不帶
+  sp8 = splitTrip('U8');
+  sp8.shopping = sp8.shopping.concat([{ id: 'v8c', text: '分給大家沒填誰付的', price: 200, quantity: 1, paidBy: '', splitWith: [k7, k8] }, { id: 'v8d', text: '只分給自己', price: 90, quantity: 1, paidBy: '', splitWith: [k8] }]);
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  const v2 = api('view', { token: link.split('view=')[1] });
+  const items2 = (v2.trip.othersShopping || []).flatMap((g) => g.items);
+  check('檢視頁：沒填誰付的但有分給別人的也帶，只分給自己的不帶', items2.some((x) => x.id === 'v8c') && !items2.some((x) => x.id === 'v8d'));
   check('檢視頁：代號換成這一頁專用的', items.every((x) => /^v\d+$|^gone$/.test(x.paidBy)) && !JSON.stringify(v).includes(k8));
 }
 // 舊日誌沒有歸屬旅程，不能設成整趟通用
@@ -1433,6 +1440,27 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   }
   const same = fe.rows.length === be.rows.length && fe.rows.every((p) => { const q = be.rows.find((x) => x.key === p.key); return q && Math.abs(q.total - p.total) < 0.01; }) && Math.abs(be.total - fe.total) < 0.01;
   check('網站與後端的每人花費一樣（含退出合併、外幣、掛在行程的購物）', same && be.pcts.join() === fe.pcts.join(), `${JSON.stringify(fe.rows.map((p) => [p.key, p.total]))} ／ ${JSON.stringify(be.rows.map((p) => [p.key, p.total]))}`);
+  // 使用者回報：兩個人都勾分攤、沒填誰付的 → 應該各一半（原本全算在清單主人身上）
+  const ft2 = { id: 't2', startDate: '2026-12-01', endDate: '2026-12-01', currency: 'TWD', members: ft.members, days: {},
+    shopping: [{ id: 'both', text: '機票', price: 13500, quantity: 2, paidBy: '', splitWith: [ka, kb], date: '' }, { id: 'mine', text: '自己的', price: 100, quantity: 1, splitWith: [ka] }],
+    othersShopping: [] };
+  fctx.__t2 = ft2;
+  const fe2 = vmF.runInContext(`memberShares(__t2, ['2026-12-01'])`, fctx);
+  ctx.__t2 = JSON.parse(JSON.stringify(ft2));
+  const be2 = run('memberShares_(__t2)');
+  const half = (rows, k) => rows.find((p) => p.key === k).total;
+  const near = (a, b) => Math.abs(a - b) < 0.01;
+  check('每人花費：兩人都勾分攤、沒填誰付的 → 各一半（網站與後端）', near(half(fe2.rows, ka), 13600) && near(half(fe2.rows, kb), 13500) && near(half(be2.rows, ka), 13600) && near(half(be2.rows, kb), 13500), JSON.stringify(fe2.rows.map((p) => [p.name, p.total])));
+  // 卡片提醒和分帳的「沒填誰付的」同條件：只分給別人（代買）也要提醒，只有自己不提醒
+  fctx.$ = () => null;
+  fctx.__s1 = { paidBy: '', splitWith: [kb] };
+  fctx.__s2 = { paidBy: '', splitWith: [ka] };
+  check('購物卡片：只分給別人、沒填誰付的會提醒；只有自己不提醒', vmF.runInContext('shopPayerChip(__t2, __s1)', fctx).includes('還沒填誰付的') && vmF.runInContext('shopPayerChip(__t2, __s2)', fctx) === '');
+  fctx.__s3 = { paidBy: '', splitWith: [ka] };
+  check('購物卡片：旅伴清單用旅伴當主人判斷（他只分給我＝要提醒）', vmF.runInContext(`shopPayerChip(__t2, __s3, '${kb}')`, fctx).includes('還沒填誰付的'));
+  const st2f = vmF.runInContext('settlement(__t2)', fctx);
+  const st2b = run('settlement_(__t2)');
+  check('分帳：有分給別人卻沒填誰付的 → 列為沒填，不算轉帳；只有自己的不提醒', st2f.unassigned === 1 && st2f.total === 0 && st2b.unassigned === 1 && st2b.total === 0);
   ctx.__vals = [1, 1, 1];
   check('佔比：三人平分也是 100%（34/33/33）', run('sharePcts_(__vals, 3)').join() === '34,33,33');
 }

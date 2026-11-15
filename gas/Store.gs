@@ -951,8 +951,8 @@ function viewData_(token) {
   const v = typeof token === 'string' && /^[a-f0-9]{40}$/.test(token) ? readTable_('Views').find((x) => x.token === token) : null;
   const trip = v ? loadTrips_(v.userId).find((t) => t.id === v.tripId) : null;
   if (!trip) throw apiError_(404, '這個連結已經失效（可能被換新、旅程已刪除，或分享的人已退出旅程）');
-  // 旅伴的購物只留有填「誰付的」的（分帳要用），其他不給
-  const others = (trip.othersShopping || []).map((g) => ({ name: g.name, key: g.key, items: g.items.filter((s) => s.paidBy) })).filter((g) => g.items.length);
+  // 旅伴的購物（有填誰付的、或有分給別人的才帶：分帳與每人花費要用；他自己買的不外流）
+  const others = (trip.othersShopping || []).map((g) => ({ name: g.name, key: g.key, items: g.items.filter((s) => s.paidBy || (s.splitWith || []).some((k) => k !== g.key)) })).filter((g) => g.items.length);
   delete trip.othersShopping;
   delete trip.role;
   delete trip.metroMaps;

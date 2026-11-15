@@ -155,22 +155,22 @@ function shopCard(s, currency, where = '') {
 }
 
 // 旅伴的購物項目：只能看，不能勾、不能改
-function shopCardReadonly(s, currency, where = '') {
+function shopCardReadonly(s, currency, where = '', owner = null) {
   return `
     <li class="shop-card readonly${s.done ? ' done' : ''}">
       ${shopImg(s, 'shop-photo-btn') ? `<div class="shop-photo">${shopImg(s, 'shop-photo-btn')}</div>` : ''}
       <div class="shop-card-name"><span class="shop-ro-check" aria-hidden="true">${s.done ? '☑' : '☐'}</span><span>${esc(s.text)}</span></div>
       ${where ? `<div class="shop-where muted">${where}</div>` : ''}
-      <div class="shop-chips">${payChip(s)}${typeof shopPayerChip === 'function' ? shopPayerChip(currentTrip(), s) : ''}</div>
+      <div class="shop-chips">${payChip(s)}${typeof shopPayerChip === 'function' ? shopPayerChip(currentTrip(), s, owner) : ''}</div>
       ${s.note ? `<div class="shop-ro-note">${esc(s.note)}</div>` : ''}
       ${Number(s.price) || cleanQty(s.quantity) > 1 ? `<div class="shop-ro-price">${shopMoneyHtml(s, currency)}</div>` : ''}
     </li>`;
 }
 
 /** 一個人的購物清單，依天分組。editable＝自己的（可以改、可以新增），否則是旅伴的（只能看） */
-function shopDaySections(t, dates, items, editable) {
+function shopDaySections(t, dates, items, editable, owner = null) {
   const idx = shoppingIndex(t, dates, items);
-  const card = editable ? shopCard : shopCardReadonly;
+  const card = editable ? shopCard : (s, cur, where = '') => shopCardReadonly(s, cur, where, owner);
   const days = dates.map((d, i) => {
     const acts = (t.days[d] || []).filter((a) => idx.byAct.has(a.id));
     const dayTotal = shopCost(shoppingOn(t, idx, d), t.currency);
@@ -222,7 +222,7 @@ function shoppingView(t, dates) {
   const othersHtml = others.map((g, i) => `
     <details class="shop-owner shop-owner-other owner-${i % 4}" open>
       <summary><span class="shop-owner-name">👤 ${esc(g.name)} 的購物清單</span><span class="chip">只能看</span><span class="muted shop-owner-sum">${shopSummary(g.items, t.currency)}</span></summary>
-      ${shopDaySections(t, dates, g.items, false)}
+      ${shopDaySections(t, dates, g.items, false, g.key)}
     </details>`).join('');
 
   return `
@@ -362,7 +362,12 @@ function openShopDialog(preset, item) {
     shopForm.elements.priceCurrency.innerHTML = curs.map((c) => `<option value="${c}">${c === 'JPY' ? '¥ 日幣' : c === 'TWD' ? 'NT$ 台幣' : c}</option>`).join('');
     shopForm.elements.priceCurrency.value = item ? shopCur(item, t.currency) : lastShopCurrency(t);
     shopForm.elements.payment.value = item ? payKey(item) : 'unsure';
-    if (typeof fillSplitFields === 'function') fillSplitFields(t, item, shopForm, '#shop-split-fields', '#shop-split-with-list');
+    if (typeof fillSplitFields === 'function') {
+      // 分攤的人：照這一樣原本的設定；新的（或舊資料沒設定過的）預設只勾自己＝自己買的
+      const me = (splitMembers(t).find((m) => m.me) || {}).key;
+      const keys = item ? shopSharers(item, me, splitMembers(t).map((m) => m.key)) : (me ? [me] : null);
+      fillSplitFields(t, item, shopForm, '#shop-split-fields', '#shop-split-with-list', keys);
+    }
     updateShopPriceHint();
   }
   shopForm.elements.date.value = date;
@@ -390,7 +395,7 @@ shopForm?.addEventListener('submit', (e) => {
     quantity: cleanQty(f.get('quantity')),
     priceCurrency: (() => { const c = CURRENCIES.includes(f.get('priceCurrency')) ? f.get('priceCurrency') : ''; return c && c !== t.currency ? c : ''; })(),
     payment: Object.hasOwn(PAYMENTS, f.get('payment')) ? f.get('payment') : 'unsure',
-    ...(typeof readSplitFields === 'function' ? readSplitFields(t, prevItem, shopForm, '#shop-split-fields') : {}),
+    ...(typeof readSplitFields === 'function' ? readSplitFields(t, prevItem, shopForm, '#shop-split-fields', true) : {}),
   } : {};
   // 新增時可以用「、」一次加好幾樣；編輯時整段都是同一樣
   const names = editingShopId ? [raw.slice(0, 80)] : [...new Set(raw.split(/[、，,]+/).map((s) => s.trim().slice(0, 80)).filter(Boolean))];

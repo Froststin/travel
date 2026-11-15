@@ -682,7 +682,7 @@ function sharesPanel(shares) {
           <span class="amount">${ntd(p.total)}</span>
         </div>`).join('')}
       <div class="bar-row share-total"><span>全部總計</span><span></span><span class="amount">${ntd(shares.total)}</span></div>
-      <p class="muted hint">每筆照「分攤的人」平分（沒勾就是大家平分）；購物沒填「誰付的」算在清單主人身上；已退出的旅伴合併成一列。金額四捨五入到整數，表格裡各格加起來可能跟合計差幾元。誰先付了多少、誰該給誰，看下面的「🤝 分帳」。</p>
+      <p class="muted hint">每筆照「分攤的人」平分：行程沒勾就是大家平分，購物勾了誰就由誰平分；已退出的旅伴合併成一列。金額四捨五入到整數，表格裡各格加起來可能跟合計差幾元。誰先付了多少、誰該給誰，看下面的「🤝 分帳」。</p>
     </section>`;
 }
 
