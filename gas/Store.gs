@@ -1142,41 +1142,56 @@ function apiError_(status, message) {
 /* ---------- 地點查詢（Google）：OpenStreetMap 查不到時，網站改請後端用 Google 找 ---------- */
 /**
  * 用 Apps Script 內建的 Maps 服務查地點（不用金鑰、不用綁付款帳戶；個人帳號每天約 1,000 次）
- * center：{ lat, lng } 目的地附近，查詢時優先找這一帶，避免同名地點跑到別的國家。結果快取 6 小時
- * @return {{lat, lng, geoName, area} | null}
+ * center：{ lat, lng } 目的地附近，優先找這一帶；dest：目的地名稱（例如「日本東京」）
+ * 會試幾種寫法：原文 →「原文 目的地」→ 拿掉後面的分店名（「六歌仙 新宿西口總店」→「六歌仙」）；
+ * 離目的地超過 300 公里的結果不採用（同名地點跑到別的城市）。結果快取 6 小時
+ * @return {{lat, lng, geoName, area} | null}；查詢失敗（例如額度用完）時 geocodePlace_.lastError = 'quota'
  */
-function geocodePlace_(q, center) {
+function geocodePlace_(q, center, dest) {
+  geocodePlace_.lastError = '';
   const query = str_(q, 200).trim();
   if (!query) return null;
   const c = center && typeof center.lat === 'number' && typeof center.lng === 'number' && Math.abs(center.lat) <= 90 && Math.abs(center.lng) <= 180
     ? { lat: Number(center.lat), lng: Number(center.lng) } : null;
+  const place = str_(dest, 60).trim();
   const cache = CacheService.getScriptCache();
-  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, `${query}|${c ? `${c.lat.toFixed(2)},${c.lng.toFixed(2)}` : ''}`);
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, `v2|${query}|${place}|${c ? `${c.lat.toFixed(2)},${c.lng.toFixed(2)}` : ''}`);
   const key = `geo_${Utilities.base64EncodeWebSafe(digest).slice(0, 40)}`;
   const hit = cache.get(key);
   if (hit) return hit === 'none' ? null : JSON.parse(hit);
-  let res;
-  try {
-    const g = Maps.newGeocoder().setLanguage('zh-TW');
-    if (c) g.setBounds(c.lat - 1.3, c.lng - 1.6, c.lat + 1.3, c.lng + 1.6);
-    res = g.geocode(query);
-  } catch (err) {
-    console.warn('Google 地點查詢失敗', err);
-    return null; // 用完額度或暫時失敗：不快取，下次再試
-  }
-  const top = res && res.status === 'OK' && res.results && res.results[0];
-  if (!top || !top.geometry || !top.geometry.location) {
-    cache.put(key, 'none', 21600);
-    return null;
-  }
-  const comp = (type) => ((top.address_components || []).find((x) => (x.types || []).includes(type)) || {}).long_name || '';
-  const out = {
-    lat: Math.round(Number(top.geometry.location.lat) * 1e6) / 1e6,
-    lng: Math.round(Number(top.geometry.location.lng) * 1e6) / 1e6,
-    geoName: str_(top.formatted_address || query, 80),
-    area: str_(comp('sublocality_level_1') || comp('locality') || comp('administrative_area_level_2') || comp('administrative_area_level_1'), 40),
+  const parts = query.split(/[\s　]+/).filter(Boolean);
+  const tries = [...new Set([query, place && !query.includes(place) ? `${query} ${place}` : '', parts.length > 1 ? `${parts[0]}${place ? ` ${place}` : ''}` : ''].filter(Boolean))];
+  const near = (p) => {
+    if (!c) return true;
+    const rad = (d) => (d * Math.PI) / 180;
+    const h = Math.sin(rad(p.lat - c.lat) / 2) ** 2 + Math.cos(rad(c.lat)) * Math.cos(rad(p.lat)) * Math.sin(rad(p.lng - c.lng) / 2) ** 2;
+    return 6371 * 2 * Math.asin(Math.sqrt(h)) <= 300;
   };
-  if (!(Math.abs(out.lat) <= 90 && Math.abs(out.lng) <= 180)) return null;
-  cache.put(key, JSON.stringify(out), 21600);
-  return out;
+  for (const t of tries) {
+    let res;
+    try {
+      const g = Maps.newGeocoder().setLanguage('zh-TW');
+      if (c) g.setBounds(c.lat - 1.3, c.lng - 1.6, c.lat + 1.3, c.lng + 1.6);
+      res = g.geocode(t);
+    } catch (err) {
+      console.warn('Google 地點查詢失敗', err);
+      geocodePlace_.lastError = 'quota';
+      return null; // 用完額度或暫時失敗：不快取，下次再試
+    }
+    const top = res && res.status === 'OK' && (res.results || []).find((r) => r.geometry && r.geometry.location
+      && near({ lat: Number(r.geometry.location.lat), lng: Number(r.geometry.location.lng) }));
+    if (!top) continue;
+    const comp = (type) => ((top.address_components || []).find((x) => (x.types || []).includes(type)) || {}).long_name || '';
+    const out = {
+      lat: Math.round(Number(top.geometry.location.lat) * 1e6) / 1e6,
+      lng: Math.round(Number(top.geometry.location.lng) * 1e6) / 1e6,
+      geoName: str_(top.formatted_address || t, 80),
+      area: str_(comp('sublocality_level_1') || comp('locality') || comp('administrative_area_level_2') || comp('administrative_area_level_1'), 40),
+    };
+    if (!(Math.abs(out.lat) <= 90 && Math.abs(out.lng) <= 180)) continue;
+    cache.put(key, JSON.stringify(out), 21600);
+    return out;
+  }
+  cache.put(key, 'none', 21600);
+  return null;
 }

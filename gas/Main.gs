@@ -156,9 +156,10 @@ function apiAction_(userId, body) {
         const cache = CacheService.getScriptCache();
         const key = `geoq_${Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, userId)).slice(0, 20)}_${todayStr_()}`;
         const used = Number(cache.get(key)) || 0;
-        if (used >= 200) return { hit: null, limited: true };
+        if (used >= 200) return { hit: null, reason: 'limit' };
         cache.put(key, String(used + 1), 86400);
-        return { hit: geocodePlace_(body.q, body.center) };
+        const hit = geocodePlace_(body.q, body.center, body.dest);
+        return { hit, reason: hit ? '' : (geocodePlace_.lastError || 'none') };
       }
 
     case 'shopPhotos':

@@ -34,9 +34,19 @@ function dayColor(i) {
   return DAY_COLORS[i % DAY_COLORS.length];
 }
 
-// 定位用的「地點|連結」：兩者都沒變，之前查到的座標才算數
+// 沒填「地點」時用標題查（例如「清水寺」）；交通類或「返程、自由活動」這種不是地點的不查
+const GEO_TITLE_SKIP = /返程|回程|出發|集合|自由活動|休息|移動|搭車|轉車|退房|check.?out/i;
+function actGeoQuery(a) {
+  const loc = (a.location || '').trim();
+  if (loc) return loc;
+  const title = (a.title || '').trim();
+  return title && catKey(a) !== 'transport' && !GEO_TITLE_SKIP.test(title) ? title : '';
+}
+
+// 定位用的「地點|連結」：兩者都沒變，之前查到的座標才算數（用標題查的前面加 #，改了標題也會重查）
 function actGeoKey(a) {
-  return `${(a.location || '').trim()}|${(a.mapUrl || '').trim()}`;
+  const loc = (a.location || '').trim();
+  return `${loc || (actGeoQuery(a) ? `#${actGeoQuery(a)}` : '')}|${(a.mapUrl || '').trim()}`;
 }
 
 /**
@@ -44,7 +54,7 @@ function actGeoKey(a) {
  *   ok＝有座標（{ lat, lng }）、none＝找不到、todo＝還沒定位、skip＝沒有地點也沒有連結（不放在地圖上）
  */
 function actGeo(a) {
-  const loc = (a.location || '').trim();
+  const loc = actGeoQuery(a);
   if (!loc && !(a.mapUrl || '').trim()) return { state: 'skip' };
   const fromUrl = typeof coordsFromMapUrl === 'function' ? coordsFromMapUrl(a.mapUrl) : null;
   if (fromUrl) return { state: 'ok', ...fromUrl };
@@ -136,7 +146,8 @@ function mapView(t, dates) {
           <li class="map-missing">
             <span class="chip" style="background:${dayColor(i)};color:#fff">Day ${i + 1}</span>
             <button type="button" class="link-btn" data-action="open-activity" data-date="${esc(d)}" data-id="${esc(a.id)}">${esc(a.title)}${a.location ? `<small class="muted">📍 ${esc(a.location)}</small>` : ''}</button>
-            <a class="btn btn-sm no-print" href="${esc(mapUrl(a.location || a.title))}" target="_blank" rel="noopener" title="用名稱在 Google 地圖找；找到後按「分享」複製連結，貼到這個行程的「Google 地圖連結」">🔍 Google 地圖</a>
+            ${cloudOn() && actGeoQuery(a) ? `<button type="button" class="btn btn-sm no-print" data-action="map-regeo" data-date="${esc(d)}" data-id="${esc(a.id)}">🔄 用 Google 再查</button>` : ''}
+            <a class="btn btn-sm no-print" href="${esc(mapUrl(actGeoQuery(a) || a.title))}" target="_blank" rel="noopener" title="用名稱在 Google 地圖找；找到後按「分享」複製連結，貼到這個行程的「Google 地圖連結」">🔍 Google 地圖</a>
           </li>`).join('')}</ul>
       </section>` : ''}`;
 }
@@ -283,8 +294,8 @@ async function geocodeActivities(tripId) {
   const first = getTrip(tripId);
   // 還沒定位的照常查（OpenStreetMap → Google）；之前標成找不到的，登入時用 Google 再查一次
   const todo = first ? allActivities(first)
-    .filter((a) => actGeo(a).state === 'todo' || (cloudOn() && actGeo(a).state === 'none' && (a.location || '').trim() && !mapGoogleTried.has(actGeoKey(a))))
-    .map((a) => ({ id: a.id, key: actGeoKey(a), q: a.location.trim(), googleOnly: actGeo(a).state === 'none' })) : [];
+    .filter((a) => actGeo(a).state === 'todo' || (cloudOn() && actGeo(a).state === 'none' && actGeoQuery(a) && !mapGoogleTried.has(actGeoKey(a))))
+    .map((a) => ({ id: a.id, key: actGeoKey(a), q: actGeoQuery(a), googleOnly: actGeo(a).state === 'none' })) : [];
   if (!todo.length) return setMapStatus('');
   mapGeoBusy = true;
   const results = new Map();
@@ -293,7 +304,8 @@ async function geocodeActivities(tripId) {
     for (let i = 0; i < todo.length; i++) {
       setMapStatus(`📍 定位中 ${i + 1}/${todo.length}：${todo[i].q}`);
       mapGoogleTried.add(todo[i].key); // 這次開啟期間 Google 查過了（geoLookup 查不到時也會問 Google），不要再重查
-      results.set(todo[i].id, todo[i].googleOnly ? await googleGeocode(todo[i].q, center) : await geoLookup(todo[i].q, center)); // 間隔由 geoThrottle 控制
+      const dest = first.destination || '';
+      results.set(todo[i].id, todo[i].googleOnly ? await googleGeocode(todo[i].q, center, dest) : await geoLookup(todo[i].q, center, dest)); // 間隔由 geoThrottle 控制
     }
   } catch (err) {
     console.warn('地圖定位失敗', err);
@@ -324,7 +336,40 @@ async function geocodeActivities(tripId) {
   }
 }
 
+/* ---------- 手動用 Google 再查一次（找不到位置清單的按鈕） ---------- */
+const GOOGLE_REASON_TEXT = {
+  none: 'Google 也查不到這個名稱，可以改「地點」的寫法（店名加分店、地標），或按「🔍 Google 地圖」找到後貼連結',
+  limit: '你今天的 Google 查詢次數用完了（每人每天 200 次），明天再試',
+  quota: 'Google 查詢額度今天用完了，明天再試',
+  error: '連不上雲端，請確認網路後再試',
+  login: '要用 LINE 登入才能用 Google 查',
+};
+
+async function regeoActivity(tripId, date, id) {
+  const t0 = getTrip(tripId);
+  const a0 = t0 && (t0.days[date] || []).find((x) => x.id === id);
+  if (!a0) return;
+  const q = actGeoQuery(a0);
+  const key = actGeoKey(a0);
+  toast(`正在用 Google 查「${q}」…`);
+  const center = await destinationCenter(t0).catch(() => null);
+  const hit = await googleGeocode(q, center, t0.destination || '');
+  const t = getTrip(tripId);
+  const a = t && (t.days[date] || []).find((x) => x.id === id);
+  if (!a || actGeoKey(a) !== key) return;
+  if (!hit) return toast(GOOGLE_REASON_TEXT[googleGeoReason] || GOOGLE_REASON_TEXT.none, { duration: 6000 });
+  Object.assign(a, { lat: hit.lat, lng: hit.lng, geo: 'ok', geoKey: key });
+  commitTrip(t);
+  toast(`找到了：${hit.geoName}`);
+  if (currentTrip() && currentTrip().id === tripId && currentTab === 'map') { mapViews.delete(viewKey(tripId)); renderTrip(t); }
+}
+
 /* ---------- 操作 ---------- */
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action="map-regeo"]');
+  if (el && currentTrip()) regeoActivity(currentTrip().id, el.dataset.date, el.dataset.id);
+});
+
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action="map-day"]');
   const t = currentTrip();

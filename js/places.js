@@ -189,20 +189,24 @@ async function geoSearchSmart(query, center) {
  * OpenStreetMap 查不到時，請後端用 Google 的地點查詢（Apps Script 內建 Maps 服務，不用金鑰）以名稱找位置。
  * 要登入雲端才能用；沒登入或查不到回傳 null
  */
-async function googleGeocode(query, center) {
-  if (!cloudOn()) return null;
+let googleGeoReason = ''; // 上一次 Google 查不到的原因：none 查無結果、limit／quota 今天的額度用完、error 連線失敗
+async function googleGeocode(query, center, dest = '') {
+  googleGeoReason = '';
+  if (!cloudOn()) { googleGeoReason = 'login'; return null; }
   try {
-    const { hit } = await Cloud.call('geocode', { q: query, center });
+    const { hit, reason } = await Cloud.call('geocode', { q: query, center, dest });
+    googleGeoReason = hit ? '' : (reason || 'none');
     return hit ? { ...hit, geoName: `${hit.geoName}（Google）`.slice(0, 80) } : null;
   } catch (err) {
     console.warn('Google 地點查詢失敗', err);
+    googleGeoReason = 'error';
     return null;
   }
 }
 
-/** 先查 OpenStreetMap，查不到再用 Google */
-async function geoLookup(query, center) {
-  return (await geoSearchSmart(query, center)) || googleGeocode(query, center);
+/** 先查 OpenStreetMap，查不到再用 Google（dest：目的地名稱，Google 會試「名稱 目的地」） */
+async function geoLookup(query, center, dest = '') {
+  return (await geoSearchSmart(query, center)) || googleGeocode(query, center, dest);
 }
 
 // 由座標查所在的區（用來當分組的名稱），查不到就算了
@@ -252,7 +256,7 @@ async function organizePlaces(tripId) {
     for (let i = 0; i < todo.length; i++) {
       organizing = `正在查位置 ${i + 1} / ${todo.length}：${todo[i].name}`;
       refreshPlaces(tripId);
-      results.set(todo[i].id, await geoLookup(todo[i].name, center));
+      results.set(todo[i].id, await geoLookup(todo[i].name, center, first.destination || ''));
     }
   } catch (err) {
     console.warn('定位失敗', err);

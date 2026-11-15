@@ -1639,6 +1639,22 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   check('Google 定位：額度用完時回傳空的、不出錯', api('geocode', { q: '另一家店' }).ok && api('geocode', { q: '另一家店' }).hit === null);
   flags.geocodeThrow = false;
   check('Google 定位：要登入', api('geocode', { q: '找得到的店' }, 'bad').status === 401);
+  // 使用者回報：還是有地點找不到 → 試「名稱 目的地」、拿掉分店名、太遠的不採用、回傳原因
+  const asked = [];
+  flags.geocode = (q) => {
+    asked.push(q);
+    if (q === '一蘭 日本東京') return { status: 'OK', results: [{ formatted_address: '東京都新宿區', geometry: { location: { lat: 35.69, lng: 139.70 } } }] };
+    if (q === '同名寺') return { status: 'OK', results: [{ formatted_address: '大阪', geometry: { location: { lat: 34.69, lng: 135.50 } } }] };
+    return { status: 'ZERO_RESULTS', results: [] };
+  };
+  const tokyo = { lat: 35.68, lng: 139.76 };
+  const gA = api('geocode', { q: '一蘭 新宿中央東口店', center: tokyo, dest: '日本東京' });
+  check('Google 定位：原文查不到時試「名稱 目的地」、拿掉分店名', gA.hit && gA.hit.lat === 35.69 && asked.includes('一蘭 新宿中央東口店 日本東京') && asked.includes('一蘭 日本東京'), JSON.stringify(asked));
+  const gB = api('geocode', { q: '同名寺', center: tokyo, dest: '' });
+  check('Google 定位：離目的地超過 300 公里的不採用，回傳原因', gB.hit === null && gB.reason === 'none', JSON.stringify(gB));
+  flags.geocodeThrow = true;
+  check('Google 定位：額度用完回傳 quota', api('geocode', { q: '新的地方', center: tokyo }).reason === 'quota');
+  flags.geocodeThrow = false;
   flags.geocode = (q, bounds) => ({ status: 'OK', results: [{ formatted_address: 'x', geometry: { location: { lat: 1, lng: 2 } }, _b: bounds }] });
   let seenBounds = 'unset';
   const orig = flags.geocode;
