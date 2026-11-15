@@ -45,6 +45,40 @@ function settlement_(trip) {
   return { rows, transfers: settleTransfers_(rows), unassigned, total };
 }
 
+/**
+ * 每人花費（LINE「預算」用）：每筆照「分攤的人」平分（沒勾＝全部成員），行程花費有沒有填誰付的都一樣；
+ * 購物沒填「誰付的」算在清單主人身上。和網站 js/split.js 的 memberShares 同算法（這裡只算整趟總計）。
+ * @return {null | { rows: [{ key, name, me, total }], total }} 不是共用旅程時回傳 null
+ */
+function memberShares_(trip) {
+  const cur = trip.currency;
+  const members = (trip.members || []).filter((m) => m.key);
+  if (members.length < 2) return null;
+  const everyone = members.map((m) => m.key);
+  const ownerOfMine = (members.find((m) => m.me) || {}).key || '';
+  const people = new Map(members.map((m) => [m.key, { key: m.key, name: m.name, me: !!m.me, total: 0 }]));
+  let total = 0;
+  const add = (keys, amount) => {
+    if (!(amount > 0) || !keys.length) return;
+    total += amount;
+    keys.forEach((k) => {
+      if (!people.has(k)) people.set(k, { key: k, name: '已退出的旅伴', me: false, total: 0 });
+      people.get(k).total += amount / keys.length;
+    });
+  };
+  const split = (x) => (x.splitWith && x.splitWith.length ? x.splitWith : everyone);
+  const valid = new Set(dateRange_(trip.startDate, trip.endDate));
+  for (const [d, list] of Object.entries(trip.days || {})) {
+    if (!valid.has(d)) continue;
+    for (const a of list) add(split(a), twdOrRaw_(a.cost, a.costCurrency || cur) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)));
+  }
+  const lists = [{ owner: ownerOfMine, items: trip.shopping || [] }].concat((trip.othersShopping || []).map((g) => ({ owner: g.key, items: g.items || [] })));
+  for (const g of lists) {
+    for (const s of g.items) add(s.paidBy ? split(s) : (g.owner ? [g.owner] : everyone), shopTwd_(s, cur));
+  }
+  return { rows: [...people.values()].filter((p) => everyone.includes(p.key) || p.total > 0.005), total };
+}
+
 /** 欠錢的人依序付給被欠最多的人，筆數最少；不到 1 元的零頭略過 */
 function settleTransfers_(rows) {
   const debtors = rows.filter((p) => p.net < -0.5).map((p) => ({ p, left: -p.net })).sort((a, b) => b.left - a.left);

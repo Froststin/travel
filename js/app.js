@@ -637,9 +637,10 @@ function activityItem(a, date, currency, shopItems = [], mark = null) {
 // 預算的各項數字（全部換算成台幣），預算頁與匯出的靜態網站共用
 function budgetData(t, dates) {
   const all = allActivities(t);
-  // 購物清單的金額也算進來，歸在「購物」
-  const shopItems = t.shopping || [];
-  const shop = shoppingIndex(t, dates);
+  // 購物清單的金額也算進來，歸在「購物」；共用旅程算整趟的（旅伴的購物也算）
+  const shared = typeof splitMembers === 'function' && splitMembers(t).length > 0;
+  const shopItems = (t.shopping || []).concat(shared ? (t.othersShopping || []).flatMap((g) => g.items || []) : []);
+  const shop = shoppingIndex(t, dates, shopItems);
   const shopTotal = shopCost(shopItems, t.currency);
   const looseShop = shopCost(shopItems, t.currency) - dates.reduce((s, d) => s + shopCost(shoppingOn(t, shop, d), t.currency), 0);
   const spent = sumCost(all, t.currency) + shopTotal;
@@ -663,11 +664,36 @@ function budgetData(t, dates) {
   const maxCat = Math.max(1, ...byCat.map((x) => x.sum));
 
   const missing = missingRates(all, t.currency, t.budget, shopItems);
-  return { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing };
+  const shares = shared && typeof memberShares === 'function' ? memberShares(t, dates) : null;
+  return { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares };
+}
+
+/** 預算頁的「👥 每人花費」：每人的總計、佔比，最後是全部總計（共用旅程才有） */
+function sharesPanel(shares) {
+  if (!shares) return '';
+  const max = Math.max(1, ...shares.rows.map((p) => p.total));
+  return `
+    <section class="panel">
+      <h3>👥 每人花費</h3>
+      ${shares.rows.map((p) => `
+        <div class="bar-row">
+          <span>${esc(p.name)}${p.me ? '（我）' : ''}<small class="muted share-pct">${shares.total ? Math.round((p.total / shares.total) * 100) : 0}%</small></span>
+          <div class="progress"><span style="width:${(p.total / max) * 100}%"></span></div>
+          <span class="amount">${ntd(p.total)}</span>
+        </div>`).join('')}
+      <div class="bar-row share-total"><span>全部總計</span><span></span><span class="amount">${ntd(shares.total)}</span></div>
+      <p class="muted hint">每筆照「分攤的人」平分（沒勾就是大家平分）；購物沒填「誰付的」算在清單主人身上。誰先付了多少、誰該給誰，看下面的「🤝 分帳」。</p>
+    </section>`;
 }
 
 function budgetView(t, dates) {
-  const { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing } = budgetData(t, dates);
+  const { shop, shopTotal, looseShop, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares } = budgetData(t, dates);
+  const cols = shares ? shares.rows : [];
+  // 共用旅程：格子裡只寫數字（標題註明 NT$），手機上才放得下每個人
+  const amt = (n) => (cols.length ? Math.round(Number(n) || 0).toLocaleString() : ntd(n));
+  const personCells = (fn) => cols.map((p) => `<td class="num">${amt(fn(p))}</td>`).join('');
+  // 共用旅程的表格欄位多，拿掉「項目數」，手機上才放得下每個人
+  const countCell = (v) => (cols.length ? '' : `<td>${v}</td>`);
 
   return `
     ${missing.length ? `<p class="panel rate-warn">⚠️ 還沒取得 ${esc(missing.join('、'))} 的匯率，這些金額暫時直接當成台幣加總，下面的數字不準；匯率載入後會自動更正。</p>` : ''}
@@ -693,19 +719,23 @@ function budgetView(t, dates) {
           <span class="amount">${ntd(x.sum)}</span>
         </div>`).join('') : '<p class="muted">行程項目還沒有填寫花費。</p>'}
     </section>
+    ${sharesPanel(shares)}
     <section class="panel">
-      <h3>每日花費</h3>
-      <table class="table">
-        <thead><tr><th>日期</th><th>項目數</th><th>花費</th></tr></thead>
+      <h3>每日花費${cols.length ? '<span class="muted shop-day-total">金額單位 NT$</span>' : ''}</h3>
+      <div class="table-scroll">
+      <table class="table${cols.length ? ' table-shares' : ''}">
+        <thead><tr><th>日期</th>${cols.length ? '' : '<th>項目數</th>'}<th${cols.length ? ' class="num"' : ''}>${cols.length ? '全部' : '花費'}</th>${cols.map((p) => `<th class="num">${esc(p.name)}${p.me ? '（我）' : ''}</th>`).join('')}</tr></thead>
         <tbody>
           ${dates.map((d, i) => {
             const list = t.days[d] || [];
-            return `<tr class="row-link" data-action="jump-day" data-date="${d}" title="看這天的行程"><td><a href="#day-${d}">Day ${i + 1}・${prettyDate(d)}</a></td><td>${list.length}</td><td>${ntd(sumCost(list, t.currency) + shopCost(shoppingOn(t, shop, d), t.currency))}</td></tr>`;
+            return `<tr class="row-link" data-action="jump-day" data-date="${d}" title="看這天的行程"><td><a href="#day-${d}">Day ${i + 1}${cols.length ? `<br><small>${+d.slice(5, 7)}/${+d.slice(8)}</small>` : `・${prettyDate(d)}`}</a></td>${countCell(list.length)}<td${cols.length ? ' class="num"' : ''}>${amt(sumCost(list, t.currency) + shopCost(shoppingOn(t, shop, d), t.currency))}</td>${personCells((p) => p.days[d] || 0)}</tr>`;
           }).join('')}
-          ${looseShop > 0.005 ? `<tr><td>🛒 購物清單（不指定日期）</td><td>—</td><td>${ntd(looseShop)}</td></tr>` : ''}
+          ${looseShop > 0.005 ? `<tr><td>🛒 購物清單${cols.length ? '<br><small>不指定日期</small>' : '（不指定日期）'}</td>${countCell('—')}<td${cols.length ? ' class="num"' : ''}>${amt(looseShop)}</td>${personCells((p) => p.loose)}</tr>` : ''}
+          ${cols.length ? `<tr class="total-row"><td>總計</td><td class="num">${amt(spent)}</td>${personCells((p) => p.total)}</tr>` : ''}
         </tbody>
       </table>
-      ${shopTotal ? `<p class="muted hint">※ 含${cloudOn() && Array.isArray(t.members) && t.members.length > 1 ? '你自己的' : ''}購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
+      </div>
+      ${shopTotal ? `<p class="muted hint">※ 含${shared ? '所有旅伴的' : ''}購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
       ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
     </section>
     ${typeof settleView === 'function' ? settleView(t) : ''}`;

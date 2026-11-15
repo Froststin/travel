@@ -913,3 +913,13 @@ dialog { overscroll-behavior: contain; }
 .metro-stage { flex: 1; position: relative; overflow: hidden; touch-action: none; cursor: grab; }
 .metro-stage:active { cursor: grabbing; }
 .metro-stage img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; }
+
+/* ---------- 預算：每人花費 ---------- */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-shares { font-size: .85rem; }
+.table-shares th, .table-shares td { white-space: nowrap; padding-left: 6px; padding-right: 6px; }
+.table-shares td:first-child { white-space: normal; min-width: 5.5em; }
+.table-shares .num { text-align: right; }
+.table .total-row td { font-weight: 700; border-top: 2px solid var(--border); }
+.share-pct { margin-left: 6px; font-weight: 400; font-size: .78rem; }
+.share-total { font-weight: 700; border-top: 1px solid var(--border); padding-top: 8px; }

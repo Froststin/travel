@@ -449,7 +449,7 @@ r = say('買 今天 U2的東西 100', 'U2');
 check('旅伴加的東西只在自己那份', r.text.includes('已加入') && tripOf('U2').shopping.map((s) => s.text).join() === 'U2的東西' && JSON.stringify(tripOf('U1').shopping) === mineBefore, r.text);
 check('查當天行程只列出自己要買的', say('今天', 'U2').text.includes('🛒 要買：U2的東西') && !say('今天').text.includes('U2的東西'));
 const u2budget = Number(say('預算', 'U2').text.match(/購物 NT\$([\d,]+)/)[1].replace(/,/g, ''));
-check('預算的購物金額只算自己的', u2budget === 100 && shopCat() === 0, `U2 ${u2budget}／U1 ${shopCat()}`);
+check('預算的購物金額是整趟的（2026-11-15 起旅伴的也算）', u2budget === 100 && shopCat() === 100, `U2 ${u2budget}／U1 ${shopCat()}`);
 let u2trip = tripOf('U2');
 u2trip.shopping.push({ id: 'u2-web', text: '網站加的', date: '', activityId: '', price: 50 });
 res = api('saveTrip', { trip: u2trip, baseUpdatedAt: u2trip.updatedAt }, 'good:U2');
@@ -630,7 +630,7 @@ const viewToken = (res.url || '').split('?view=')[1];
 check('產生連結：指到網站、帶 40 碼代碼，再要一次是同一個', res.ok && /^[a-f0-9]{40}$/.test(viewToken) && res.url.startsWith('https://froststin.github.io/travel/?view=') && api('viewLink', { tripId: vTrip.id }).url === res.url, JSON.stringify(res));
 let vd = api('view', { token: viewToken }, '');
 check('檢視資料：不用登入，憑代碼拿到行程與分享者自己的購物清單', vd.ok && vd.trip.id === vTrip.id && vd.trip.shopping.some((s) => s.text === '檢視頁測試用') && Object.values(vd.trip.days).flat().some((a) => a.title === '<b>夜景</b>') && Array.isArray(vd.journal), JSON.stringify(vd).slice(0, 200));
-check('檢視資料：旅伴的清單只帶有填誰付的（分帳用）、不外流 LINE userId 與成員代號', (vd.trip.othersShopping || []).every((g) => g.items.every((x) => x.paidBy)) && !('role' in vd.trip) && vd.trip.members.every((m) => Object.keys(m).sort().join() === 'key,name,role' && /^v\d+$/.test(m.key)) && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
+check('檢視資料：旅伴的清單只帶有填誰付的（分帳用）、不外流 LINE userId 與成員代號', (vd.trip.othersShopping || []).every((g) => g.items.every((x) => x.paidBy)) && !('role' in vd.trip) && vd.trip.members.every((m) => ['key,name,role', 'key,name,role,sharer'].includes(Object.keys(m).sort().join()) && /^v\d+$/.test(m.key)) && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
 check('檢視資料：亂猜的代碼拿不到東西', api('view', { token: 'a'.repeat(40) }, '').status === 404 && api('view', { token: { $ne: '' } }, '').status === 404 && api('view', {}, '').status === 404);
 check('產生連結需要登入、而且要是旅程成員', api('viewLink', { tripId: vTrip.id }, '').status === 401 && api('viewLink', { tripId: vTrip.id }, 'good:U3').status === 403);
 let page = getPage({ view: viewToken });
@@ -1311,6 +1311,44 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   const hj = splitTrip().shopping.find((x) => x.id === 'buy-jpy');
   check('LINE 買到：寫円時先換成旅程幣別再除以數量', Math.abs(hj.price - Math.round((Math.round(ctx.__x * 100) / 100 / 2) * 100) / 100) < 0.011, `${hj.price} ${ctx.__x}`);
   check('LINE 買到：數量 1 的照舊', splitTrip().shopping.find((x) => x.text === '毛巾').price === 120 && !r.text.includes('共 1 個'), r.text);
+}
+
+/* ---------- 預算依人拆分 ---------- */
+{
+  sp = splitTrip();
+  const d1 = sp.startDate;
+  sp.days = { [d1]: [
+    { id: 'ms-a', title: '大家的晚餐', cost: 1000, splitWith: [] },
+    { id: 'ms-b', title: '只有旅伴', cost: 600, splitWith: [k8] },
+  ] };
+  sp.shopping = [
+    { id: 'ms-fly', text: '機票', price: 13500, quantity: 2, paidBy: k7, splitWith: [k7, k8] },
+    { id: 'ms-own', text: '自己的伴手禮', price: 400, quantity: 1 },
+  ];
+  sp.metroMaps = sp.metroMaps;
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  let sp8 = splitTrip('U8');
+  sp8.shopping = [{ id: 'ms-8', text: '旅伴自己的', price: 300, quantity: 1 }];
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  ctx.__t = splitTrip();
+  const ms = run('memberShares_(__t)');
+  const p7 = ms.rows.find((p) => p.key === k7);
+  const p8 = ms.rows.find((p) => p.key === k8);
+  // U7：晚餐 500 + 機票 13500 + 自己的 400 = 14400；U8：晚餐 500 + 600 + 機票 13500 + 自己的 300 = 14900
+  check('每人花費：機票 ×2 27000 兩人分攤 → 各 13500（加上其他各自的）', Math.abs(p7.total - 14400) < 0.01 && Math.abs(p8.total - 14900) < 0.01, JSON.stringify(ms.rows));
+  check('每人花費：每人總計加起來等於全部總計', Math.abs(p7.total + p8.total - ms.total) < 0.01 && Math.abs(ms.total - 29300) < 0.01, ms.total);
+  ctx.__t = splitTrip('U8');
+  const ms8 = run('memberShares_(__t)');
+  check('每人花費：旅伴看到的一樣', Math.abs(ms8.total - 29300) < 0.01 && Math.abs(ms8.rows.find((p) => p.key === k7).total - 14400) < 0.01);
+  r = say('預算', 'U7');
+  check('LINE 預算：列出每人花費與全部總計，總花費含旅伴的購物', r.text.includes('👥 每人花費') && r.text.includes('NT$14,400') && r.text.includes('NT$14,900') && r.text.includes('全部總計：NT$29,300') && r.text.includes('預估花費：NT$29,300'), r.text);
+  const link = api('viewLink', { tripId: 'split-trip' }, 'good:U7').url;
+  const v = api('view', { token: link.split('view=')[1] });
+  ctx.__t = splitTrip();
+  ctx.__t.days['2020-01-01'] = [{ id: 'out', title: '範圍外的舊資料', cost: 99999 }];
+  check('LINE 預算：只算旅程日期內的行程', Math.abs(run('budgetSummary_(__t)').spent - 29300) < 0.01);
+  check('舊版檢視頁的預算不算旅伴的購物', Math.abs(run('budgetSummary_(__t, false)').spent - 29000) < 0.01, run('budgetSummary_(__t, false)').spent);
+  check('檢視頁：標出產生連結的人（每人花費用）', v.trip.members.filter((m) => m.sharer).length === 1);
 }
 
 /* ---------- 網站版本號 ---------- */

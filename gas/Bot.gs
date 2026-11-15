@@ -339,6 +339,13 @@ function cmdBudget_(ctx) {
     lines.push('', '分類：');
     cats.forEach(([k, v]) => lines.push(`${CATEGORY_INFO[k].icon} ${CATEGORY_INFO[k].label} ${ntd_(v)}`));
   }
+  // 共用旅程：每人花費（照分攤的人平分）與全部總計
+  const shares = memberShares_(trip);
+  if (shares && shares.total) {
+    lines.push('', '👥 每人花費：');
+    shares.rows.forEach((p) => lines.push(`・${p.name}${p.me ? '（你）' : ''}：${ntd_(p.total)}（${Math.round((p.total / shares.total) * 100)}%）`));
+    lines.push(`全部總計：${ntd_(shares.total)}`);
+  }
   const { foreign, missing } = b;
   if (missing.length) lines.push('', `⚠️ 目前查不到 ${missing.join('、')} 的匯率，這些金額暫時直接當成台幣加總，數字不準，請稍後再查一次。`);
   if (foreign.length) lines.push('', `※ 金額皆換算成台幣：${foreign.map(rateText_).join('；')}`);

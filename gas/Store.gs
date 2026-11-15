@@ -967,7 +967,9 @@ function viewData_(token) {
     name: g.name, key: hide(g.key),
     items: g.items.map((s) => ({ id: s.id, text: s.text, price: s.price, quantity: s.quantity, priceCurrency: s.priceCurrency, paidBy: hide(s.paidBy), splitWith: s.splitWith.map(hide), done: s.done })),
   }));
-  trip.members = trip.members.map((m) => ({ name: m.name, role: m.role, key: alias.get(m.key) }));
+  // sharer：產生連結的人（他的購物清單沒填誰付的，每人花費要算在他身上）
+  const sharerKey = memberKey_(trip.id, v.userId);
+  trip.members = trip.members.map((m) => Object.assign({ name: m.name, role: m.role, key: alias.get(m.key) }, m.key === sharerKey ? { sharer: true } : {}));
   const journal = loadJournal_(v.userId)
     .filter((j) => j.tripId === trip.id && j.type === 'text')
     .map((j) => ({ id: j.id, tripId: j.tripId, date: j.date, time: j.time, type: 'text', text: j.text, author: j.author, mine: false }));

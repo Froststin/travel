@@ -127,9 +127,12 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
       ${b.byCat.length ? `<table><thead><tr><th>分類</th><th class="num">花費</th></tr></thead><tbody>
         ${b.byCat.map((x) => `<tr><td>${x.icon} ${x.label}</td><td class="num">${ntd(x.sum)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">行程項目還沒有填寫花費。</p>'}
       <table style="margin-top:12px"><thead><tr><th>日期</th><th class="num">花費</th></tr></thead><tbody>
-        ${dates.map((d, i) => `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td class="num">${ntd(sumCost(t.days[d] || [], t.currency) + shopCost(shoppingOn(t, shop, d), t.currency))}</td></tr>`).join('')}
+        ${dates.map((d, i) => `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td class="num">${ntd(sumCost(t.days[d] || [], t.currency) + shopCost(shoppingOn(t, b.shop, d), t.currency))}</td></tr>`).join('')}
         ${b.looseShop > 0.005 ? `<tr><td>🛒 購物清單（不指定日期）</td><td class="num">${ntd(b.looseShop)}</td></tr>` : ''}
       </tbody></table>
+      ${b.shares ? `<table style="margin-top:12px"><thead><tr><th>每人花費</th><th class="num">總計</th></tr></thead><tbody>
+        ${b.shares.rows.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${ntd(p.total)}</td></tr>`).join('')}
+        <tr><td><b>全部總計</b></td><td class="num"><b>${ntd(b.shares.total)}</b></td></tr></tbody></table>` : ''}
       ${b.shopTotal ? `<p class="small muted">※ 含購物清單 ${ntd(b.shopTotal)}（歸在「購物」）</p>` : ''}
       ${b.foreign.length ? `<p class="small muted">※ 金額皆以匯出當時的匯率換算成台幣：${b.foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
       ${b.missing.length ? `<p class="small warn">⚠️ 匯出時還沒取得 ${esc(b.missing.join('、'))} 的匯率，這些金額直接當成台幣加總，數字不準。</p>` : ''}

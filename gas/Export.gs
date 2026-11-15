@@ -1,24 +1,30 @@
 /* ============================================================
  * 匯出：把旅程做成 PDF 放在 Google 雲端硬碟（知道連結的人可檢視）
  * 用途是備份——網站打不開時還能看行程，也可以下載到手機離線看。
- * 內容是匯出當下的快照，之後改了行程要再匯出一次；購物清單只含匯出者自己的。
+ * 內容是匯出當下的快照，之後改了行程要再匯出一次；購物清單只列匯出者自己的。
+ * 預算：PDF 的預估花費在共用旅程算整趟的（含旅伴的購物）；免登入的舊版檢視頁只算自己的，不外流旅伴的私人購物。
  * ============================================================ */
 
 function escHtml_(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-/** 預算摘要（全部換算成台幣）；購物清單的金額歸在「購物」 */
-function budgetSummary_(trip) {
+/**
+ * 預算摘要（全部換算成台幣）；購物清單的金額歸在「購物」
+ * withOthers：共用旅程時把旅伴的購物也算進來（整趟的總花費，LINE「預算」與 PDF 用）
+ */
+function budgetSummary_(trip, withOthers = true) {
   const cur = trip.currency;
-  const all = Object.values(trip.days).flat();
-  const shopSum = (trip.shopping || []).reduce((s, x) => s + shopTwd_(x, cur), 0);
+  // 只算旅程日期內的行程（和網站、每人花費一致）
+  const all = dateRange_(trip.startDate, trip.endDate).flatMap((d) => trip.days[d] || []);
+  const shops = (trip.shopping || []).concat(withOthers && (trip.members || []).length > 1 ? (trip.othersShopping || []).flatMap((g) => g.items || []) : []);
+  const shopSum = shops.reduce((s, x) => s + shopTwd_(x, cur), 0);
   const byCat = { shopping: shopSum };
   all.forEach((a) => {
     byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, a.costCurrency || cur);
     byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
   });
-  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency)])].filter((c) => c && c !== 'TWD');
+  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency), ...shops.filter((x) => Number(x.price)).map((x) => shopCur_(x, cur))])].filter((c) => c && c !== 'TWD');
   return {
     spent: Object.values(byCat).reduce((s, v) => s + v, 0),
     budget: trip.budget ? twdOrRaw_(trip.budget, cur) : 0,
@@ -72,7 +78,7 @@ function exportHtml_(trip, exportedAt, web) {
       ${dayBuy.length ? `<p class="buy">這天要買：${dayBuy.map((s) => shopText_(trip, s)).join('、')}</p>` : ''}`;
   }).join('');
 
-  const b = budgetSummary_(trip);
+  const b = budgetSummary_(trip, !web); // 免登入的舊版檢視頁不算旅伴的購物
   const budget = `
     <h2>預算</h2>
     <table>
