@@ -1531,6 +1531,16 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   say('導航 清水寺', 'U7');
   say('想去 晴空塔', 'U7');
   check('LINE 記帳：導航、想去不會被當成記帳', exTrip().expenses.length === nB);
+  // 使用者回報：手機打字沒空格就認不出來
+  const nS = exTrip().expenses.length;
+  r = say('宵夜1200我付', 'U7');
+  ex = exTrip().expenses;
+  check('LINE 記帳：沒有空格「宵夜1200我付」也認得', ex.length === nS + 1 && ex[ex.length - 1].title === '宵夜' && ex[ex.length - 1].amount === 1200, r.text);
+  r = say('7-11 咖啡 120 我付', 'U7');
+  ex = exTrip().expenses;
+  check('LINE 記帳：項目名稱有數字（7-11 咖啡）也認得', ex[ex.length - 1].title === '7-11 咖啡' && ex[ex.length - 1].amount === 120, JSON.stringify(ex[ex.length - 1]));
+  r = say('我付了1200', 'U7');
+  check('LINE 記帳：像記帳但順序不對時教寫法，不丟給一般查詢', r.text.includes('項目 金額 誰付'), r.text);
   r = say('記帳', 'U7');
   check('LINE「記帳」列出這趟的帳', r.text.includes('🧾') && r.text.includes('晚餐') && r.text.includes('計程車'), r.text);
 

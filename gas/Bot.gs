@@ -140,6 +140,10 @@ function handleText_(ctx, rawText) {
   if (/^(?:記帳|帳目|帳本|記帳清單|看帳)$/.test(text)) return cmdExpenseView_(ctx);
   const exp = parseExpense_(text);
   if (exp) return cmdExpenseAdd_(ctx, exp);
+  // 看起來像記帳（有金額又有「付」）卻認不出來：教正確寫法，不要丟給一般查詢
+  if (/\d/.test(text) && /付/.test(text) && text.length <= 60 && !EXPENSE_SKIP_RE.test(text) && !/^(?:記帳\s*)?(?:結算|分帳)/.test(text)) {
+    return say_(ctx, textMsg_('要記帳嗎？請照「項目 金額 誰付」的順序寫，例如：\n・晚餐 1700 我付\n・12/4 計程車 2300円 小明付\n・門票 3000 我付 我和小明（指定分攤的人）', [qMsg_('記帳'), ...defaultQuick_()]));
+  }
   if ((m = text.match(/^(?:匯出|備份|離線版?|下載|pdf)(?:\s*(?:行程|旅程|pdf))?\s*(.*)$/i)) && text.length <= 30) return cmdExport_(ctx, m[1]);
   if (text.length <= 15 && /網站|網頁|連結|網址|link|開啟|打開/i.test(text)) return cmdSite_(ctx);
   if ((m = text.match(/^(?:新旅程|新增旅程|建立旅程)\s*([\s\S]*)$/))) return cmdNewTrip_(ctx, m[1]);
@@ -1032,7 +1036,7 @@ function cmdRemoveMember_(ctx, name) {
 
 /* ---------- 記帳：「晚餐 1700 我付」「12/4 計程車 2300円 小明付」「門票 3000 我付 我和小明」 ---------- */
 // 一定要有「…付」才算記帳；開頭是其他指令的（修改、刪除、新增、買…）不算
-const EXPENSE_RE = /^(?:記帳\s*)?(?:(\d{1,2}\/\d{1,2}|今天|昨天|前天|明天)\s*)?(.+?)\s+((?:NT\$|\$|¥|￥)?\s*\d[\d,]*(?:\.\d+)?\s*(?:元|塊|円|日圓|日幣|台幣|臺幣)?)\s*([^\s\d]\S{0,19}?)付(?:\s+(.+))?$/; // 付款人名字可以有數字，但不能數字開頭（免得吃掉金額）
+const EXPENSE_RE = /^(?:記帳\s*)?(?:(\d{1,2}\/\d{1,2}|今天|昨天|前天|明天)\s*)?(.+?)\s*((?:NT\$|\$|¥|￥)?\s*\d[\d,]*(?:\.\d+)?\s*(?:元|塊|円|日圓|日幣|台幣|臺幣)?)\s*([^\s\d]\S{0,19}?)付(?:\s+(.+))?$/; // 付款人名字可以有數字，但不能數字開頭（免得吃掉金額）
 const EXPENSE_SKIP_RE = /^(?:修改|更改|改|刪除|移除|刪掉|新增|加入|\+|買到?了?|已買|不買|要買|記得買|想買|想去|不去|導航|日誌|備忘)/;
 
 /** @return {{dateToken, title, amount, currency, payer, split} | null} */
