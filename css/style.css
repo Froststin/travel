@@ -923,3 +923,11 @@ dialog { overscroll-behavior: contain; }
 .table .total-row td { font-weight: 700; border-top: 2px solid var(--border); }
 .share-pct { margin-left: 6px; font-weight: 400; font-size: .78rem; }
 .share-total { font-weight: 700; border-top: 1px solid var(--border); padding-top: 8px; }
+
+/* ---------- 地圖：Google 路線圖 ---------- */
+.trip-map.gmap { display: block; width: 100%; border: 1px solid var(--border); }
+.gmap-modes { margin: 10px 0 8px; }
+.gmap-modes .map-day:disabled { opacity: .45; cursor: not-allowed; }
+.gmap-stops { margin: 10px 0 0; padding-left: 0; list-style: none; counter-reset: stop; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .88rem; }
+.gmap-stops li { counter-increment: stop; display: inline-flex; align-items: center; gap: 6px; }
+.gmap-stops li::before { content: counter(stop, upper-alpha); display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--day, var(--primary)); color: #fff; font-size: .72rem; font-weight: 700; }

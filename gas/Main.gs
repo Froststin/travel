@@ -80,7 +80,8 @@ function apiAction_(userId, body) {
       // 讀取也要排隊：避免讀到別人存檔寫到一半的資料，再被網站存回去
       return withLock_(() => {
         if (body.name) setUserName_(userId, body.name);
-        return { trips: loadTrips_(userId), journal: loadJournal_(userId) };
+        // mapsKey：Google 地圖嵌入用的金鑰（指令碼屬性 GOOGLE_MAPS_KEY，限定網站網域使用；沒設就是空的，網站改用 OpenStreetMap）
+        return { trips: loadTrips_(userId), journal: loadJournal_(userId), mapsKey: prop_('GOOGLE_MAPS_KEY') };
       });
 
     case 'saveTrip':

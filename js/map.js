@@ -8,6 +8,9 @@
  * 座標：Google 地圖連結裡有座標就直接用；否則用 OpenStreetMap 查「地點」（和想去清單同一套，見 js/places.js），
  *       查到的存在行程上（lat、lng、geo、geoKey），旅伴不用再查；geoKey 是查的時候的「地點|連結」，改了就重查
  * Leaflet 只在打開地圖分頁時才載入，不拖慢其他畫面
+ * Google 地圖：選某一天時改顯示 Google 的路線圖，依行程時間順序從第 1 站到最後一站沿道路畫線；「全部」與想去清單維持 Leaflet
+ *   - 沒金鑰：用 Google 早期不用金鑰的嵌入網址（output=embed）。不是公開保證的功能，失效時用下方的 App 連結
+ *   - 登入後後端有給金鑰（指令碼屬性 GOOGLE_MAPS_KEY）：改用官方 Maps Embed API（免費、不限次數，但要綁付款帳戶）
  * ============================================================ */
 
 const LEAFLET_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
@@ -18,6 +21,17 @@ const LEAFLET_JS_SRI = 'sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL
 const DAY_COLORS = ['#0f766e', '#db2777', '#2563eb', '#ea580c', '#7c3aed', '#16a34a', '#ca8a04', '#0891b2', '#be123c', '#4f46e5'];
 const MAP_GEO_RETRY_MS = 60 * 1000; // 定位失敗（連線問題）後，多久內不自動重試
 
+const GMAP_MODES = { driving: '🚗 開車', walking: '🚶 步行', transit: '🚆 大眾運輸' };
+const GMAP_MODE_KEY = 'travel-planner:gmap-mode';
+const GMAP_MAX_WAYPOINTS = 20; // Embed API 的中途站上限
+let gmapMode = (() => {
+  try {
+    const m = localStorage.getItem(GMAP_MODE_KEY);
+    return Object.hasOwn(GMAP_MODES, m) ? m : 'driving';
+  } catch {
+    return 'driving';
+  }
+})();
 let leafletPromise = null;
 let tripMap = null;         // { map, el, tripId, layer, rail }
 let mapDay = 'all';         // 'all' 或日期
@@ -65,6 +79,94 @@ function mapDays(t, dates) {
   });
 }
 
+/* ---------- Google 地圖（每天一張路線圖） ---------- */
+function mapsKey() {
+  return (typeof Cloud !== 'undefined' && Cloud.enabled && Cloud.mapsKey) || '';
+}
+
+// 這天依行程順序（時間）有地點的站：已定位用座標（最準），否則用地點文字讓 Google 自己找
+// 地點文字裡的「|」（官方版的中途站分隔）和「to:」（舊版嵌入的中途站分隔）換成空白，免得一站被拆成兩站
+function gmapStops(t, d) {
+  return (t.days[d] || []).map((a) => {
+    const g = actGeo(a);
+    if (g.state === 'ok') return { a, q: `${g.lat},${g.lng}` };
+    const loc = (a.location || '').replace(/\|/g, ' ').replace(/\bto:/gi, 'to ').trim();
+    return loc ? { a, q: loc } : null;
+  }).filter(Boolean);
+}
+
+// 這天有地點、但沒畫進路線的行程數（只貼了短網址、也沒填地點文字）
+function gmapSkipped(t, d) {
+  return (t.days[d] || []).filter((a) => (a.location || a.mapUrl) && actGeo(a).state !== 'ok' && !(a.location || '').trim()).length;
+}
+
+// 大眾運輸不支援中途站，超過兩站時改用開車
+function gmapModeFor(stops) {
+  return gmapMode === 'transit' && stops.length > 2 ? 'driving' : gmapMode;
+}
+
+// 真正畫進路線的站：起點＋最多 20 個中途站＋終點
+function gmapDrawn(stops) {
+  return stops.length - 2 > GMAP_MAX_WAYPOINTS ? stops.slice(0, GMAP_MAX_WAYPOINTS + 1).concat(stops.slice(-1)) : stops;
+}
+
+/**
+ * 嵌入用的網址。有金鑰：官方 Maps Embed API（免費、不限次數，但要綁付款帳戶）；
+ * 沒金鑰：Google 早期的嵌入網址（output=embed，不用金鑰；不是公開保證的功能，哪天可能失效）
+ */
+function gmapEmbedUrl(key, stops, mode) {
+  const s = gmapDrawn(stops);
+  const last = s[s.length - 1];
+  if (key) {
+    if (s.length === 1) return `https://www.google.com/maps/embed/v1/place?${new URLSearchParams({ key, q: last.q, language: 'zh-TW' })}`;
+    const p = new URLSearchParams({ key, origin: s[0].q, destination: last.q, mode, language: 'zh-TW' });
+    if (s.length > 2) p.set('waypoints', s.slice(1, -1).map((x) => x.q).join('|'));
+    return `https://www.google.com/maps/embed/v1/directions?${p}`;
+  }
+  if (s.length === 1) return `https://www.google.com/maps?${new URLSearchParams({ q: last.q, hl: 'zh-TW', output: 'embed' })}`;
+  // daddr：第二站起用「 to:」串起來；dirflg：d 開車、w 步行、r 大眾運輸
+  const daddr = s.slice(1).map((x) => x.q).join(' to:');
+  return `https://maps.google.com/maps?${new URLSearchParams({ saddr: s[0].q, daddr, dirflg: { driving: 'd', walking: 'w', transit: 'r' }[mode] || 'd', hl: 'zh-TW', output: 'embed' })}`;
+}
+
+// 打開 Google 地圖（App）規劃這天的路線（網址最多 9 個中途站）
+const GMAP_LINK_MAX_WAYPOINTS = 9;
+function gmapOpenUrl(stops, mode) {
+  if (!stops.length) return '';
+  const p = new URLSearchParams({ api: '1', destination: stops[stops.length - 1].q, travelmode: mode });
+  if (stops.length > 1) p.set('origin', stops[0].q);
+  const mids = stops.slice(1, -1).slice(0, GMAP_LINK_MAX_WAYPOINTS);
+  if (mids.length) p.set('waypoints', mids.map((s) => s.q).join('|'));
+  return `https://www.google.com/maps/dir/?${p}`;
+}
+
+function gmapDayHtml(t, d, dayIdx) {
+  const key = mapsKey();
+  const stops = gmapStops(t, d);
+  const drawn = gmapDrawn(stops);
+  const mode = gmapModeFor(stops);
+  const color = dayColor(dayIdx);
+  const skipped = gmapSkipped(t, d);
+  const modes = Object.entries(GMAP_MODES).map(([k, label]) => {
+    const off = k === 'transit' && stops.length > 2;
+    return `<button type="button" class="map-day${mode === k ? ' on' : ''}" data-action="gmap-mode" data-mode="${k}" ${off ? 'disabled title="大眾運輸不支援中途站，只有兩站時能用"' : ''} aria-pressed="${mode === k}">${label}</button>`;
+  }).join('');
+  const offline = navigator.onLine === false;
+  return `
+    <div class="map-days gmap-modes no-print" role="group" aria-label="路線的交通方式">${modes}</div>
+    ${offline ? '<p class="trip-map map-loading muted">📴 離線中，地圖需要網路。</p>'
+      : stops.length
+        ? `<iframe class="trip-map gmap" title="Day ${dayIdx + 1} 的 Google 路線圖" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" src="${esc(gmapEmbedUrl(key, stops, mode))}"></iframe>`
+        : '<p class="map-loading muted">這天的行程還沒有填地點。</p>'}
+    ${drawn.length ? `<ol class="gmap-stops" style="--day:${color}">${drawn.map((s) => `<li>${s.a.time ? `<span class="muted">${esc(timeLabel(s.a))}</span> ` : ''}${esc(s.a.title)}</li>`).join('')}</ol>` : ''}
+    <p class="muted hint">Google 地圖依行程時間順序，從第 1 站經過中途站到最後一站畫出實際路線（地圖上的 A、B、C… 對應上面的順序）。
+      ${gmapMode === 'transit' && stops.length > 2 ? '大眾運輸不支援中途站，這天超過兩站，先用開車路線顯示。' : ''}
+      ${drawn.length < stops.length ? `中途站最多 ${GMAP_MAX_WAYPOINTS} 個，有 ${stops.length - drawn.length} 站沒有畫進去。` : ''}
+      ${skipped ? `有 ${skipped} 個行程只貼了短網址、沒填地點，沒畫進路線（填上地點就會出現）。` : ''}
+      ${key ? '' : '路線圖用的是 Google 不用金鑰的嵌入方式，哪天如果顯示不出來，請改用下面的連結。'}
+      ${stops.length ? `<a href="${esc(gmapOpenUrl(stops, mode))}" target="_blank" rel="noopener">在 Google 地圖 App 開啟這天的路線</a>${stops.length - 2 > GMAP_LINK_MAX_WAYPOINTS ? `（App 連結最多帶 ${GMAP_LINK_MAX_WAYPOINTS} 個中途站）` : ''}` : ''}</p>`;
+}
+
 function mapPlaces(t) {
   return (t.places || []).filter((p) => p.geo === 'ok' && typeof p.lat === 'number' && typeof p.lng === 'number' && !(typeof placeDate === 'function' && placeDate(t, p)));
 }
@@ -79,18 +181,22 @@ function mapView(t, dates) {
   const todo = all.filter((x) => x.s === 'todo').length;
   const skip = all.filter((x) => x.s === 'skip').length;
   const chip = (key, label, color) => `<button type="button" class="map-day${mapDay === key ? ' on' : ''}" data-action="map-day" data-day="${key}"${color ? ` style="--day:${color}"` : ''} aria-pressed="${mapDay === key}">${label}</button>`;
+  // 選某一天：一律用 Google 路線圖（有金鑰用官方版，沒有就用不用金鑰的嵌入）；「全部」用 Leaflet
+  const google = mapDay !== 'all';
+  const dayIdx = dates.indexOf(mapDay);
   return `
     <section class="panel map-panel">
       <div class="map-days" role="group" aria-label="看哪一天">
-        ${chip('all', '全部')}${days.map((d) => chip(d.date, `Day ${d.dayIdx + 1}${d.points.length ? '' : '・無'}`, d.color)).join('')}
+        ${chip('all', '全部')}${days.map((d) => chip(d.date, `Day ${d.dayIdx + 1}${gmapStops(t, d.date).length ? '' : '・無'}`, d.color)).join('')}
       </div>
+      ${google ? gmapDayHtml(t, mapDay, dayIdx) : `
       <div class="map-toggles no-print">
         <label class="chip-check"><input type="checkbox" data-change="map-places" ${mapShowPlaces ? 'checked' : ''}><span>⚪ 想去的地方</span></label>
         <label class="chip-check"><input type="checkbox" data-change="map-rail" ${mapRail ? 'checked' : ''}><span>🚆 鐵道</span></label>
       </div>
       <p id="map-status" class="map-status muted" ${mapGeoStatus || todo ? '' : 'hidden'}>${esc(mapGeoStatus || (todo ? `還有 ${todo} 個地點等著定位…` : ''))}</p>
       <div id="trip-map" class="trip-map" role="region" aria-label="行程地圖"><p class="map-loading muted">${navigator.onLine === false ? '📴 離線中，地圖需要網路。' : '地圖載入中…'}</p></div>
-      <p class="muted hint">圖釘的數字是當天的順序，同一天依行程順序連線（直線，不是實際路線）。點圖釘可以開 Google 導航。已定位 ${located} 個${skip ? `，${skip} 個行程沒填地點` : ''}。位置是用 OpenStreetMap 查的，不一定準；貼上電腦版 Google 地圖網址列的完整連結（裡面有座標）會最準。</p>
+      <p class="muted hint">圖釘的數字是當天的順序，同一天依行程時間順序連線（直線）。<b>選某一天可以看 Google 地圖畫的實際路線。</b>點圖釘可以開 Google 導航。已定位 ${located} 個${skip ? `，${skip} 個行程沒填地點` : ''}。位置是用 OpenStreetMap 查的，不一定準；貼上電腦版 Google 地圖網址列的完整連結（裡面有座標）會最準。</p>`}
     </section>
     ${missing.length ? `
       <section class="panel">
@@ -136,6 +242,12 @@ function ensureLeaflet() {
 /** renderTrip 畫好地圖分頁後呼叫：載入 Leaflet、畫圖釘，需要的話在背景定位 */
 async function initTripMap(t, dates) {
   const tripId = t.id;
+  // Google 路線圖畫面（沒有 #trip-map）：不用載 Leaflet；定位照樣做，座標給 Google 用比地名準
+  if (!document.getElementById('trip-map')) {
+    if (tripMap) { tripMap.map.remove(); tripMap = null; }
+    geocodeActivities(tripId);
+    return;
+  }
   try {
     await ensureLeaflet();
   } catch (err) {
@@ -281,13 +393,19 @@ document.addEventListener('click', (e) => {
   const t = currentTrip();
   if (!el || !t) return;
   mapDay = el.dataset.day;
-  for (const b of app.querySelectorAll('.map-day')) {
-    const on = b.dataset.day === mapDay;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
-  mapViews.delete(viewKey(t.id));
-  drawTripMap(t, dateRange(t.startDate, t.endDate), true);
+  mapViews.delete(viewKey(t.id)); // 換一天就重新縮放到看得到全部
+  renderTrip(t); // 畫面會換（Google 路線圖或 Leaflet、這天的連結），整個重畫最單純
+});
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-action="gmap-mode"]');
+  const t = currentTrip();
+  if (!el || !t || el.disabled) return;
+  gmapMode = Object.hasOwn(GMAP_MODES, el.dataset.mode) ? el.dataset.mode : 'driving';
+  try {
+    localStorage.setItem(GMAP_MODE_KEY, gmapMode);
+  } catch { /* 忽略 */ }
+  renderTrip(t);
 });
 
 document.addEventListener('change', (e) => {

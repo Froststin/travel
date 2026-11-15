@@ -1495,6 +1495,13 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   check('佔比：三人平分也是 100%（34/33/33）', run('sharePcts_(__vals, 3)').join() === '34,33,33');
 }
 
+/* ---------- Google 地圖金鑰：從指令碼屬性給登入的網站 ---------- */
+delete props.GOOGLE_MAPS_KEY;
+check('Google 地圖金鑰：沒設時是空的（網站改用 OpenStreetMap）', !api('list', {}).mapsKey);
+props.GOOGLE_MAPS_KEY = 'test-maps-key';
+check('Google 地圖金鑰：設了才給，而且要登入', api('list', {}).mapsKey === 'test-maps-key' && !api('list', {}, 'bad').mapsKey);
+delete props.GOOGLE_MAPS_KEY;
+
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');
 const path = require('path');
