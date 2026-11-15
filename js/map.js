@@ -82,6 +82,19 @@ const GEO_NEAR_KM = 300;      // 新查到的位置離這趟的中心超過這�
 const GEO_OUTLIER_KM = 1000;  // 已經存的位置離其他地點超過這麼遠，列成「位置可能有誤」
 const GEO_OK_KEY = 'travel-planner:geo-confirmed'; // 使用者按過「沒錯」的（行程 id|geoKey），記在這台裝置
 
+/**
+ * 台灣的地名、機場（出發、回程常見）：在台灣的範圍裡查，不套用旅程目的地的範圍
+ * 例如「松山機場」在日本愛媛也有一個，旅程在日本時會被對到那裡
+ */
+const HOME_HINT_RE = /台北|臺北|桃園|松山機場|松山机场|小港|高雄|台中|臺中|清泉崗|台南|臺南|花蓮|台東|臺東|台灣|臺灣|taipei|taoyuan|kaohsiung|taichung|taiwan|\b(?:TPE|TSA|KHH|RMQ)\b/i;
+const HOME_CENTER = { lat: 23.7, lng: 120.95, spanLat: 1.9, spanLng: 1.6 }; // 台灣本島
+function homeHint(a) {
+  return HOME_HINT_RE.test(`${actGeoQuery(a)} ${a.title || ''}`);
+}
+function inHome(p) {
+  return p.lat >= 21.8 && p.lat <= 25.6 && p.lng >= 119.3 && p.lng <= 122.6;
+}
+
 /** 這趟其他已定位地點的中間位置（取中位數，少數幾個查錯的不會影響）；exceptId：不算這一個 */
 function pointsCenter(t, exceptId = '') {
   const pts = allActivities(t).filter((a) => a.id !== exceptId).map((a) => actGeo(a)).filter((g) => g.state === 'ok');
@@ -107,6 +120,7 @@ function geoOutliers(t, dates) {
   return dates.flatMap((d, i) => (t.days[d] || []).map((a) => ({ a, d, i, g: actGeo(a) }))
     .filter(({ a, g }) => {
       if (g.state !== 'ok' || ok.has(`${a.id}|${actGeoKey(a)}`)) return false;
+      if (homeHint(a)) return !inHome(g); // 台灣的地名：不在台灣才算有誤
       const c = pointsCenter(t, a.id);
       return c && distKm(c, g) > GEO_OUTLIER_KM;
     }));
@@ -177,11 +191,11 @@ function mapView(t, dates) {
     ${outliers.length ? `
       <section class="panel">
         <h3>⚠️ 位置可能有誤<span class="muted shop-day-total">${outliers.length} 個</span></h3>
-        <p class="muted hint">這些地點離這趟其他地點超過 ${GEO_OUTLIER_KM.toLocaleString()} 公里，可能查到別的國家的同名地點。按「重新查」會在這趟旅程的範圍內重查；本來就在那裡的（例如出發的機場）按「沒錯」。</p>
+        <p class="muted hint">這些地點離這趟其他地點超過 ${GEO_OUTLIER_KM.toLocaleString()} 公里，或寫的是台灣的地名卻不在台灣，可能查到別處的同名地點。按「重新查」會在正確的範圍內重查（台灣的地名在台灣找）；本來就在那裡的按「沒錯」。地點寫清楚一點（例如「台北松山機場」）會更準。</p>
         <ul class="shop-list">${outliers.map(({ a, d, i, g }) => `
           <li class="map-missing">
             <span class="chip" style="background:${dayColor(i)};color:#fff">Day ${i + 1}</span>
-            <button type="button" class="link-btn" data-action="open-activity" data-date="${esc(d)}" data-id="${esc(a.id)}">${esc(a.title)}<small class="muted">距離其他地點約 ${fmtDist(distKm(pointsCenter(t, a.id), g))}</small></button>
+            <button type="button" class="link-btn" data-action="open-activity" data-date="${esc(d)}" data-id="${esc(a.id)}">${esc(a.title)}<small class="muted">${homeHint(a) ? '台灣的地名，但目前不在台灣' : `距離其他地點約 ${fmtDist(distKm(pointsCenter(t, a.id), g))}`}</small></button>
             <button type="button" class="btn btn-sm no-print" data-action="map-regeo" data-force="1" data-date="${esc(d)}" data-id="${esc(a.id)}">🔄 重新查</button>
             <button type="button" class="btn btn-sm no-print" data-action="map-geo-ok" data-id="${esc(a.id)}" data-key="${esc(actGeoKey(a))}">✅ 沒錯</button>
           </li>`).join('')}</ul>
@@ -343,16 +357,17 @@ async function geocodeActivities(tripId) {
   // 還沒定位的照常查（OpenStreetMap → Google）；之前標成找不到的，登入時用 Google 再查一次
   const todo = first ? allActivities(first)
     .filter((a) => actGeo(a).state === 'todo' || (cloudOn() && actGeo(a).state === 'none' && actGeoQuery(a) && !mapGoogleTried.has(actGeoKey(a))))
-    .map((a) => ({ id: a.id, key: actGeoKey(a), q: actGeoQuery(a), googleOnly: actGeo(a).state === 'none' })) : [];
+    .map((a) => ({ id: a.id, key: actGeoKey(a), q: actGeoQuery(a), googleOnly: actGeo(a).state === 'none', home: homeHint(a) })) : [];
   if (!todo.length) return setMapStatus('');
   mapGeoBusy = true;
   const results = new Map();
   try {
-    const center = await tripCenter(first); // 目的地查不到時用其他地點的中間位置，免得查到別的國家
+    const tripC = await tripCenter(first); // 目的地查不到時用其他地點的中間位置，免得查到別的國家
     for (let i = 0; i < todo.length; i++) {
       setMapStatus(`📍 定位中 ${i + 1}/${todo.length}：${todo[i].q}`);
       mapGoogleTried.add(todo[i].key); // 這次開啟期間 Google 查過了（geoLookup 查不到時也會問 Google），不要再重查
-      const dest = first.destination || '';
+      const center = todo[i].home ? HOME_CENTER : tripC; // 台灣的地名在台灣找
+      const dest = todo[i].home ? '台灣' : (first.destination || '');
       let hit = todo[i].googleOnly ? await googleGeocode(todo[i].q, center, dest) : await geoLookup(todo[i].q, center, dest); // 間隔由 geoThrottle 控制
       if (hit && center && distKm(center, hit) > GEO_NEAR_KM) hit = null; // 離這趟太遠：多半是同名的別處
       results.set(todo[i].id, hit);
@@ -408,8 +423,10 @@ async function regeoActivity(tripId, date, id, force = false) {
   if (!q) return toast('這個行程沒有地點可以查，請填「地點」或貼 Google 地圖連結');
   if (coordsFromMapUrl(a0.mapUrl)) return toast('這個行程的位置來自 Google 地圖連結，要改請換連結');
   toast(`正在這趟旅程的範圍內查「${q}」…`);
-  const center = await tripCenter(t0, id);
-  let hit = force ? await geoLookup(q, center, t0.destination || '') : await googleGeocode(q, center, t0.destination || '');
+  const home = homeHint(a0);
+  const center = home ? HOME_CENTER : await tripCenter(t0, id); // 台灣的地名在台灣找
+  const dest = home ? '台灣' : (t0.destination || '');
+  let hit = force ? await geoLookup(q, center, dest) : await googleGeocode(q, center, dest);
   if (hit && center && distKm(center, hit) > GEO_NEAR_KM) { hit = null; googleGeoReason = 'none'; }
   const t = getTrip(tripId);
   const a = t && (t.days[date] || []).find((x) => x.id === id);

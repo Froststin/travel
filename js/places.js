@@ -133,9 +133,11 @@ async function geoThrottle() {
 
 async function geoSearch(q, center) {
   const params = new URLSearchParams({ format: 'jsonv2', limit: '1', addressdetails: '1', 'accept-language': 'zh-TW', q });
-  // 限定在目的地附近（約 150 公里內），避免同名的地方跑到別的國家
+  // 限定在目的地附近（約 150 公里內），避免同名的地方跑到別的國家；center.spanLat／spanLng 可以指定範圍（例如整個台灣）
   if (center) {
-    params.set('viewbox', [center.lng - 1.6, center.lat + 1.3, center.lng + 1.6, center.lat - 1.3].join(','));
+    const dLat = center.spanLat || 1.3;
+    const dLng = center.spanLng || 1.6;
+    params.set('viewbox', [center.lng - dLng, center.lat + dLat, center.lng + dLng, center.lat - dLat].join(','));
     params.set('bounded', '1');
   }
   await geoThrottle();
@@ -257,8 +259,10 @@ async function organizePlaces(tripId) {
     for (let i = 0; i < todo.length; i++) {
       organizing = `正在查位置 ${i + 1} / ${todo.length}：${todo[i].name}`;
       refreshPlaces(tripId);
-      const hit = await geoLookup(todo[i].name, center, first.destination || '');
-      results.set(todo[i].id, hit && center && distKm(center, hit) > 300 ? null : hit); // 離這趟太遠：多半是同名的別處
+      const home = typeof HOME_HINT_RE !== 'undefined' && HOME_HINT_RE.test(todo[i].name);
+      const c = home ? HOME_CENTER : center; // 台灣的地名在台灣找
+      const hit = await geoLookup(todo[i].name, c, home ? '台灣' : (first.destination || ''));
+      results.set(todo[i].id, hit && c && distKm(c, hit) > 300 ? null : hit); // 離這趟太遠：多半是同名的別處
     }
   } catch (err) {
     console.warn('定位失敗', err);
