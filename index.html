@@ -236,7 +236,8 @@
       </div>
       <div id="expense-split-fields" class="split-fields" hidden>
         <label>誰付的<select name="paidBy"></select></label>
-        <div class="split-with"><span>分攤的人（全勾＝大家平分）</span><div id="expense-split-with-list" class="chip-checks"></div></div>
+        <div class="split-with"><span>分攤的人（全勾＝大家平分；只勾付款人＝不分帳）</span><div id="expense-split-with-list" class="chip-checks"></div>
+          <div class="expense-split-quick"><button type="button" class="btn btn-sm" data-action="expense-all">👥 大家分帳</button><button type="button" class="btn btn-sm" data-action="expense-self">🙋 不分帳</button></div></div>
       </div>
       <p class="form-hint muted">記帳會算進預算；共用旅程還會算進分帳（付清後按「待分帳」改成「已結清」）。</p>
       <div class="form-actions">

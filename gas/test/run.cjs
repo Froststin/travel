@@ -1558,6 +1558,21 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   r = say('保險 500 U8', 'U7');
   ex = exTrip().expenses;
   check('LINE 記帳：省略付時名字寫一部分也認得（只對到一個人）', ex[ex.length - 1].title === '保險' && ex[ex.length - 1].paidBy === k8, JSON.stringify(ex[ex.length - 1]) + r.text);
+  // 要不要分帳：打字寫「不分帳」，或記完點按鈕改
+  r = say('旅平險 904 Name-U7 不分帳', 'U7');
+  ex = exTrip().expenses;
+  const eSelf = ex[ex.length - 1];
+  check('LINE 記帳：最後寫「不分帳」＝只有付款人自己', eSelf.title === '旅平險' && eSelf.splitWith.length === 1 && eSelf.splitWith[0] === k7 && r.text.includes('不分帳'), JSON.stringify(eSelf) + r.text);
+  const btns = r.quick.map((q) => q.action.label);
+  check('LINE 記帳：記完有「大家分帳／不分帳」按鈕', btns.includes('👥 大家分帳') && btns.includes('🙋 不分帳'), btns.join());
+  ctx.__t = exTrip();
+  const stSelfBefore = run('settlement_(__t)').total;
+  r = postback(JSON.parse(r.quick.find((q) => q.action.label === '👥 大家分帳').action.data), 'U7');
+  check('LINE 記帳：點「大家分帳」改成大家平分，算進結算', exTrip().expenses.find((x) => x.id === eSelf.id).splitWith.length === 0 && r.text.includes('大家分帳') && (() => { ctx.__t = exTrip(); return Math.abs(run('settlement_(__t)').total - stSelfBefore - 904) < 0.01; })(), r.text);
+  r = postback({ a: 'exps', t: 'split-trip', id: eSelf.id, m: 'self' }, 'U8');
+  check('LINE 記帳：旅伴也能點「不分帳」改回來', exTrip().expenses.find((x) => x.id === eSelf.id).splitWith.join() === k7 && r.text.includes('不分帳'), r.text);
+  r = say('分帳', 'U7');
+  check('LINE：單獨傳「分帳」照常是結算，不會被當成記帳', r.text.includes('分帳') && !r.text.includes('已記帳'), r.text);
   nX = exTrip().expenses.length;
   r = say('清水寺 10 點', 'U7');
   check('LINE 記帳：沒寫付、名字也不是成員就不當記帳（照常查詢，附上記帳寫法）', exTrip().expenses.length === nX && r.text.includes('誰付」寫'), r.text);

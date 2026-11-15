@@ -69,7 +69,7 @@ function settlement(t) {
     if (x.settled) { if (x.paidBy) settled++; continue; }
     if (!x.paidBy) { unassigned++; continue; }
     const who = Array.isArray(x.splitWith) && x.splitWith.length ? x.splitWith : everyone;
-    if (!who.length) continue;
+    if (!who.length || (who.length === 1 && who[0] === x.paidBy)) continue; // 不分帳（只有付款人自己）：沒有錢的往來
     total += amount;
     person(x.paidBy).paid += amount;
     who.forEach((k) => { person(k).share += amount / who.length; });

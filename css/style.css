@@ -955,3 +955,5 @@ dialog { overscroll-behavior: contain; }
 .metro-credit { display: block; padding: 0 10px 8px; overflow-wrap: anywhere; }
 .metro-links-title { margin: 14px 0 6px; font-size: .95rem; }
 .metro-links { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+
+.expense-split-quick { display: flex; gap: 6px; margin-top: 6px; }

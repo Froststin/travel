@@ -24,16 +24,17 @@ function expensesPanel(t, dates) {
   const open = list.filter((x) => !x.settled).length;
   const row = (x) => {
     const n = Array.isArray(x.splitWith) && x.splitWith.length ? x.splitWith.length : ms.length;
+    const self = n === 1 && x.splitWith[0] === x.paidBy; // 只有付款人自己＝不分帳
     const day = dates.indexOf(x.date);
     return `
       <li class="expense-item${x.settled ? ' settled' : ''}">
         <div class="expense-main">
           <span class="expense-title">${esc(x.title)}</span>
-          <span class="muted small">${day >= 0 ? `Day ${day + 1}・${prettyDate(x.date)}` : '不指定日期'}${ms.length && x.paidBy ? `・👤 ${esc(name(x.paidBy))}付${n > 1 ? `・${n} 人分` : ''}` : ''}</span>
+          <span class="muted small">${day >= 0 ? `Day ${day + 1}・${prettyDate(x.date)}` : '不指定日期'}${ms.length && x.paidBy ? `・👤 ${esc(name(x.paidBy))}付${self ? '・🙋 不分帳' : n > 1 ? `・${n} 人分` : ''}` : ''}</span>
         </div>
         <span class="expense-amount">${costLabel(x.amount, expenseCur(x, t))}</span>
         <span class="expense-actions no-print">
-          ${ms.length ? `<button class="btn btn-sm${x.settled ? '' : ' btn-primary'}" data-action="settle-expense" data-id="${esc(x.id)}" title="${x.settled ? '改回待分帳' : '已經付清了，不列入分帳'}">${x.settled ? '✅ 已結清' : '⏳ 待分帳'}</button>` : ''}
+          ${ms.length && !self ? `<button class="btn btn-sm${x.settled ? '' : ' btn-primary'}" data-action="settle-expense" data-id="${esc(x.id)}" title="${x.settled ? '改回待分帳' : '已經付清了，不列入分帳'}">${x.settled ? '✅ 已結清' : '⏳ 待分帳'}</button>` : ''}
           <button class="icon-btn" data-action="edit-expense" data-id="${esc(x.id)}" title="修改" aria-label="修改">✎</button>
           <button class="icon-btn" data-action="delete-expense" data-id="${esc(x.id)}" title="刪除" aria-label="刪除">✕</button>
         </span>
@@ -102,13 +103,23 @@ expenseForm?.addEventListener('submit', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-  const el = e.target.closest('[data-action$="-expense"]');
+  const el = e.target.closest('[data-action$="-expense"], [data-action^="expense-"]');
   const t = currentTrip();
   if (!el || !t) return;
   const x = (t.expenses || []).find((y) => y.id === el.dataset.id);
   switch (el.dataset.action) {
     case 'add-expense':
       openExpenseDialog(null);
+      break;
+    case 'expense-self': {
+      // 表單裡的「不分帳」：只勾付款人自己
+      const payer = expenseForm.elements.paidBy.value;
+      if (!payer) { toast('先選誰付的'); break; }
+      for (const c of expenseForm.querySelectorAll('input[name="splitWith"]')) c.checked = c.value === payer;
+      break;
+    }
+    case 'expense-all':
+      for (const c of expenseForm.querySelectorAll('input[name="splitWith"]')) c.checked = true;
       break;
     case 'edit-expense':
       if (x) openExpenseDialog(x);

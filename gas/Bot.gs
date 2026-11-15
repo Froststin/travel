@@ -55,6 +55,7 @@ const HELP_TEXT = [
   '・晚餐 1700 我付、晚餐 1700 台幣 霜付、12/4 計程車 2300 日幣 小明付',
   '　（「付」可以省略：旅平險 904 霜；幣別可寫台幣、日幣、韓元、美金…，沒寫＝旅程幣別）',
   '・門票 3000 我付 我和小明 → 只有這兩人分攤（沒寫＝大家平分）',
+  '・最後加「不分帳」＝只算自己的（例：保險 904 霜 不分帳）；記完也可以點按鈕改',
   '・記帳 → 查看這趟的帳；網站預算頁可以修改、按「結清」',
   '',
   '【旅伴】',
@@ -873,6 +874,7 @@ function handlePostback_(ctx, data) {
     return say_(ctx, textMsg_('這個按鈕已經失效了，請重新輸入一次。'));
   }
   if (p.a === 'del') return deleteActivity_(ctx, p.id);
+  if (p.a === 'exps') return setExpenseSplit_(ctx, p.t, p.id, p.m);
   if (p.a === 'edit') {
     if (!p.k) return applyEdit_(ctx, p.id, p.p || {});
     const saved = CacheService.getScriptCache().get(`pb_${p.k}`);
@@ -1072,6 +1074,13 @@ function expenseCurrency_(s) {
  */
 function parseExpense_(text, isMember) {
   let body = text.replace(/^記帳\s*/, '');
+  // 最後寫「不分帳」＝只有付款人自己的；寫「分帳／大家分」＝大家平分（沒寫也是）
+  let splitMode = '';
+  const sm = body.match(/\s*(不分帳|不用分帳|不分|自己的|個人的?|自付)$/) || body.match(/\s*(分帳|大家分|平分)$/);
+  if (sm && sm.index > 0) {
+    splitMode = /不|自己|個人|自付/.test(sm[1]) ? 'self' : 'all';
+    body = body.slice(0, sm.index);
+  }
   let dateToken = '';
   const dm = body.match(/^(\d{1,2}\/\d{1,2}|今天|昨天|前天|明天)\s*/);
   if (dm) { dateToken = dm[1]; body = body.slice(dm[0].length); }
@@ -1092,7 +1101,7 @@ function parseExpense_(text, isMember) {
     if (!pm) continue;
     const hasPay = rest.startsWith(`${pm[1]}付`);
     if (!hasPay && !(/^(?:我|自己|本人)$/.test(pm[1]) || (isMember && isMember(pm[1])))) continue;
-    return { dateToken, title: title.slice(0, 40), amount, currency, payer: pm[1], split: (pm[2] || '').trim(), hasPay };
+    return { dateToken, title: title.slice(0, 40), amount, currency, payer: pm[1], split: (pm[2] || '').trim(), hasPay, splitMode };
   }
   return null;
 }
@@ -1149,8 +1158,9 @@ function cmdExpenseAdd_(ctx, exp) {
     splitWith = [...new Set(found.map((x) => x.key))];
     if (splitWith.length === (trip.members || []).length) splitWith = []; // 全部的人＝大家平分
   }
-  // 只有自己的旅程：記成只有自己分攤，免得之後旅伴加入時舊帳被拿去平分
-  if ((trip.members || []).length < 2) splitWith = [payer.key];
+  // 「不分帳」或只有自己的旅程：記成只有付款人自己（只有自己的旅程這樣記，之後旅伴加入時舊帳才不會被拿去平分）
+  if (exp.splitMode === 'self' || (trip.members || []).length < 2) splitWith = [payer.key];
+  else if (exp.splitMode === 'all') splitWith = [];
   const item = {
     id: Utilities.getUuid(), date, title: exp.title, amount: exp.amount,
     currency: exp.currency && exp.currency !== trip.currency ? exp.currency : '',
@@ -1162,13 +1172,34 @@ function cmdExpenseAdd_(ctx, exp) {
   const cur = item.currency || trip.currency;
   const n = splitWith.length || (trip.members || []).length || 1;
   const twd = twdOrRaw_(item.amount, cur);
-  const who = splitWith.length ? splitWith.map((k) => ((trip.members || []).find((x) => x.key === k) || {}).name).join('、') + ' 分攤' : (n > 1 ? `${n} 人平分` : '');
+  const shared = (trip.members || []).length > 1;
+  const self = splitWith.length === 1 && splitWith[0] === payer.key;
+  const who = self ? '不分帳' : (splitWith.length ? splitWith.map((k) => ((trip.members || []).find((x) => x.key === k) || {}).name).join('、') + ' 分攤' : (n > 1 ? `${n} 人平分` : ''));
   const lines = [
     `🧾 已記帳：${date ? `${prettyDate_(date)} ` : ''}${item.title} ${showMoney_(item.amount, cur)}`,
-    `${payer.name}${payer.me ? '（你）' : ''}付${who ? `・${who}` : ''}${n > 1 ? `（每人約 ${ntd_(twd / n)}）` : ''}・待分帳`,
+    `${payer.name}${payer.me ? '（你）' : ''}付${who ? `・${who}` : ''}${!self && n > 1 ? `（每人約 ${ntd_(twd / n)}・待分帳）` : ''}`,
     `「${trip.name}」${date ? '' : '（不指定日期）'}`,
   ];
-  return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('記帳'), qMsg_('結算'), qUri_('在網站修改', tripLiffUrl_(trip.id)), ...defaultQuick_()]));
+  if (shared) lines.push('', self ? '要大家分攤的話，點下面「👥 大家分帳」。' : '這筆不用分帳的話，點下面「🙋 不分帳」。');
+  // 共用旅程：記完可以馬上改要不要分帳
+  const quick = shared ? [
+    qPostback_('👥 大家分帳', { a: 'exps', t: trip.id, id: item.id, m: 'all' }, `「${item.title}」大家分帳`),
+    qPostback_('🙋 不分帳', { a: 'exps', t: trip.id, id: item.id, m: 'self' }, `「${item.title}」不分帳`),
+  ] : [];
+  return say_(ctx, textMsg_(lines.join('\n'), [...quick, qMsg_('記帳'), qMsg_('結算'), qUri_('在網站修改', tripLiffUrl_(trip.id)), ...defaultQuick_()].slice(0, 13)));
+}
+
+/** 記帳後的按鈕：「大家分帳」或「不分帳（只有付款人）」 */
+function setExpenseSplit_(ctx, tripId, id, mode) {
+  const trip = ctx.trips.find((t) => t.id === tripId);
+  const item = trip && (trip.expenses || []).find((x) => x.id === id);
+  if (!item) return say_(ctx, textMsg_('這筆帳已經不存在了（可能被刪掉或改過）。'));
+  item.splitWith = mode === 'self' ? [item.paidBy] : [];
+  saveTrip_(ctx.userId, trip);
+  const n = (trip.members || []).length;
+  return say_(ctx, textMsg_(mode === 'self'
+    ? `🙋 「${item.title}」改成不分帳（只算付款人自己的），不列入結算。`
+    : `👥 「${item.title}」改成大家分帳（${n} 人平分），會算進結算。`, [qMsg_('記帳'), qMsg_('結算'), ...defaultQuick_()]));
 }
 
 function cmdExpenseView_(ctx) {
@@ -1179,7 +1210,8 @@ function cmdExpenseView_(ctx) {
   const name = (k) => { const m = (trip.members || []).find((x) => x.key === k); return m ? (m.me ? '你' : m.name) : '已退出的旅伴'; };
   const total = list.reduce((s, x) => s + twdOrRaw_(x.amount, x.currency || trip.currency), 0);
   const lines = [`🧾 ${trip.name} 記帳（共 ${list.length} 筆，${ntd_(total)}）`];
-  list.slice(0, 40).forEach((x) => lines.push(`${x.settled ? '✅' : '⏳'} ${x.date ? `${x.date.slice(5).replace('-', '/')} ` : ''}${x.title} ${showMoney_(x.amount, x.currency || trip.currency)}｜${name(x.paidBy)}付${x.settled ? '・已結清' : '・待分帳'}`));
+  const selfOnly = (x) => x.splitWith && x.splitWith.length === 1 && x.splitWith[0] === x.paidBy;
+  list.slice(0, 40).forEach((x) => lines.push(`${x.settled ? '✅' : selfOnly(x) ? '🙋' : '⏳'} ${x.date ? `${x.date.slice(5).replace('-', '/')} ` : ''}${x.title} ${showMoney_(x.amount, x.currency || trip.currency)}｜${name(x.paidBy)}付${x.settled ? '・已結清' : selfOnly(x) ? '・不分帳' : '・待分帳'}`));
   if (list.length > 40) lines.push(`……還有 ${list.length - 40} 筆，到網站看全部`);
   lines.push('', '輸入「結算」看誰該給誰多少；到網站預算頁可以修改或按「結清」。');
   return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('結算'), qUri_('在網站看', tripLiffUrl_(trip.id)), ...defaultQuick_()]));
