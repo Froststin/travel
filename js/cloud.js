@@ -289,7 +289,6 @@ const Cloud = {
       const local = state;
       this.enabled = true;
       state = { trips: data.trips, journal: data.journal };
-      if (!this.offline) this.mapsKey = data.mapsKey || ''; // Google 地圖嵌入用（見 js/map.js）；離線用的快取不含金鑰，不要清掉
       if (this.offline) {
         const at = new Date(data.at);
         toast(`📴 連不上雲端，先顯示 ${at.getMonth() + 1}/${at.getDate()} ${fmtTime(at)} 的資料，修改會在連上後補傳`, { duration: 5000 });
@@ -358,7 +357,6 @@ const Cloud = {
       state.trips = data.trips.map((t) => this.unsynced.get(t.id) || t)
         .concat([...this.unsynced.values()].filter((t) => !ids.has(t.id)));
       state.journal = data.journal;
-      this.mapsKey = data.mapsKey || ''; // 後端拿掉或換了金鑰，這裡也跟著更新
       const y = window.scrollY;
       route();
       window.scrollTo(0, y);

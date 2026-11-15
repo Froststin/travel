@@ -924,10 +924,13 @@ dialog { overscroll-behavior: contain; }
 .share-pct { margin-left: 6px; font-weight: 400; font-size: .78rem; }
 .share-total { font-weight: 700; border-top: 1px solid var(--border); padding-top: 8px; }
 
-/* ---------- 地圖：Google 路線圖 ---------- */
-.trip-map.gmap { display: block; width: 100%; border: 1px solid var(--border); }
-.gmap-modes { margin: 10px 0 8px; }
-.gmap-modes .map-day:disabled { opacity: .45; cursor: not-allowed; }
-.gmap-stops { margin: 10px 0 0; padding-left: 0; list-style: none; counter-reset: stop; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .88rem; }
-.gmap-stops li { counter-increment: stop; display: inline-flex; align-items: center; gap: 6px; }
-.gmap-stops li::before { content: counter(stop, upper-alpha); display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--day, var(--primary)); color: #fff; font-size: .72rem; font-weight: 700; }
+
+/* ---------- 地圖：直線距離 ---------- */
+.map-dist-wrap { background: none; border: 0; }
+.map-dist { --day: var(--primary); display: inline-block; transform: translate(-50%, -50%); padding: 1px 7px; border-radius: 999px; background: #fff; border: 1.5px solid var(--day); color: var(--day); font-size: 12px; font-weight: 700; white-space: nowrap; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+.map-dist-steps { list-style: none; margin: 12px 0 4px; padding: 0; }
+.map-dist-steps li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 0; }
+.map-dist-no { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--day, var(--primary)); color: #fff; font-size: .75rem; font-weight: 700; }
+.map-dist-seg { flex-basis: 100%; padding-left: 10px; margin-left: 10px; border-left: 2px dashed var(--day, var(--primary)); color: var(--muted); font-size: .85rem; }
+.map-dist-total { margin: 8px 0; }
+.map-dist-list { list-style: none; margin: 12px 0 4px; padding: 0; display: grid; gap: 4px; font-size: .9rem; }
