@@ -42,13 +42,14 @@ const HELP_TEXT = [
   '・買 面膜 @藥妝店 → 記在那個行程（行程改天會跟著走）',
   '　（金額會計入預算的「購物」；寫 円／¥ 會換算成旅程的幣別）',
   '・購物清單、明天要買什麼 → 查看（照片和備註到網站上加）',
-  '・買到 抹茶粉、買到 抹茶粉 480円（順便改成實際金額）',
+  '・買到 抹茶粉、買到 抹茶粉 480円（順便改成實際的單價）',
+  '　（數量、付款狀態、誰付的到網站上改；有填誰付的會算進「結算」）',
   '・不買 八橋',
   '',
-  '【旅遊日誌】',
-  '・日誌 今天的抹茶超好喝',
-  '・直接傳照片 → 自動記到今天的日誌',
-  '・日誌／日誌 10/29 → 查看',
+  '【備忘】',
+  '・備忘 今天的抹茶超好喝（「日誌 …」也可以）',
+  '・直接傳照片 → 自動記到今天的備忘',
+  '・看備忘／備忘 10/29 → 查看',
   '',
   '【旅伴】',
   '・邀請 → 產生邀請訊息，轉傳給旅伴',
@@ -151,11 +152,11 @@ function handleText_(ctx, rawText) {
   if ((m = text.match(/^(?:新增|加入|\+)\s*([\s\S]+)$/))) return cmdAdd_(ctx, m[1]);
   if ((m = text.match(/^(?:刪除|移除|刪掉)\s*([\s\S]+)$/))) return cmdDelete_(ctx, m[1]);
   if ((m = text.match(/^(?:修改|更改|改)\s*([\s\S]+)$/))) return cmdEdit_(ctx, m[1]);
-  if (/^(?:看|查看|查|確認)?(?:旅遊)?(?:日誌|日記)(?:確認)?(?:\s+(.+))?$/.test(text) && !/^(?:日誌|日記)\s*[:：]/.test(text)) {
-    const arg = text.replace(/^(?:看|查看|查|確認)?(?:旅遊)?(?:日誌|日記)(?:確認)?\s*/, '');
+  if (/^(?:看|查看|查|確認)?(?:旅遊)?(?:日誌|日記|備忘(?:錄|紀錄)?)(?:確認)?(?:\s+(.+))?$/.test(text) && !/^(?:日誌|日記|備忘(?:錄|紀錄)?)\s*[:：]/.test(text)) {
+    const arg = text.replace(/^(?:看|查看|查|確認)?(?:旅遊)?(?:日誌|日記|備忘(?:錄|紀錄)?)(?:確認)?\s*/, '');
     if (!arg || isDateOnly_(ctx, arg)) return cmdJournalView_(ctx, arg);
   }
-  if ((m = text.match(/^(?:日誌|日記|記錄|紀錄|記下|筆記|寫日誌)\s*[:：]?\s*([\s\S]+)$/))) return cmdJournalAdd_(ctx, m[1].trim());
+  if ((m = text.match(/^(?:日誌|日記|記錄|紀錄|記下|筆記|寫日誌|備忘(?:錄|紀錄)?|記備忘)\s*[:：]?\s*([\s\S]+)$/))) return cmdJournalAdd_(ctx, m[1].trim());
   if (/^(匯率|日幣|日圓|日幣匯率|匯率多少)$/.test(text)) return say_(ctx, textMsg_(`💱 ${rateText_('JPY')}\n\n例：¥1,000 ≈ ${ntd_(toTWD_(1000, 'JPY') || 0)}`));
   if (/^(?:結算|分帳|算帳|誰欠誰|拆帳|分錢)$/.test(text)) return cmdSettle_(ctx);
   if (/^(?:訂位|訂房|訂位資訊|住宿資訊|交通資訊|航班|機票|飯店|住哪|住哪裡|確認碼)$/.test(text)) return cmdBookings_(ctx);
@@ -649,8 +650,8 @@ function cmdShopView_(ctx, rest) {
     return say_(ctx, textMsg_([`「${trip.name}」你的購物清單還是空的。\n例如：\n買 明天 抹茶粉、八橋\n買 面膜 @藥妝店`, ...others].join('\n'), more));
   }
   const lines = [`🛒 ${trip.name} ${others.length ? '我的' : ''}購物清單：已買 ${all.filter((s) => s.done).length} / ${all.length}`];
-  const total = all.reduce((s, x) => s + twdOrRaw_(x.price, trip.currency), 0);
-  if (total) lines.push(`預估 ${ntd_(total)}（已計入預算），其中已買 ${ntd_(all.filter((s) => s.done).reduce((s, x) => s + twdOrRaw_(x.price, trip.currency), 0))}`);
+  const total = all.reduce((s, x) => s + shopTwd_(x, trip.currency), 0);
+  if (total) lines.push(`預估 ${ntd_(total)}（已計入預算），其中已買 ${ntd_(all.filter((s) => s.done).reduce((s, x) => s + shopTwd_(x, trip.currency), 0))}`);
   if (found && trip.startDate <= found.date && found.date <= trip.endDate) {
     const list = shoppingOn_(trip, found.date);
     lines.push('', `【Day ${daysBetween_(trip.startDate, found.date) + 1}・${prettyDate_(found.date)}】`);
@@ -716,7 +717,7 @@ function cmdShopAdd_(ctx, body) {
   const lines = [];
   const items = parsed.map((p) => {
     const cc = costInCurrency_(p.cost || 0, p.currency, trip.currency);
-    const item = { id: Utilities.getUuid(), text: p.text.slice(0, 80), date, activityId, price: cc.cost, done: false, note: '', fileId: '' };
+    const item = { id: Utilities.getUuid(), text: p.text.slice(0, 80), date, activityId, price: cc.cost, done: false, note: '', fileId: '', ...shopExtra_({}) };
     lines.push(`☐ ${item.text}${item.price ? ` ${showMoney_(item.price, trip.currency)}${cc.note}` : ''}`);
     return item;
   });
@@ -748,7 +749,7 @@ function cmdShopMark_(ctx, body, mode) {
       hit.item.done = true;
       // 「買到 抹茶粉 480円」：順便改成實際金額
       if (want.cost != null) {
-        const cc = costInCurrency_(want.cost, want.currency, hit.trip.currency);
+        const cc = costInCurrency_(want.cost, want.currency, shopCur_(hit.item, hit.trip.currency)); // 換成這一樣自己的幣別（單價）
         hit.item.price = cc.cost;
         notes.set(hit.item, cc.note);
       }
@@ -762,7 +763,7 @@ function cmdShopMark_(ctx, body, mode) {
     saveTrip_(ctx.userId, trip);
     items.forEach((s) => lines.push(mode === 'remove'
       ? `🗑️ 已從購物清單拿掉：${s.text}`
-      : `✅ 買到了：${s.text}${Number(s.price) ? ` ${showMoney_(s.price, trip.currency)}${notes.get(s) || ''}` : ''}`));
+      : `✅ 買到了：${s.text}${Number(s.price) ? ` ${shopMoneyText_(s, trip.currency)}${notes.get(s) || ''}` : ''}`));
     const left = trip.shopping.filter((s) => !s.done).length;
     lines.push(left ? `「${trip.name}」還有 ${left} 樣沒買` : `「${trip.name}」的東西都買齊了 🎉`);
   }
@@ -770,7 +771,7 @@ function cmdShopMark_(ctx, body, mode) {
   return say_(ctx, textMsg_(lines.join('\n'), [qMsg_('購物清單'), ...defaultQuick_()]));
 }
 
-/* ---------- 旅遊日誌 ---------- */
+/* ---------- 備忘（原本叫旅遊日誌，「日誌 …」指令照常可用） ---------- */
 function cmdJournalAdd_(ctx, body) {
   let text = body;
   let date = ctx.today;
@@ -780,30 +781,37 @@ function cmdJournalAdd_(ctx, body) {
     if (d) { date = d.date; text = m[2]; }
   }
   const entry = addJournal_(ctx.userId, { date, type: 'text', text });
-  return say_(ctx, textMsg_(`📝 已記到 ${prettyDate_(date)} 的旅遊日誌`, [
-    qMsg_('看這天日誌', `日誌 ${date.slice(5).replace('-', '/')}`), qPostback_('刪除這則', { a: 'delj', id: entry.id }, '刪除剛才的日誌'), ...defaultQuick_(),
+  return say_(ctx, textMsg_(`📝 已記到 ${prettyDate_(date)} 的備忘`, [
+    qMsg_('看這天備忘', `備忘 ${date.slice(5).replace('-', '/')}`), qPostback_('刪除這則', { a: 'delj', id: entry.id }, '刪除剛才的備忘'), ...defaultQuick_(),
   ]));
 }
 
 function cmdJournalView_(ctx, arg) {
   const all = loadJournal_(ctx.userId);
-  if (!all.length) return say_(ctx, textMsg_('旅遊日誌還是空的。\n輸入「日誌 想記的內容」，或直接傳照片給我，就會記到今天的日誌。'));
+  if (!all.length) return say_(ctx, textMsg_('備忘還是空的。\n輸入「備忘 想記的內容」，或直接傳照片給我，就會記到今天的備忘。'));
   let date = ctx.today;
   if (arg) {
     const d = extractDate_(arg, { today: ctx.today, trips: ctx.trips, trip: activeTrip_(ctx.trips, ctx.today) });
     if (d) date = d.date;
   } else if (!all.some((j) => j.date === ctx.today)) {
-    date = all[all.length - 1].date; // 今天沒有就顯示最近一天
+    const dated = all.filter((j) => j.date);
+    if (dated.length) date = dated[dated.length - 1].date; // 今天沒有就顯示最近一天
   }
   const entries = all.filter((j) => j.date === date);
-  const lines = [`📔 ${prettyDate_(date)} 旅遊日誌`];
+  // 不在旅程期間（例如出發前）就看目前或即將出發的那一趟
+  const trip = ctx.trips.find((t) => t.startDate <= date && date <= t.endDate) || (ctx.trips.length ? activeTrip_(ctx.trips, ctx.today) : null);
+  // 這趟旅程「整趟通用」（不指定日期）的備忘放在最前面
+  const general = trip ? all.filter((j) => !j.date && j.tripId === trip.id) : [];
+  const line = (j) => `${j.date ? `${j.time} ` : '・'}${j.mine ? '' : `${j.author}：`}${j.type === 'image' ? '📷 照片' : j.text}`;
+  const lines = [];
+  if (general.length) lines.push(`📌 ${trip.name} 整趟通用`, ...general.map(line), '');
+  lines.push(`📔 ${prettyDate_(date)} 備忘`);
   if (!entries.length) lines.push('（這天沒有紀錄）');
-  entries.forEach((j) => lines.push(`${j.time} ${j.mine ? '' : `${j.author}：`}${j.type === 'image' ? '📷 照片' : j.text}`));
+  entries.forEach((j) => lines.push(line(j)));
   const photos = entries.filter((j) => j.type === 'image').length;
-  const trip = ctx.trips.find((t) => t.startDate <= date && date <= t.endDate);
-  if (photos) lines.push('', `照片 ${photos} 張，可以在網站的「日誌」分頁查看：`, tripLiffUrl_(trip && trip.id));
-  const days = [...new Set(all.map((j) => j.date))].filter((d) => d !== date).slice(-4).reverse();
-  return say_(ctx, textMsg_(lines.join('\n'), [...days.map((d) => qMsg_(`日誌 ${d.slice(5).replace('-', '/')}`)), ...defaultQuick_()]));
+  if (photos) lines.push('', `照片 ${photos} 張，可以在網站的「備忘」分頁查看：`, tripLiffUrl_(trip && trip.id));
+  const days = [...new Set(all.map((j) => j.date))].filter((d) => d && d !== date).slice(-4).reverse();
+  return say_(ctx, textMsg_(lines.join('\n'), [...days.map((d) => qMsg_(`備忘 ${d.slice(5).replace('-', '/')}`)), ...defaultQuick_()]));
 }
 
 function handleImage_(ctx, message) {
@@ -817,7 +825,7 @@ function handleImage_(ctx, message) {
   withLock_(() => addJournal_(ctx.userId, { date, type: 'image', text: '', fileId: file.getId() }));
   if (set && set.index !== set.total) return; // 一次傳多張時，只在最後一張回覆
   const count = set ? set.total : 1;
-  return say_(ctx, textMsg_(`📷 已把 ${count} 張照片記到 ${prettyDate_(date)} 的旅遊日誌`, [qMsg_('看今天日誌', '日誌'), ...defaultQuick_()]));
+  return say_(ctx, textMsg_(`📷 已把 ${count} 張照片記到 ${prettyDate_(date)} 的備忘`, [qMsg_('看今天備忘', '備忘'), ...defaultQuick_()]));
 }
 
 /* ---------- Postback ---------- */
@@ -859,7 +867,7 @@ function handlePostback_(ctx, data) {
   }
   if (p.a === 'delj') {
     const row = deleteJournal_(ctx.userId, p.id);
-    return say_(ctx, textMsg_(row ? '🗑️ 已刪除這則日誌' : '這則日誌已經不存在了。'));
+    return say_(ctx, textMsg_(row ? '🗑️ 已刪除這則備忘' : '這則備忘已經不存在了。'));
   }
 }
 

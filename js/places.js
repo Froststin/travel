@@ -349,6 +349,10 @@ function schedulePlaces(t, ids, date) {
       id: uid(), time: '', endTime: '', travelMin: 0, travelMode: '', travelCost: 0, travelCostCurrency: '',
       title: p.name, category: 'sight', location: placeQuery(p), mapUrl: p.mapUrl || '', cost: 0, notes: '',
     };
+    // 已經查到位置的，座標直接帶過去，地圖分頁不用再查一次
+    if (p.geo === 'ok' && typeof p.lat === 'number' && typeof p.lng === 'number' && typeof actGeoKey === 'function') {
+      Object.assign(a, { lat: p.lat, lng: p.lng, geo: 'ok', geoKey: actGeoKey(a) });
+    }
     (t.days[date] ||= []).push(a);
     p.activityId = a.id;
   }

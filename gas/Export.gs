@@ -12,7 +12,7 @@ function escHtml_(v) {
 function budgetSummary_(trip) {
   const cur = trip.currency;
   const all = Object.values(trip.days).flat();
-  const shopSum = (trip.shopping || []).reduce((s, x) => s + twdOrRaw_(x.price, cur), 0);
+  const shopSum = (trip.shopping || []).reduce((s, x) => s + shopTwd_(x, cur), 0);
   const byCat = { shopping: shopSum };
   all.forEach((a) => {
     byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, a.costCurrency || cur);
@@ -146,13 +146,14 @@ function exportHtml_(trip, exportedAt, web) {
 }
 
 function shopText_(trip, s) {
-  return escHtml_(`${s.done ? '(已買) ' : ''}${s.text}${s.note ? `（${s.note}）` : ''}${Number(s.price) ? ` ${showMoney_(s.price, trip.currency)}` : ''}`);
+  const money = shopMoneyText_(s, trip.currency);
+  return escHtml_(`${s.done ? '(已買) ' : ''}${s.text}${s.note ? `（${s.note}）` : ''}${money ? ` ${money}` : ''}`);
 }
 
 function shopRowHtml_(trip, s, dayLabel) {
   const a = shopActivity_(trip, s);
   return `<tr><td class="time">${escHtml_(dayLabel)}</td><td>${s.done ? '[v]' : '[　]'} ${escHtml_(s.text)}${a ? ` <span class="sub">（${escHtml_(a.title)}）</span>` : ''}${s.note ? `<div class="sub">${escHtml_(s.note)}</div>` : ''}</td>
-    <td class="money">${Number(s.price) ? escHtml_(showMoney_(s.price, trip.currency)) : ''}</td></tr>`;
+    <td class="money">${escHtml_(shopMoneyText_(s, trip.currency))}</td></tr>`;
 }
 
 function exportFolder_() {

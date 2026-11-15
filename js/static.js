@@ -61,7 +61,7 @@ function staticShopImg(s) {
 }
 
 function staticShopItems(items, currency) {
-  return items.map((s) => `<li>${staticShopImg(s)}${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${Number(s.price) ? ` <span class="muted small">${showMoney(s.price, currency)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</li>`).join('');
+  return items.map((s) => `<li>${staticShopImg(s)}${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${Number(s.price) || cleanQty(s.quantity) > 1 ? ` <span class="muted small">${shopMoneyHtml(s, currency)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</li>`).join('');
 }
 
 /**
@@ -76,7 +76,7 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
   const now = new Date();
   const exportedAt = `${fmtDate(now)} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const siteUrl = `${location.origin}${location.pathname}${cloudOn() || online ? `?trip=${encodeURIComponent(t.id)}` : ''}`;
-  const journal = (state.journal || []).filter((j) => (j.tripId ? j.tripId === t.id : true) && j.date >= t.startDate && j.date <= t.endDate);
+  const journal = tripMemos(t);
 
   const days = dates.map((d, i) => {
     const list = t.days[d] || [];
@@ -176,11 +176,11 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
 
   const journalHtml = journal.length ? `
     <section id="journal">
-      <h2>📔 日誌</h2>
-      ${dates.filter((d) => journal.some((j) => j.date === d)).map((d) => `
-        <h3 class="small muted">Day ${dates.indexOf(d) + 1}・${prettyDate(d)}</h3>
+      <h2>📝 備忘</h2>
+      ${['', ...dates].filter((d) => journal.some((j) => j.date === d)).map((d) => `
+        <h3 class="small muted">${d ? `Day ${dates.indexOf(d) + 1}・${prettyDate(d)}` : '📌 整趟通用'}</h3>
         <ul class="journal">${journal.filter((j) => j.date === d).map((j) => `
-          <li><span class="time">${esc(j.time)}</span><div class="body">
+          <li><span class="time">${esc(j.date ? j.time : '')}</span><div class="body">
             ${j.mine === false && j.author ? `<div class="small muted">${esc(j.author)}</div>` : ''}
             ${j.type === 'image'
               ? (photos.get(j.fileId) ? `<img src="${esc(photos.get(j.fileId))}" alt="旅遊照片">` : '<span class="muted">（照片沒有包含在這份匯出裡）</span>')
@@ -208,7 +208,7 @@ function buildStaticHtml(t, photos = new Map(), online = false) {
     settleHtml ? '<a href="#settle">🤝 分帳</a>' : '',
     shopping ? '<a href="#shopping">🛒 購物</a>' : '',
     packing ? '<a href="#packing">🧳 行李</a>' : '',
-    journalHtml ? '<a href="#journal">📔 日誌</a>' : '',
+    journalHtml ? '<a href="#journal">📝 備忘</a>' : '',
   ].join('');
 
   return `<!DOCTYPE html>
@@ -241,7 +241,7 @@ function staticShopRow(t, s, dayLabel) {
   const a = s.activityId && Object.values(t.days).flat().find((x) => x.id === s.activityId);
   return `<tr><td class="small muted" style="white-space:nowrap">${dayLabel}</td>
     <td>${staticShopImg(s)}${s.done ? '☑' : '☐'} <span${s.done ? ' class="done"' : ''}>${esc(s.text)}</span>${a ? ` <span class="small muted">📍 ${esc(a.title)}</span>` : ''}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ''}</td>
-    <td class="num">${Number(s.price) ? showMoney(s.price, t.currency) : ''}</td></tr>`;
+    <td class="num">${shopMoneyHtml(s, t.currency)}</td></tr>`;
 }
 
 // 日誌照片存在雲端，匯出前先抓下來內嵌（抓不到的就略過）

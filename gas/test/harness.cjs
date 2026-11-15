@@ -42,6 +42,12 @@ function makeSheet(name) {
     },
     setName() { return this; },
     setFrozenRows() {},
+    // 備份工作表：複製一份目前的內容，setName 後登記到 sheets
+    copyTo() {
+      const copy = makeSheet('copy');
+      data.forEach((r) => copy.data.push([...r]));
+      return { setName: (n) => { sheets[n] = copy; return copy; } };
+    },
   };
   return sheet;
 }

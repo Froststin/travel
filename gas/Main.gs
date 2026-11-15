@@ -114,9 +114,15 @@ function apiAction_(userId, body) {
     case 'addJournal':
       return withLock_(() => {
         const text = str_(body.entry && body.entry.text, 2000).trim();
-        if (!text) throw apiError_(400, '日誌內容是空的');
+        if (!text) throw apiError_(400, '備忘內容是空的');
         const row = addJournal_(userId, Object.assign({}, body.entry, { type: 'text', text, fileId: '' }));
         return { entry: { id: row.id, tripId: row.tripId } };
+      });
+
+    case 'updateJournal':
+      return withLock_(() => {
+        const row = updateJournal_(userId, String(body.id || ''), body.entry || {});
+        return { entry: { id: row.id, date: row.date, text: row.text } };
       });
 
     case 'deleteJournal':
@@ -141,7 +147,7 @@ function apiAction_(userId, body) {
       return withLock_(() => ({ url: viewUrl_(viewTokenFor_(userId, String(body.tripId || ''), !!body.reset)) }));
 
     case 'uploadShopImage':
-      return { fileId: uploadShopImage_(userId, body.dataUrl, body.kind === 'activity' ? 'activity' : 'shop') };
+      return { fileId: uploadShopImage_(userId, body.dataUrl, ['activity', 'metro'].includes(body.kind) ? body.kind : 'shop') };
 
     case 'shopPhotos':
       return { photos: shopPhotos_(userId, body.fileIds) };

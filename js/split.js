@@ -3,7 +3,7 @@
 /* ============================================================
  * 分帳：每筆花費可以記「誰付的」和「哪些人分攤」（沒選＝所有成員），預算頁算出誰該給誰多少
  * 成員用後端給的代號（members[].key）辨識；只有雲端共用、兩個人以上的旅程才有
- * 算法和後端 gas/Split.gs 的 settlement_ 一樣；購物清單是每個人自己的，不算在內
+ * 算法和後端 gas/Split.gs 的 settlement_ 一樣；購物清單（自己的與旅伴的）有填「誰付的」才算（單價 × 數量），沒填的當作自己買的
  * ============================================================ */
 
 // 可以分帳的成員（沒有就回傳空陣列）
@@ -40,6 +40,16 @@ function settlement(t) {
     person(a.paidBy).paid += amount;
     who.forEach((k) => { person(k).share += amount / who.length; });
   }
+  const shops = (t.shopping || []).concat(...(t.othersShopping || []).map((g) => g.items || []));
+  for (const s of shops) {
+    const amount = shopCost([s], t.currency);
+    if (!(amount > 0) || !s.paidBy) continue;
+    const who = Array.isArray(s.splitWith) && s.splitWith.length ? s.splitWith : everyone;
+    if (!who.length) continue;
+    total += amount;
+    person(s.paidBy).paid += amount;
+    who.forEach((k) => { person(k).share += amount / who.length; });
+  }
   const rows = [...people.values()].map((p) => ({ ...p, net: p.paid - p.share }));
   return { rows, transfers: settleTransfers(rows), unassigned, total };
 }
@@ -68,7 +78,7 @@ const personName = (p) => `${p.name}${p.me ? '（我）' : ''}`;
 function settleView(t, forStatic = false) {
   if (!splitMembers(t).length) return '';
   const s = settlement(t);
-  const help = '在行程的花費下面選「誰付的」，可以再勾哪些人分攤（沒改就是大家平分）。';
+  const help = '在行程的花費下面、或購物清單的 ✎ 裡選「誰付的」，可以再勾哪些人分攤（沒改就是大家平分）。';
   if (!s.total) {
     return forStatic ? '' : `
       <section class="panel">
@@ -102,31 +112,41 @@ function payerChip(t, a) {
   return `<span class="payer-chip" title="${n ? `${n} 個人分攤` : '大家平分'}">👤 ${esc(m ? (m.me ? '我' : m.name) : '已退出的旅伴')}付${n && n < ms.length ? `・${n} 人分` : ''}</span>`;
 }
 
-/* ---------- 行程表單 ---------- */
-function fillSplitFields(t, a) {
-  const box = $('#split-fields');
+// 購物卡片上的「誰付的」（有填才顯示）
+function shopPayerChip(t, s) {
+  const ms = splitMembers(t);
+  if (!ms.length || !s.paidBy) return '';
+  const m = ms.find((x) => x.key === s.paidBy);
+  const n = Array.isArray(s.splitWith) && s.splitWith.length ? s.splitWith.length : 0;
+  return `<span class="payer-chip" title="${n ? `${n} 個人分攤` : '大家平分'}">👤 ${esc(m ? (m.me ? '我' : m.name) : '已退出的旅伴')}付${n && n < ms.length ? `・${n} 人分` : ''}</span>`;
+}
+
+/* ---------- 行程與購物表單（form：哪一個表單；box／list：分帳區塊與分攤勾選的位置） ---------- */
+function fillSplitFields(t, a, form = activityForm, boxSel = '#split-fields', listSel = '#split-with-list') {
+  const box = $(boxSel);
   if (!box) return;
   const ms = splitMembers(t);
   box.hidden = !ms.length;
   if (!ms.length) return;
-  const sel = activityForm.elements.paidBy;
+  const sel = form.elements.paidBy;
   sel.innerHTML = '<option value="">（還沒填）</option>'
     + ms.map((m) => `<option value="${esc(m.key)}">${esc(personName(m))}</option>`).join('')
     + (a && a.paidBy && !ms.some((m) => m.key === a.paidBy) ? `<option value="${esc(a.paidBy)}">已退出的旅伴</option>` : '');
   sel.value = (a && a.paidBy) || '';
   const chosen = new Set(a && Array.isArray(a.splitWith) ? a.splitWith : []);
-  $('#split-with-list').innerHTML = ms.map((m) => `
+  $(listSel).innerHTML = ms.map((m) => `
     <label class="chip-check"><input type="checkbox" name="splitWith" value="${esc(m.key)}" ${!chosen.size || chosen.has(m.key) ? 'checked' : ''}><span>${esc(m.me ? '我' : m.name)}</span></label>`).join('');
 }
 
 /** 表單裡的分帳欄位；沒顯示時（不是共用旅程）沿用原本的 */
-function readSplitFields(t, prev) {
+function readSplitFields(t, prev, form = activityForm, boxSel = '#split-fields') {
   const ms = splitMembers(t);
-  if (!ms.length || $('#split-fields').hidden) {
+  const box = $(boxSel);
+  if (!ms.length || !box || box.hidden) {
     return { paidBy: (prev && prev.paidBy) || '', splitWith: (prev && prev.splitWith) || [] };
   }
-  const checked = [...activityForm.querySelectorAll('input[name="splitWith"]:checked')].map((x) => x.value);
+  const checked = [...form.querySelectorAll('input[name="splitWith"]:checked')].map((x) => x.value);
   // 全部勾（或全部沒勾）＝大家平分，記成空的，之後加入的旅伴也算在內
   const all = !checked.length || ms.every((m) => checked.includes(m.key));
-  return { paidBy: activityForm.elements.paidBy.value || '', splitWith: all ? [] : checked };
+  return { paidBy: form.elements.paidBy.value || '', splitWith: all ? [] : checked };
 }

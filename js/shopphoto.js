@@ -58,7 +58,7 @@ const ShopPhotos = {
   },
 
   /** 把一批 fileId 的照片準備好：先看這台裝置記過的，沒有的再分批跟雲端要 */
-  async fetch(ids) {
+  async fetch(ids, batchSize = 5) {
     const want = [...new Set(ids)].filter((id) => id && !this.mem.has(id) && !this.missing.has(id) && !this.busy.has(id));
     want.forEach((id) => this.busy.add(id));
     try {
@@ -67,8 +67,8 @@ const ShopPhotos = {
         if (saved) this.mem.set(id, saved);
       }
       const remote = want.filter((id) => !this.mem.has(id));
-      for (let i = 0; i < remote.length && cloudOn(); i += 5) {
-        const batch = remote.slice(i, i + 5);
+      for (let i = 0; i < remote.length && cloudOn(); i += batchSize) {
+        const batch = remote.slice(i, i + batchSize);
         try {
           const { photos } = await Cloud.call('shopPhotos', { fileIds: batch });
           batch.forEach((id) => (photos[id] ? this.remember(id, photos[id]) : this.missing.add(id)));
@@ -85,9 +85,12 @@ const ShopPhotos = {
   /** 畫面畫好後呼叫：把還沒有圖的 <img data-shop-file> 補上 */
   async load(root) {
     const pending = () => [...root.querySelectorAll('img[data-shop-file]:not([src])')];
-    const ids = pending().map((img) => img.dataset.shopFile);
-    if (!ids.length) return;
-    await this.fetch(ids);
+    const imgs = pending();
+    if (!imgs.length) return;
+    // 地鐵圖是大圖，一次只要一張，免得回應太大逾時
+    const big = imgs.filter((img) => img.closest('.metro-thumb')).map((img) => img.dataset.shopFile);
+    const small = imgs.filter((img) => !img.closest('.metro-thumb')).map((img) => img.dataset.shopFile);
+    await Promise.all([small.length ? this.fetch(small) : null, big.length ? this.fetch(big, 1) : null]);
     for (const img of pending()) {
       const src = this.mem.get(img.dataset.shopFile);
       if (src) img.src = src;

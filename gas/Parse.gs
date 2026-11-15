@@ -309,9 +309,30 @@ function syncShopping_(trip) {
     const d = s.activityId && where[s.activityId];
     return {
       id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done,
-      note: s.note || '', fileId: s.fileId || '',
+      note: s.note || '', fileId: s.fileId || '', ...shopExtra_(s),
     };
   });
+}
+
+/* ---------- 購物金額：單價 × 數量，幣別沒填就是旅程的 ---------- */
+function shopCur_(s, tripCur) {
+  return s.priceCurrency || tripCur;
+}
+
+function shopSubtotal_(s) {
+  return Math.max(0, Number(s.price) || 0) * cleanQty_(s.quantity);
+}
+
+/** 這一樣的小計換算成台幣（加總用） */
+function shopTwd_(s, tripCur) {
+  return twdOrRaw_(shopSubtotal_(s), shopCur_(s, tripCur));
+}
+
+/** 例如「NT$110（¥500）×3」；數量 1 只顯示金額 */
+function shopMoneyText_(s, tripCur) {
+  if (!Number(s.price)) return cleanQty_(s.quantity) > 1 ? `×${cleanQty_(s.quantity)}` : '';
+  const q = cleanQty_(s.quantity);
+  return `${showMoney_(shopSubtotal_(s), shopCur_(s, tripCur))}${q > 1 ? `（${fmtMoney_(s.price, shopCur_(s, tripCur))} ×${q}）` : ''}`;
 }
 
 function shoppingOn_(trip, date) {
@@ -338,7 +359,8 @@ function splitShopItems_(text) {
 
 function shopLine_(trip, item) {
   const a = shopActivity_(trip, item);
-  return `${item.done ? '☑' : '☐'} ${item.text}${item.fileId ? ' 📷' : ''}${Number(item.price) ? ` ${showMoney_(item.price, trip.currency)}` : ''}${a ? `（${a.title}）` : ''}${item.note ? `\n　　📝 ${item.note}` : ''}`;
+  const money = shopMoneyText_(item, trip.currency);
+  return `${item.done ? '☑' : '☐'} ${item.text}${item.fileId ? ' 📷' : ''}${money ? ` ${money}` : ''}${a ? `（${a.title}）` : ''}${item.note ? `\n　　📝 ${item.note}` : ''}`;
 }
 
 /* ---------- 新旅程：名稱＋日期範圍 ---------- */

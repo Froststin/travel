@@ -134,7 +134,7 @@ r = postback(JSON.parse(r.quick[0].action.data));
 check('確認後刪除', r.text.includes('已刪除'), r.text);
 
 r = say('日誌 抹茶超好喝');
-check('寫日誌', r.text.includes('已記到 10/29（四） 的旅遊日誌'), r.text);
+check('寫日誌（現在叫備忘）', r.text.includes('已記到 10/29（四） 的備忘'), r.text);
 r = say('日誌 今天好累');
 check('日誌內容含「今天」仍當作新增', r.text.includes('已記到'), r.text);
 
@@ -312,7 +312,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && H.sheets.Activities.data[0].includes('paidBy') && H.sheets.Trips.data[0].includes('bookings') && H.sheets.Users.data[0].includes('sessionsFrom') && props.SCHEMA_VERSION === '12');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && H.sheets.Activities.data[0].includes('paidBy') && H.sheets.Trips.data[0].includes('bookings') && H.sheets.Users.data[0].includes('sessionsFrom') && props.SCHEMA_VERSION === '13');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -485,7 +485,7 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '12');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '13');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
@@ -630,7 +630,7 @@ const viewToken = (res.url || '').split('?view=')[1];
 check('產生連結：指到網站、帶 40 碼代碼，再要一次是同一個', res.ok && /^[a-f0-9]{40}$/.test(viewToken) && res.url.startsWith('https://froststin.github.io/travel/?view=') && api('viewLink', { tripId: vTrip.id }).url === res.url, JSON.stringify(res));
 let vd = api('view', { token: viewToken }, '');
 check('檢視資料：不用登入，憑代碼拿到行程與分享者自己的購物清單', vd.ok && vd.trip.id === vTrip.id && vd.trip.shopping.some((s) => s.text === '檢視頁測試用') && Object.values(vd.trip.days).flat().some((a) => a.title === '<b>夜景</b>') && Array.isArray(vd.journal), JSON.stringify(vd).slice(0, 200));
-check('檢視資料：不含旅伴的清單、不外流 LINE userId 與成員代號', !('othersShopping' in vd.trip) && !('role' in vd.trip) && vd.trip.members.every((m) => Object.keys(m).sort().join() === 'key,name,role' && /^v\d+$/.test(m.key)) && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
+check('檢視資料：旅伴的清單只帶有填誰付的（分帳用）、不外流 LINE userId 與成員代號', (vd.trip.othersShopping || []).every((g) => g.items.every((x) => x.paidBy)) && !('role' in vd.trip) && vd.trip.members.every((m) => Object.keys(m).sort().join() === 'key,name,role' && /^v\d+$/.test(m.key)) && !/"U\d"/.test(JSON.stringify(vd)), JSON.stringify(vd.trip.members));
 check('檢視資料：亂猜的代碼拿不到東西', api('view', { token: 'a'.repeat(40) }, '').status === 404 && api('view', { token: { $ne: '' } }, '').status === 404 && api('view', {}, '').status === 404);
 check('產生連結需要登入、而且要是旅程成員', api('viewLink', { tripId: vTrip.id }, '').status === 401 && api('viewLink', { tripId: vTrip.id }, 'good:U3').status === 403);
 let page = getPage({ view: viewToken });
@@ -1107,6 +1107,189 @@ sp = splitTrip();
 sp.shopping = [{ id: 'ph-shop', text: '有照片的東西', fileId: shopPhoto }];
 api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
 check('復原：自己的購物照片救得回來', splitTrip().shopping[0].fileId === shopPhoto && files.find((f) => f.id === shopPhoto).trashed === false);
+
+/* ---------- 2026-11-15：購物數量／幣別／分帳、付款狀態、備忘、地鐵圖、行程座標 ---------- */
+// 備註搬到數量
+ctx.__n = null;
+const qty = (note) => { ctx.__q = note; return run('qtyFromNote_(__q)'); };
+check('數量：純數量的備註會搬', qty('2') === 2 && qty('2個') === 2 && qty('x3') === 3 && qty('×3') === 3 && qty('3盒') === 3 && qty(' ３ 包 ') === 3);
+check('數量：不是純數量的不搬', qty('紅色 2 個') === 0 && qty('M 號') === 0 && qty('交通安全 ×2') === 0 && qty('') === 0 && qty('0') === 0 && qty('1000') === 0);
+
+// 升級：舊的購物列沒有數量 → 備註搬過去、先備份工作表
+{
+  const head = H.sheets.Shopping.data[0];
+  const ci = (c) => head.indexOf(c);
+  const mk = (id, note) => { const r = head.map(() => ''); r[ci('id')] = id; r[ci('tripId')] = 'split-trip'; r[ci('userId')] = 'U7'; r[ci('text')] = id; r[ci('price')] = '500'; r[ci('note')] = note; return r; };
+  H.sheets.Shopping.data.push(mk('mig-1', '3盒'), mk('mig-2', '紅色 2 個'));
+  delete H.sheets.Shopping_backup_v13;
+  props.SCHEMA_VERSION = '12';
+  const mine = splitTrip().shopping;
+  const m1 = mine.find((x) => x.id === 'mig-1');
+  const m2 = mine.find((x) => x.id === 'mig-2');
+  check('升級：純數量備註搬到數量、備註清空', m1 && m1.quantity === 3 && m1.note === '' && m1.price === 500 && m1.payment === 'unsure', JSON.stringify(m1));
+  check('升級：其他備註保留、數量 1', m2 && m2.quantity === 1 && m2.note === '紅色 2 個', JSON.stringify(m2));
+  check('升級：搬之前先備份 Shopping 工作表', !!H.sheets.Shopping_backup_v13 && H.sheets.Shopping_backup_v13.data.some((r) => r[0] === 'mig-1' && r.includes('3盒')) && props.SCHEMA_VERSION === '13');
+}
+
+// 購物欄位：付款狀態、數量、幣別、分帳
+sp = splitTrip();
+sp.shopping = [
+  { id: 'sh-1', text: '抹茶粉', price: 1000, quantity: 2, priceCurrency: 'JPY', payment: 'pre', paidBy: k7, splitWith: [k7, k8] },
+  { id: 'sh-2', text: '自己的', price: 300, quantity: 1, payment: 'nope', quantity2: 5 },
+  { id: 'sh-3', text: '亂填', price: 100, quantity: -4, priceCurrency: 'XXX', paidBy: 'bad key!' },
+];
+api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+sp = splitTrip();
+const sh1 = sp.shopping.find((x) => x.id === 'sh-1');
+const sh2 = sp.shopping.find((x) => x.id === 'sh-2');
+const sh3 = sp.shopping.find((x) => x.id === 'sh-3');
+check('購物：數量、幣別、付款狀態、分帳都存得起來', sh1.quantity === 2 && sh1.priceCurrency === 'JPY' && sh1.payment === 'pre' && sh1.paidBy === k7 && sh1.splitWith.join() === [k7, k8].join(), JSON.stringify(sh1));
+check('購物：付款狀態不對就當不確定', sh2.payment === 'unsure');
+check('購物：不合法的數量、幣別、付款人會被清掉', sh3.quantity === 1 && sh3.priceCurrency === '' && sh3.paidBy === '', JSON.stringify(sh3));
+check('購物：旅伴看得到我的數量與付款狀態', splitTrip('U8').othersShopping[0].items.some((x) => x.id === 'sh-1' && x.quantity === 2 && x.payment === 'pre'));
+
+// 分帳：購物有填誰付的才算，單價 × 數量，旅伴的也算
+{
+  ctx.__t = splitTrip();
+  const base = run('settlement_(__t)');
+  ctx.__t.shopping = ctx.__t.shopping.filter((x) => x.id !== 'sh-1');
+  const without = run('settlement_(__t)');
+  ctx.__s = sh1;
+  const amount = run('shopTwd_(__s, "TWD")');
+  check('分帳：購物小計＝單價 × 數量（換算台幣）', Math.abs(amount - run('toTWD_(2000, "JPY")')) < 0.01, amount);
+  check('分帳：有填誰付的購物算進結算', Math.abs((base.total - without.total) - amount) < 0.01 && base.unassigned === without.unassigned);
+  const p8 = (x) => x.rows.find((p) => p.key === k8);
+  check('分帳：兩人分攤 → 旅伴應分攤一半', Math.abs((p8(base).share - p8(without).share) - amount / 2) < 0.01);
+  ctx.__t = splitTrip('U8');
+  check('分帳：旅伴那邊算出來一樣（含我的購物）', Math.abs(run('settlement_(__t)').total - base.total) < 0.01);
+}
+r = say('購物清單', 'U7');
+check('LINE 購物清單：顯示數量', r.text.includes('×2'), r.text);
+check('預算：購物用小計', (() => { ctx.__t = splitTrip(); const b = run('budgetSummary_(__t)'); return b.cats.some(([k, v]) => k === 'shopping' && Math.abs(v - (amount2() )) < 0.01); })());
+function amount2() { ctx.__t = splitTrip(); return run('__t.shopping.reduce((s, x) => s + shopTwd_(x, __t.currency), 0)'); }
+r = say('買 毛巾', 'U7');
+check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.some((x) => x.text === '毛巾' && x.quantity === 1 && x.payment === 'unsure'));
+
+// 備忘：整趟通用、修改權限
+{
+  const add = api('addJournal', { entry: { text: '整趟都要記得帶護照', date: '', tripId: 'split-trip' } }, 'good:U7');
+  const j = api('list', {}, 'good:U7').journal.find((x) => x.id === add.entry.id);
+  check('備忘：可以不指定日期（整趟通用）', j && j.date === '' && j.tripId === 'split-trip', JSON.stringify(j));
+  const noTrip = api('addJournal', { entry: { text: '沒指定旅程', date: '' } }, 'good:U7');
+  check('備忘：沒指定旅程時日期空白會改成今天', api('list', {}, 'good:U7').journal.find((x) => x.id === noTrip.entry.id).date === '2026-10-29');
+  check('備忘：旅伴看得到', api('list', {}, 'good:U8').journal.some((x) => x.id === add.entry.id && !x.mine));
+  check('備忘：旅伴不能改', api('updateJournal', { id: add.entry.id, entry: { text: '亂改' } }, 'good:U8').status === 403);
+  const up = api('updateJournal', { id: add.entry.id, entry: { text: '改好的內容', date: '2026-11-01' } }, 'good:U7');
+  const j2 = api('list', {}, 'good:U7').journal.find((x) => x.id === add.entry.id);
+  check('備忘：作者可以改內容與日期', up.ok && j2.text === '改好的內容' && j2.date === '2026-11-01', JSON.stringify(up));
+  check('備忘：再改回整趟通用', api('updateJournal', { id: add.entry.id, entry: { text: '改好的內容', date: '' } }, 'good:U7').ok && api('list', {}, 'good:U7').journal.find((x) => x.id === add.entry.id).date === '');
+  check('備忘：空白內容、亂寫日期不行', api('updateJournal', { id: add.entry.id, entry: { text: '  ' } }, 'good:U7').status === 400 && api('updateJournal', { id: add.entry.id, entry: { text: 'a', date: '11/1' } }, 'good:U7').status === 400);
+  r = say('備忘 新的寫法', 'U7');
+  check('LINE：「備忘 …」會新增', r.text.includes('已記到 10/29（四） 的備忘'), r.text);
+  r = say('看備忘', 'U7');
+  check('LINE：「看備忘」會列出', r.text.includes('新的寫法') && r.text.includes('備忘'), r.text);
+}
+
+// 地鐵圖：成員可新增，上傳者或主人才能刪
+{
+  const up7 = api('uploadShopImage', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==', kind: 'metro' }, 'good:U7').fileId;
+  const up8 = api('uploadShopImage', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==', kind: 'metro' }, 'good:U8').fileId;
+  check('地鐵圖：上傳到地鐵圖資料夾', files.find((f) => f.id === up7).folderId.includes('旅程手帖地鐵圖'));
+  sp = splitTrip();
+  sp.metroMaps = [{ id: 'm-7', name: '東京地鐵', fileId: up7 }];
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  let sp8 = splitTrip('U8');
+  check('地鐵圖：旅伴看得到，標示是誰上傳的', sp8.metroMaps.length === 1 && sp8.metroMaps[0].name === '東京地鐵' && sp8.metroMaps[0].mine === false && sp8.metroMaps[0].byName === 'Name-U7');
+  sp8.metroMaps.push({ id: 'm-8', name: '大阪', fileId: up8 });
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  check('地鐵圖：旅伴可以新增', splitTrip().metroMaps.map((m) => m.id).join() === 'm-7,m-8');
+  sp8 = splitTrip('U8');
+  sp8.metroMaps = sp8.metroMaps.filter((m) => m.id !== 'm-7').map((m) => m);
+  sp8.metroMaps.forEach((m) => { if (m.id === 'm-8') m.name = '大阪改名'; });
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  check('地鐵圖：旅伴刪不掉別人上傳的，可以改自己的名稱', splitTrip().metroMaps.some((m) => m.id === 'm-7') && splitTrip().metroMaps.find((m) => m.id === 'm-8').name === '大阪改名' && !files.find((f) => f.id === up7).trashed);
+  sp8 = splitTrip('U8');
+  sp8.metroMaps.forEach((m) => { if (m.id === 'm-7') m.name = '亂改'; });
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  check('地鐵圖：旅伴不能改別人的名稱', splitTrip().metroMaps.find((m) => m.id === 'm-7').name === '東京地鐵');
+  sp = splitTrip();
+  sp.metroMaps.push({ id: 'm-x', name: '偷', fileId: shopPhoto });
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  check('地鐵圖：不是自己剛上傳的照片不收', !splitTrip().metroMaps.some((m) => m.id === 'm-x'));
+  check('地鐵圖：成員讀得到照片、外人讀不到', !!api('shopPhotos', { fileIds: [up7] }, 'good:U8').photos[up7] && !api('shopPhotos', { fileIds: [up7] }, 'good:U3').photos[up7]);
+  sp = splitTrip();
+  delete sp.metroMaps;
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  check('地鐵圖：舊版網頁沒送這個欄位，不會被清掉', splitTrip().metroMaps.length === 2);
+  say('買 毛巾2', 'U7');
+  check('地鐵圖：LINE 存檔不會動到', splitTrip().metroMaps.length === 2);
+  sp = splitTrip();
+  sp.metroMaps = sp.metroMaps.filter((m) => m.id !== 'm-8');
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  check('地鐵圖：主人可以刪旅伴上傳的，照片丟到垃圾桶', splitTrip().metroMaps.length === 1 && files.find((f) => f.id === up8).trashed === true);
+  check('地鐵圖：免登入檢視頁不帶地鐵圖', (() => { const link = api('viewLink', { tripId: 'split-trip' }, 'good:U7').url; const v = api('view', { token: link.split('view=')[1] }); return v.ok && !('metroMaps' in v.trip); })());
+}
+
+// 行程座標
+{
+  sp = splitTrip();
+  const d0 = Object.keys(sp.days)[0];
+  sp.days[d0][0].location = '東京車站';
+  Object.assign(sp.days[d0][0], { lat: 35.681236, lng: 139.767125, geo: 'ok', geoKey: '東京車站|' });
+  sp.days[d0].push({ id: 'geo-bad', title: '亂填座標', location: 'x', lat: 999, lng: 1, geo: 'ok', geoKey: 'x|' }, { id: 'geo-none', title: '找不到', location: 'y', geo: 'none', geoKey: 'y|' });
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  const a0 = splitTrip('U8').days[d0];
+  check('座標：存得起來，旅伴也拿得到', a0[0].geo === 'ok' && a0[0].lat === 35.681236 && a0[0].geoKey === '東京車站|', JSON.stringify(a0[0]));
+  check('座標：不合法的當作沒定位、找不到的記成 none', a0.find((a) => a.id === 'geo-bad').geo === '' && a0.find((a) => a.id === 'geo-bad').lat === '' && a0.find((a) => a.id === 'geo-none').geo === 'none');
+}
+
+/* ---------- 審查修正 ---------- */
+// 地鐵圖：超過 10 張只捨棄新加的，別人原本的不會被刪
+{
+  const upM = (u) => api('uploadShopImage', { dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==', kind: 'metro' }, `good:${u}`).fileId;
+  sp = splitTrip();
+  sp.metroMaps = sp.metroMaps.concat(Array.from({ length: 4 }, (_, i) => ({ id: `own7-${i}`, name: `主人${i}`, fileId: upM('U7') })));
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  let sp8 = splitTrip('U8');
+  sp8.metroMaps = sp8.metroMaps.concat(Array.from({ length: 5 }, (_, i) => ({ id: `own8-${i}`, name: `旅伴${i}`, fileId: upM('U8') })));
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  const before = splitTrip().metroMaps;
+  check('地鐵圖：最多 10 張', before.length === 10, before.length);
+  const ownerFiles = before.filter((m) => !m.mine === false).map((m) => m.fileId);
+  sp8 = splitTrip('U8');
+  const mine8 = sp8.metroMaps.filter((m) => m.mine);
+  sp8.metroMaps = mine8.concat(Array.from({ length: 5 }, (_, i) => ({ id: `evil-${i}`, name: '擠掉', fileId: upM('U8') })));
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  const after = splitTrip().metroMaps;
+  check('地鐵圖：旅伴用新圖擠名額，主人原本的圖不會被丟掉', after.length === 10 && before.filter((m) => m.mine).every((m) => after.some((x) => x.id === m.id))
+    && before.filter((m) => m.mine).every((m) => !files.find((f) => f.id === m.fileId).trashed) && !after.some((m) => m.id.startsWith('evil-')), JSON.stringify(after.map((m) => m.id)));
+}
+// 舊版網頁存檔（購物沒有新欄位）不會清掉數量、付款狀態、分帳
+{
+  sp = splitTrip();
+  const keep = sp.shopping.find((x) => x.id === 'sh-1');
+  sp.shopping = sp.shopping.map((x) => ({ id: x.id, text: x.text, date: x.date, activityId: x.activityId, price: x.price, done: x.id === 'sh-1' ? true : x.done, note: x.note, fileId: x.fileId }));
+  api('saveTrip', { trip: sp, baseUpdatedAt: sp.updatedAt }, 'good:U7');
+  const got = splitTrip().shopping.find((x) => x.id === 'sh-1');
+  check('購物：舊版網頁存檔不會重設數量、幣別、付款狀態、分帳', got.done && got.quantity === keep.quantity && got.priceCurrency === keep.priceCurrency && got.payment === keep.payment && got.paidBy === keep.paidBy && got.splitWith.join() === keep.splitWith.join(), JSON.stringify(got));
+}
+// 線上檢視頁：旅伴有填誰付的購物也帶上（分帳才對得起來），代號換掉
+{
+  sp8 = splitTrip('U8');
+  sp8.shopping = [{ id: 'v8', text: '旅伴付的', price: 600, quantity: 1, payment: 'pre', paidBy: k8, splitWith: [] }, { id: 'v8b', text: '自己的', price: 50 }];
+  api('saveTrip', { trip: sp8, baseUpdatedAt: sp8.updatedAt }, 'good:U8');
+  const link = api('viewLink', { tripId: 'split-trip' }, 'good:U7').url;
+  const v = api('view', { token: link.split('view=')[1] });
+  const items = (v.trip.othersShopping || []).flatMap((g) => g.items);
+  check('檢視頁：帶上旅伴有填誰付的購物，沒填的不帶', items.some((x) => x.id === 'v8') && !items.some((x) => x.id === 'v8b'));
+  check('檢視頁：代號換成這一頁專用的', items.every((x) => /^v\d+$|^gone$/.test(x.paidBy)) && !JSON.stringify(v).includes(k8));
+}
+// 舊日誌沒有歸屬旅程，不能設成整趟通用
+{
+  const id = 'old-no-trip';
+  H.sheets.Journal.data.push(['old-no-trip', 'U7', '2026-01-01', '10:00', 'text', '很舊的', '', '1', '']);
+  check('備忘：沒有歸屬旅程的不能改成整趟通用', (api('updateJournal', { id, entry: { text: 'x', date: '' } }, 'good:U7').error || '').includes('沒有歸屬的旅程'));
+}
 
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');

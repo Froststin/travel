@@ -181,8 +181,28 @@
       <p id="shop-multi-hint" class="form-hint muted">一次加好幾樣可以用「、」分開，例如：抹茶粉、八橋</p>
       <label>哪一天買<select name="date"></select></label>
       <label>在哪一站買<select name="activityId"></select></label>
-      <label>備註<input name="note" maxlength="200" placeholder="數量／顏色／注意事項……"></label>
-      <label><span id="shop-price-label">預估金額</span><input type="number" name="price" min="0" step="any" inputmode="decimal" placeholder="0"></label>
+      <div class="form-row keep shop-price-row">
+        <label>單價（選填）
+          <span class="fare-input">
+            <input type="number" name="price" min="0" step="any" inputmode="decimal" placeholder="0">
+            <select name="priceCurrency" aria-label="單價幣別"></select>
+          </span>
+        </label>
+        <label>數量<input type="number" name="quantity" min="1" max="999" step="1" inputmode="numeric" value="1"></label>
+      </div>
+      <p id="shop-price-hint" class="form-hint muted" hidden></p>
+      <label>付款
+        <select name="payment">
+          <option value="unsure">不確定</option>
+          <option value="pre">先付（出發前就付了，例如網購、預購）</option>
+          <option value="post">後付（到現場才付）</option>
+        </select>
+      </label>
+      <div id="shop-split-fields" class="split-fields" hidden>
+        <label>誰付的<select name="paidBy"></select></label>
+        <div class="split-with"><span>分攤的人（全勾＝大家平分）</span><div id="shop-split-with-list" class="chip-checks"></div></div>
+      </div>
+      <label>備註<input name="note" maxlength="200" placeholder="顏色／尺寸／注意事項……"></label>
       <div class="shop-photo-field">
         <span>照片</span>
         <div class="shop-photo-row">
@@ -191,7 +211,7 @@
           <button type="button" class="btn btn-sm" id="shop-photo-remove" data-action="shop-dialog-remove-photo" hidden>移除照片</button>
         </div>
       </div>
-      <p class="form-hint muted">金額會計入預算的「購物」。一次加好幾樣時，備註和金額每一樣都一樣，照片只會放在第一樣</p>
+      <p class="form-hint muted">小計（單價 × 數量）會計入預算的「購物」；有填「誰付的」會算進分帳。一次加好幾樣時，其他欄位每一樣都一樣，照片只會放在第一樣</p>
       <p class="form-hint muted">指定行程後，行程改到別天，這樣東西也會跟著走</p>
       <div class="form-actions">
         <button type="button" class="btn" data-action="close-dialog">取消</button>
@@ -199,6 +219,34 @@
       </div>
     </form>
   </dialog>
+
+  <!-- 修改備忘 -->
+  <dialog id="memo-dialog">
+    <form id="memo-form" class="form">
+      <h2>修改備忘</h2>
+      <label>日期<select name="date"></select></label>
+      <label>內容<textarea name="text" rows="5" maxlength="2000" required></textarea></label>
+      <div class="form-actions">
+        <button type="button" class="btn" data-action="close-dialog">取消</button>
+        <button type="submit" class="btn btn-primary">儲存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 地鐵圖：全螢幕檢視（可以縮放、拖曳） -->
+  <dialog id="metro-viewer" class="metro-viewer">
+    <div class="metro-viewer-bar">
+      <span id="metro-viewer-title"></span>
+      <span class="metro-viewer-tools">
+        <button type="button" class="btn btn-sm" data-metro-zoom="out" aria-label="縮小">－</button>
+        <button type="button" class="btn btn-sm" data-metro-zoom="fit">全圖</button>
+        <button type="button" class="btn btn-sm" data-metro-zoom="in" aria-label="放大">＋</button>
+        <button type="button" class="btn btn-sm" data-metro-zoom="close">關閉</button>
+      </span>
+    </div>
+    <div id="metro-stage" class="metro-stage"><img id="metro-viewer-img" alt="地鐵圖" draggable="false"></div>
+  </dialog>
+  <input type="file" id="metro-file" accept="image/*" hidden>
 
   <!-- 待去清單：編輯地點 -->
   <dialog id="place-dialog">
@@ -283,6 +331,8 @@
   <script src="js/cloud.js"></script>
   <script src="js/static.js"></script>
   <script src="js/places.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/metro.js"></script>
   <script src="js/line.js"></script>
   <script src="js/pwa.js"></script>
   <script src="js/boot.js"></script>

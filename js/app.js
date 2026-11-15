@@ -5,15 +5,18 @@
  * 資料結構（存在 localStorage）：
  *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, notes,
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }],
- *                shopping: [{ id, text, date, activityId, price, done, note, image | fileId }],
+ *                shopping: [{ id, text, date, activityId, price, priceCurrency, quantity, payment, paidBy, splitWith, done, note, image | fileId }],
+ *                metroMaps: [{ id, name, image | fileId, mine, byName }]（地鐵圖，見 js/metro.js）,
  *                places: [...]（待去清單，見 js/places.js）, bookings: [...]（住宿與交通，見 js/bookings.js）, createdAt } ] }
  *   shopping：date 是預計哪一天買（空＝不指定），activityId 是預計在哪一站買（有的話跟著那個行程走），
- *             price 是預估金額（旅程幣別），計入預算的「購物」；雲端模式下每個 LINE 帳號各自一份；
- *             note 是備註（數量、顏色、注意事項）；照片見 js/shopphoto.js
+ *             price 是單價（priceCurrency，沒填就是旅程幣別），小計＝單價 × quantity，計入預算的「購物」；
+ *             payment：pre 先付／post 後付／unsure 不確定；paidBy／splitWith 分帳（同行程）；雲端模式下每個 LINE 帳號各自一份；
+ *             note 是備註（顏色、注意事項）；照片見 js/shopphoto.js
  *   othersShopping：[{ name, key, items }]，雲端回傳的旅伴購物清單，只能看，存檔時後端不會理它
  *   activity = { id, time, endTime, title, category, location, mapUrl, cost, costCurrency, notes, image | fileId,
  *                travelMode, travelMin, travelCost, travelCostCurrency,  // travel* 是「從上一站過來」
- *                paidBy, splitWith }                                     // 分帳：誰付的、哪些人分攤（見 js/split.js）
+ *                paidBy, splitWith,                                      // 分帳：誰付的、哪些人分攤（見 js/split.js）
+ *                lat, lng, geo, geoKey }                                 // 地圖分頁用的座標（見 js/map.js）
  *   cost 用 costCurrency、travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
  *   照片和購物清單一樣：還沒上傳是 image（data URL），上傳後是 fileId（見 js/shopphoto.js）
  * 用 LINE 登入後改以雲端為準（js/cloud.js），localStorage 只留未登入時的資料與尚未同步的修改
@@ -242,7 +245,8 @@ function twdOrRaw(amount, cur) {
 // 這些行程裡有金額、但還沒有匯率的幣別
 function missingRates(list, currency, budget, shopItems = []) {
   const used = new Set();
-  if (Number(budget) || shopItems.some((s) => Number(s.price))) used.add(currency);
+  if (Number(budget)) used.add(currency);
+  for (const s of shopItems) if (Number(s.price)) used.add(shopCur(s, currency));
   for (const a of list) {
     if (Number(a.cost)) used.add(costCurrency(a, currency));
     if (Number(a.travelCost)) used.add(fareCurrency(a, currency));
@@ -492,6 +496,8 @@ function renderTrip(t) {
   else if (currentTab === 'packing') body = packingView(t);
   else if (currentTab === 'shopping') body = shoppingView(t, dates);
   else if (currentTab === 'places' && typeof placesView === 'function') body = placesView(t, dates);
+  else if (currentTab === 'map' && typeof mapView === 'function') body = mapView(t, dates);
+  else if (currentTab === 'metro' && typeof metroView === 'function') body = metroView(t);
   else if (currentTab === 'journal') body = journalView(t, dates);
   else body = planView(t, dates);
 
@@ -517,13 +523,25 @@ function renderTrip(t) {
     </div>
     <div class="trip-sticky no-print">
       <nav class="tabs" role="tablist">
-        ${tab('plan', '🗓️ 行程')}${tab('places', '📍 想去')}${tab('budget', '💰 預算')}${tab('shopping', '🛒 購物')}${tab('packing', '🧳 行李')}${tab('journal', '📔 日誌')}
+        ${tab('plan', '🗓️ 行程')}${tab('places', '📍 想去')}${typeof mapView === 'function' ? tab('map', '🗺️ 地圖') : ''}${tab('budget', '💰 預算')}${tab('shopping', '🛒 購物')}${tab('packing', '🧳 行李')}${tab('journal', '📝 備忘')}${typeof metroView === 'function' ? tab('metro', '🚇 地鐵') : ''}
       </nav>
       ${currentTab === 'plan' ? dayNav(dates) : ''}
     </div>
     ${body}`;
   if (currentTab === 'journal' && cloudOn()) Cloud.loadPhotos(app);
   if (typeof ShopPhotos !== 'undefined') ShopPhotos.load(app);
+  if (currentTab === 'map' && typeof initTripMap === 'function') initTripMap(t, dates);
+  scrollTabIntoView();
+}
+
+// 分頁變多了，手機上要左右滑；目前的分頁捲進看得到的地方（只捲分頁列，不動整頁）
+function scrollTabIntoView() {
+  const nav = app.querySelector('.tabs');
+  const cur = nav && nav.querySelector('[aria-selected="true"]');
+  if (!cur || nav.scrollWidth <= nav.clientWidth) return;
+  const left = cur.offsetLeft - nav.offsetLeft;
+  if (left < nav.scrollLeft) nav.scrollLeft = left - 8;
+  else if (left + cur.offsetWidth > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = left + cur.offsetWidth - nav.clientWidth + 8;
 }
 
 // ⋯ 選單：點開才看得到的動作。cls 是按鈕的樣式，items 是選單內容（button 或 a）
@@ -626,7 +644,7 @@ function budgetData(t, dates) {
   const looseShop = shopCost(shopItems, t.currency) - dates.reduce((s, d) => s + shopCost(shoppingOn(t, shop, d), t.currency), 0);
   const spent = sumCost(all, t.currency) + shopTotal;
   const budget = twdOrRaw(t.budget, t.currency);
-  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency)), ...all.filter((a) => Number(a.cost)).map((a) => costCurrency(a, t.currency))])].filter((c) => c && c !== 'TWD');
+  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency)), ...all.filter((a) => Number(a.cost)).map((a) => costCurrency(a, t.currency)), ...shopItems.filter((x) => Number(x.price)).map((x) => shopCur(x, t.currency))])].filter((c) => c && c !== 'TWD');
   const remain = budget - spent;
   const over = budget > 0 && remain < 0;
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
@@ -737,11 +755,24 @@ function membersView(t) {
     </div>`;
 }
 
+/* ---------- 備忘（原本叫日誌，資料沿用 state.journal） ----------
+ * date 空字串＝整趟旅程通用（要有 tripId），排在最上面；文字備忘作者可以修改，照片只能刪 */
+function tripMemos(t) {
+  return (state.journal || []).filter((j) => (j.date === ''
+    ? j.tripId === t.id
+    : (j.tripId ? j.tripId === t.id : true) && j.date >= t.startDate && j.date <= t.endDate));
+}
+
+function memoDateOptions(dates, selected, allowGeneral = true) {
+  return (allowGeneral ? `<option value="" ${selected === '' ? 'selected' : ''}>📌 整趟通用（不指定日期）</option>` : '')
+    + dates.map((d, i) => `<option value="${d}" ${d === selected ? 'selected' : ''}>Day ${i + 1}・${prettyDate(d)}</option>`).join('');
+}
+
 function journalView(t, dates) {
-  const entries = (state.journal || []).filter((j) =>
-    (j.tripId ? j.tripId === t.id : true) && j.date >= t.startDate && j.date <= t.endDate);
+  const entries = tripMemos(t);
   const today = fmtDate(new Date());
-  const defaultDate = dates.includes(today) ? today : dates[0];
+  const defaultDate = dates.includes(today) ? today : '';
+  const general = entries.filter((j) => j.date === '');
   const days = dates
     .filter((d) => entries.some((j) => j.date === d))
     .map((d) => `
@@ -753,15 +784,21 @@ function journalView(t, dates) {
   return `
     <form id="journal-form" class="panel journal-form no-print">
       <label>日期
-        <select name="date">${dates.map((d, i) => `<option value="${d}" ${d === defaultDate ? 'selected' : ''}>Day ${i + 1}・${prettyDate(d)}</option>`).join('')}</select>
+        <select name="date">${memoDateOptions(dates, defaultDate)}</select>
       </label>
-      <label>內容<textarea name="text" rows="3" maxlength="2000" required placeholder="今天的心得、發現、心情……"></textarea></label>
+      <label>內容<textarea name="text" rows="3" maxlength="2000" required placeholder="要記得的事、心得、發現……"></textarea></label>
       <div class="form-actions"><button type="submit" class="btn btn-primary">記下來</button></div>
       <p class="muted hint">${cloudOn()
-        ? '也可以在 LINE 官方帳號輸入「日誌 內容」，或直接傳照片，會自動記到當天。'
-        : '用 LINE 登入後，日誌會同步到雲端，也能在 LINE 官方帳號直接傳文字或照片記錄。'}</p>
+        ? '自己寫的文字備忘可以按 ✎ 修改。也可以在 LINE 官方帳號輸入「備忘 內容」，或直接傳照片，會自動記到當天。'
+        : '自己寫的文字備忘可以按 ✎ 修改。用 LINE 登入後，備忘會同步到雲端，也能在 LINE 官方帳號直接傳文字或照片記錄。'}</p>
     </form>
-    ${days || '<p class="muted journal-empty">這趟旅程還沒有日誌。</p>'}`;
+    ${general.length ? `
+      <section class="panel memo-general">
+        <h3>📌 整趟通用</h3>
+        <ul class="journal-list">${general.map((j) => journalItem(j, t)).join('')}</ul>
+      </section>` : ''}
+    ${days}
+    ${days || general.length ? '' : '<p class="muted journal-empty">這趟旅程還沒有備忘。</p>'}`;
 }
 
 function journalItem(j, t) {
@@ -770,17 +807,57 @@ function journalItem(j, t) {
     : `<p>${esc(j.text)}</p>`;
   const mine = j.mine !== false;
   const canDelete = mine || isTripOwner(t);
+  const canEdit = mine && j.type !== 'image';
   return `
     <li class="journal-item">
-      <span class="journal-time">${esc(j.time)}</span>
+      <span class="journal-time">${esc(j.date ? j.time : '')}</span>
       <div class="journal-body">${!mine && j.author ? `<span class="journal-author">${esc(j.author)}</span>` : ''}${body}</div>
-      ${canDelete ? `<button class="icon-btn no-print" data-action="delete-journal" data-id="${esc(j.id)}" title="刪除" aria-label="刪除">✕</button>` : '<span></span>'}
+      <span class="journal-actions no-print">
+        ${canEdit ? `<button class="icon-btn" data-action="edit-journal" data-id="${esc(j.id)}" title="修改" aria-label="修改">✎</button>` : ''}
+        ${canDelete ? `<button class="icon-btn" data-action="delete-journal" data-id="${esc(j.id)}" title="刪除" aria-label="刪除">✕</button>` : ''}
+      </span>
     </li>`;
 }
 
 function sortJournal() {
   state.journal.sort((a, b) => (a.date + a.time + a.createdAt).localeCompare(b.date + b.time + b.createdAt));
 }
+
+/* ---------- 表單：修改備忘 ---------- */
+const memoDialog = $('#memo-dialog');
+const memoForm = $('#memo-form');
+let editingMemoId = null;
+
+function openMemoDialog(j) {
+  const t = currentTrip();
+  if (!t || !memoForm) return toast('網頁有更新，請重新整理後再試一次');
+  editingMemoId = j.id;
+  memoForm.reset();
+  const dates = dateRange(t.startDate, t.endDate);
+  // 很舊的日誌沒有歸屬旅程，不能改成整趟通用
+  memoForm.elements.date.innerHTML = memoDateOptions(dates, j.date, !!j.tripId);
+  memoForm.elements.date.value = j.date === '' || dates.includes(j.date) ? j.date : (j.tripId ? '' : dates[0]);
+  memoForm.elements.text.value = j.text || '';
+  memoDialog.showModal();
+  memoForm.elements.text.focus();
+}
+
+memoForm?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const j = state.journal.find((x) => x.id === editingMemoId);
+  const text = memoForm.elements.text.value.trim().slice(0, 2000);
+  if (!j) return memoDialog.close();
+  if (!text) return toast('備忘內容是空的');
+  const date = memoForm.elements.date.value;
+  Object.assign(j, { text, date });
+  sortJournal();
+  saveState();
+  if (cloudOn()) Cloud.updateJournal(j.id, { text, date });
+  memoDialog.close();
+  toast('已更新備忘');
+  const t = currentTrip();
+  if (t) renderTrip(t);
+});
 
 /* ---------- 表單：旅程 ---------- */
 let copyTripFrom = null; // 「複製成新旅程」的來源旅程 id
@@ -835,7 +912,7 @@ tripForm.addEventListener('submit', (e) => {
     route();
   } else {
     const src = copyTripFrom && getTrip(copyTripFrom);
-    const t = src ? copyTrip(src, data) : { id: uid(), ...data, days: {}, packing: [], shopping: [], places: [], bookings: [], createdAt: Date.now() };
+    const t = src ? copyTrip(src, data) : { id: uid(), ...data, days: {}, packing: [], shopping: [], places: [], bookings: [], metroMaps: [], createdAt: Date.now() };
     state.trips.push(t);
     commitTrip(t);
     tripDialog.close();
@@ -987,6 +1064,8 @@ activityForm.addEventListener('submit', (e) => {
   // 照片：編輯時沿用原本的，有換或移除才改
   const prev = editingActivity && (t.days[editingActivity.date] || []).find((x) => x.id === editingActivity.id);
   if (typeof readSplitFields === 'function') Object.assign(activity, readSplitFields(t, prev));
+  // 座標沿用原本的；地點或連結改了，geoKey 對不上，地圖分頁會重新定位（見 js/map.js）
+  if (prev) for (const k of ['lat', 'lng', 'geo', 'geoKey']) if (prev[k] != null) activity[k] = prev[k];
   activity.fileId = (prev && prev.fileId) || '';
   if (prev && prev.image) activity.image = prev.image;
   if (actDialogPhoto.image) {
@@ -1090,6 +1169,8 @@ function normalizeTrip(raw) {
           fileId: '', // 雲端的照片不沿用
           ...(typeof a.image === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(a.image) && a.image.length < 600000 ? { image: a.image } : {}),
           notes: str(a.notes),
+          ...(a.geo === 'ok' && Number.isFinite(Number(a.lat)) && Number.isFinite(Number(a.lng)) && a.lat !== '' && a.lng !== ''
+            ? { lat: Number(a.lat), lng: Number(a.lng), geo: 'ok', geoKey: str(a.geoKey, 720) } : {}),
         })));
     }
   }
@@ -1104,6 +1185,10 @@ function normalizeTrip(raw) {
       activityId: newIds.get(s.activityId) || '',
       price: Math.max(0, Number(s.price) || 0),
       note: str(s.note, 200).trim(),
+      ...(s.quantity != null ? { quantity: Math.min(999, Math.max(1, Math.round(Number(s.quantity)) || 1)) } : {}), // 沒有的話 syncShopping 會從備註搬
+      priceCurrency: CURRENCIES.includes(s.priceCurrency) ? s.priceCurrency : '',
+      payment: ['pre', 'post', 'unsure'].includes(s.payment) ? s.payment : 'unsure',
+      paidBy: '', splitWith: [], // 成員代號是原本那個旅程的，不沿用
       fileId: '', // 雲端的照片是別的帳號或別的旅程的，匯入時不沿用
       ...(typeof s.image === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(s.image) && s.image.length < 600000 ? { image: s.image } : {}),
       done: !!s.done,
@@ -1132,6 +1217,11 @@ function normalizeTrip(raw) {
       })
       : [],
     bookings: typeof cleanBookings === 'function' ? cleanBookings(raw.bookings) : [],
+    // 地鐵圖：只帶這台裝置上還有圖檔的（雲端的檔案屬於原本的旅程，不沿用）
+    metroMaps: Array.isArray(raw.metroMaps)
+      ? raw.metroMaps.filter((m) => m && typeof m.image === 'string' && /^data:image\/jpeg;base64,/.test(m.image)).slice(0, 10)
+        .map((m) => ({ id: uid(), name: str(m.name, 30), image: m.image, fileId: '' }))
+      : [],
     createdAt: Date.now(),
   };
 }
@@ -1413,9 +1503,14 @@ document.addEventListener('click', (e) => {
     case 'line-login':
       lineLogin();
       break;
+    case 'edit-journal': {
+      const j = state.journal.find((x) => x.id === el.dataset.id);
+      if (j && j.type !== 'image' && j.mine !== false) openMemoDialog(j);
+      break;
+    }
     case 'delete-journal': {
       const j = state.journal.find((x) => x.id === el.dataset.id);
-      if (j && confirm(j.type === 'image' ? '刪除這張照片？' : `刪除這則日誌？\n「${j.text.slice(0, 40)}」`)) {
+      if (j && confirm(j.type === 'image' ? '刪除這張照片？' : `刪除這則備忘？\n「${j.text.slice(0, 40)}」`)) {
         state.journal = state.journal.filter((x) => x.id !== j.id);
         saveState();
         if (cloudOn()) Cloud.deleteJournal(j.id);
@@ -1445,7 +1540,7 @@ document.addEventListener('submit', (e) => {
     if (!t || !text) return;
     const now = new Date();
     const entry = {
-      id: uid(), date: f.get('date'), time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+      id: uid(), date: f.get('date') || '', time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
       type: 'text', text: text.slice(0, 2000), fileId: '', createdAt: Date.now(), tripId: t.id, mine: true,
     };
     state.journal.push(entry);
@@ -1453,7 +1548,7 @@ document.addEventListener('submit', (e) => {
     saveState();
     if (cloudOn()) Cloud.addJournal(entry);
     renderTrip(t);
-    toast('已記到旅遊日誌');
+    toast(entry.date ? '已記到備忘' : '已記到整趟通用的備忘');
     return;
   }
   if (e.target.id === 'places-form') {

@@ -6,22 +6,80 @@
  * ============================================================ */
 /* ---------- 購物清單（跟著每日行程走） ---------- */
 const MAX_SHOPPING = 200;
+const MAX_QTY = 999;
+// 付款狀態：先付（出發前就付了，例如網購、預購）／後付（到現場才付）／不確定
+const PAYMENTS = {
+  pre: { label: '先付', cls: 'pay-pre' },
+  post: { label: '後付', cls: 'pay-post' },
+  unsure: { label: '不確定', cls: 'pay-unsure' },
+};
+
+function payKey(s) {
+  return Object.hasOwn(PAYMENTS, s.payment) ? s.payment : 'unsure';
+}
+
+function cleanQty(v) {
+  const n = Math.round(Number(v));
+  return n >= 1 && n <= MAX_QTY ? n : 1;
+}
+
+/** 備註只寫數量時回傳那個數字（「2」「2個」「x3」「×3」「3盒」），否則回傳 0（和後端 qtyFromNote_ 一樣） */
+function qtyFromNote(note) {
+  const s = String(note || '').replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).trim();
+  const m = s.match(/^(?:[xX×*＊✕ｘ]\s*)?(\d{1,3})\s*(?:個|盒|包|瓶|件|組|份|罐|袋|條|張|雙|支|台|片|入|顆|本|枚|pcs?)?$/i);
+  const n = m ? Number(m[1]) : 0;
+  return n >= 1 && n <= MAX_QTY ? n : 0;
+}
 
 // 存檔前整理：有指定行程的，把日期更新成行程目前那一天；行程被刪掉的就留在最後那一天
+// 舊資料沒有數量（quantity）的：備註只寫數量的搬過去、備註清空（雲端的資料後端升級時已經搬過）
 function syncShopping(t) {
   const where = new Map();
   for (const [d, list] of Object.entries(t.days || {})) list.forEach((a) => where.set(a.id, d));
   t.shopping = (t.shopping || []).map((s) => {
     const d = s.activityId && where.get(s.activityId);
-    const out = { id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done, note: s.note || '', fileId: s.fileId || '' };
+    const fromNote = s.quantity == null ? qtyFromNote(s.note) : 0;
+    const out = {
+      id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done,
+      note: fromNote ? '' : (s.note || ''), fileId: s.fileId || '',
+      quantity: fromNote || cleanQty(s.quantity), priceCurrency: CURRENCIES.includes(s.priceCurrency) ? s.priceCurrency : '', payment: payKey(s),
+      paidBy: s.paidBy || '', splitWith: Array.isArray(s.splitWith) ? s.splitWith : [],
+    };
     if (s.image) out.image = s.image; // 還沒上傳到雲端的照片
     return out;
   });
 }
 
-// 購物金額合計（換算成台幣）
+// 這一樣的幣別（沒填就是旅程的）、小計（單價 × 數量）
+function shopCur(s, currency) {
+  return s.priceCurrency || currency;
+}
+
+function shopSubtotal(s) {
+  return Math.max(0, Number(s.price) || 0) * cleanQty(s.quantity);
+}
+
+// 購物金額合計（單價 × 數量，換算成台幣）
 function shopCost(items, currency) {
-  return items.reduce((sum, s) => sum + twdOrRaw(s.price, currency), 0);
+  return items.reduce((sum, s) => sum + twdOrRaw(shopSubtotal(s), shopCur(s, currency)), 0);
+}
+
+// 原幣寫法：台幣用 NT$，其他沿用 origMoney（¥500）
+function curMoney(n, cur) {
+  return !cur || cur === 'TWD' ? ntd(n) : origMoney(n, cur);
+}
+
+// 清單上的金額：「NT$330（¥1,500）」，數量多於 1 時後面加「¥500 × 3」
+function shopMoneyHtml(s, currency) {
+  const q = cleanQty(s.quantity);
+  if (!Number(s.price)) return q > 1 ? `<span class="shop-qty">×${q}</span>` : '';
+  const cur = shopCur(s, currency);
+  return `${showMoney(shopSubtotal(s), cur)}${q > 1 ? `<small class="shop-unit">${esc(curMoney(s.price, cur))} × ${q}</small>` : ''}`;
+}
+
+function payChip(s) {
+  const p = PAYMENTS[payKey(s)];
+  return `<span class="pay-chip ${p.cls}">${p.label}</span>`;
 }
 
 // 依「哪一站、哪一天」分好：byAct（行程 id → 東西）、byDay（日期 → 沒指定行程的東西）、loose（不指定日期）
@@ -57,9 +115,9 @@ function shopItem(s, currency, where = '') {
   return `
     <li class="shop-item${s.done ? ' done' : ''}">
       ${shopImg(s, 'shop-thumb')}
-      <label><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}${s.note ? `<small class="shop-note">${esc(s.note)}</small>` : ''}</span></label>
+      <label><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}${cleanQty(s.quantity) > 1 && !Number(s.price) ? ` ×${cleanQty(s.quantity)}` : ''}${s.note ? `<small class="shop-note">${esc(s.note)}</small>` : ''}</span></label>
       ${where ? `<span class="shop-where muted">${where}</span>` : ''}
-      ${Number(s.price) ? `<span class="shop-price">${showMoney(s.price, currency)}</span>` : ''}
+      ${Number(s.price) ? `<span class="shop-price">${shopMoneyHtml(s, currency)}</span>` : ''}
       <span class="shop-actions no-print">
         <button class="icon-btn" data-action="edit-shop" data-id="${esc(s.id)}" title="編輯" aria-label="編輯">✎</button>
         <button class="icon-btn" data-action="delete-shop" data-id="${esc(s.id)}" title="刪除" aria-label="刪除">✕</button>
@@ -67,9 +125,12 @@ function shopItem(s, currency, where = '') {
     </li>`;
 }
 
-// 購物清單分頁用的卡片：照片、勾選、名稱、備註與金額可以直接改
+// 購物清單分頁用的卡片：照片、勾選、名稱、備註、單價與數量可以直接改（幣別、付款狀態、誰付的在 ✎ 裡改）
 function shopCard(s, currency, where = '') {
-  const twd = Number(s.price) && currency !== 'TWD' ? toTWD(s.price, currency) : null;
+  const cur = shopCur(s, currency);
+  const sub = shopSubtotal(s);
+  const twd = sub && cur !== 'TWD' ? toTWD(sub, cur) : null;
+  const payer = typeof shopPayerChip === 'function' ? shopPayerChip(currentTrip(), s) : '';
   return `
     <li class="shop-card${s.done ? ' done' : ''}">
       <div class="shop-photo">
@@ -81,11 +142,15 @@ function shopCard(s, currency, where = '') {
       </div>
       <label class="shop-card-name"><input type="checkbox" data-action="toggle-shop" data-id="${esc(s.id)}" ${s.done ? 'checked' : ''}><span>${esc(s.text)}</span></label>
       ${where ? `<div class="shop-where muted">${where}</div>` : ''}
-      <input class="shop-card-input" data-change="shop-note" data-id="${esc(s.id)}" value="${esc(s.note || '')}" maxlength="200" placeholder="數量／顏色／備註…" aria-label="${esc(s.text)} 的備註">
+      <div class="shop-chips">${payChip(s)}${payer}</div>
+      <input class="shop-card-input" data-change="shop-note" data-id="${esc(s.id)}" value="${esc(s.note || '')}" maxlength="200" placeholder="顏色／尺寸／備註…" aria-label="${esc(s.text)} 的備註">
       <div class="shop-card-price">
-        <input class="shop-card-input" type="number" min="0" step="any" inputmode="decimal" data-change="shop-price" data-id="${esc(s.id)}" value="${Number(s.price) || ''}" placeholder="預估／購買金額" aria-label="${esc(s.text)} 的金額（${esc(currency)}）">
-        ${currency !== 'TWD' ? `<span class="muted">${esc(currency)}${twd != null ? ` ≈ ${ntd(twd)}` : ''}</span>` : ''}
+        <input class="shop-card-input" type="number" min="0" step="any" inputmode="decimal" data-change="shop-price" data-id="${esc(s.id)}" value="${Number(s.price) || ''}" placeholder="單價" aria-label="${esc(s.text)} 的單價（${esc(cur)}）">
+        <span class="muted">${esc(cur)}</span>
+        <span class="muted" aria-hidden="true">×</span>
+        <input class="shop-card-input shop-qty-input" type="number" min="1" max="${MAX_QTY}" step="1" inputmode="numeric" data-change="shop-qty" data-id="${esc(s.id)}" value="${cleanQty(s.quantity)}" aria-label="${esc(s.text)} 的數量">
       </div>
+      ${sub ? `<div class="shop-subtotal muted">小計 ${esc(curMoney(sub, cur))}${twd != null ? ` ≈ ${ntd(twd)}` : ''}</div>` : ''}
     </li>`;
 }
 
@@ -96,8 +161,9 @@ function shopCardReadonly(s, currency, where = '') {
       ${shopImg(s, 'shop-photo-btn') ? `<div class="shop-photo">${shopImg(s, 'shop-photo-btn')}</div>` : ''}
       <div class="shop-card-name"><span class="shop-ro-check" aria-hidden="true">${s.done ? '☑' : '☐'}</span><span>${esc(s.text)}</span></div>
       ${where ? `<div class="shop-where muted">${where}</div>` : ''}
+      <div class="shop-chips">${payChip(s)}${typeof shopPayerChip === 'function' ? shopPayerChip(currentTrip(), s) : ''}</div>
       ${s.note ? `<div class="shop-ro-note">${esc(s.note)}</div>` : ''}
-      ${Number(s.price) ? `<div class="shop-ro-price">${showMoney(s.price, currency)}</div>` : ''}
+      ${Number(s.price) || cleanQty(s.quantity) > 1 ? `<div class="shop-ro-price">${shopMoneyHtml(s, currency)}</div>` : ''}
     </li>`;
 }
 
@@ -135,6 +201,15 @@ function shopSummary(items, currency) {
   return `已買 ${items.filter((s) => s.done).length} / ${items.length}${total ? `・預估 ${ntd(total)}（已買 ${ntd(shopCost(items.filter((s) => s.done), currency))}）` : ''}`;
 }
 
+// 付款狀態各自的合計：「先付 NT$1,200・後付 NT$800・不確定 NT$300」
+function paySummary(items, currency) {
+  const parts = Object.entries(PAYMENTS).map(([k, p]) => {
+    const list = items.filter((s) => payKey(s) === k);
+    return list.length ? `<span class="pay-sum"><span class="pay-chip ${p.cls}">${p.label}</span>${ntd(shopCost(list, currency))}<small class="muted">（${list.length} 樣）</small></span>` : '';
+  }).filter(Boolean);
+  return parts.length ? `<div class="pay-summary">${parts.join('')}</div>` : '';
+}
+
 function shoppingView(t, dates) {
   const items = t.shopping || [];
   const done = items.filter((s) => s.done).length;
@@ -158,9 +233,10 @@ function shoppingView(t, dates) {
         <button class="btn btn-primary no-print" data-action="add-shop" data-date="">＋ 新增要買的東西</button>
       </div>
       <div class="progress"><span style="width:${pct}%"></span></div>
+      ${paySummary(items, t.currency)}
       ${items.length ? '' : '<p class="muted shop-empty">還沒有要買的東西。可以指定哪一天、在哪一站買，每日行程裡也會跟著顯示。</p>'}
-      ${items.length ? '<p class="muted hint">卡片上的備註和金額可以直接改；點「＋ 加照片」放上商品照片，點照片可以看大圖。有填金額的會計入「💰 預算」的購物分類。</p>' : ''}
-      ${shared ? '<p class="muted hint">👥 每個人各有一份購物清單：自己的可以改，旅伴的列在下面、只能看。預算裡的購物金額只算你自己的。</p>' : ''}
+      ${items.length ? `<p class="muted hint">卡片上的備註、單價和數量可以直接改；幣別、付款狀態（先付／後付／不確定）${splitMembers(t).length ? '、誰付的' : ''}按 ✎ 修改。點「＋ 加照片」放上商品照片，點照片可以看大圖。小計（單價 × 數量）會計入「💰 預算」的購物分類。</p>` : ''}
+      ${shared ? '<p class="muted hint">👥 每個人各有一份購物清單：自己的可以改，旅伴的列在下面、只能看。預算裡的購物金額只算你自己的；有填「誰付的」的會算進預算頁的分帳（旅伴的也算）。</p>' : ''}
       <p class="muted hint no-print">${cloudOn()
         ? '也可以在 LINE 官方帳號輸入「買 明天 抹茶粉」「買 面膜 @藥妝店」「買到 抹茶粉」。'
         : '在「每日行程」每一站的 🛒 也能直接加。'}</p>
@@ -239,11 +315,12 @@ photoDialog?.addEventListener('click', () => photoDialog.close());
 // 卡片上直接改備註、金額。改完不馬上重畫，免得正要點下一格時游標跑掉；離開輸入框後再更新合計
 let shopNeedsRender = false;
 document.addEventListener('change', (e) => {
-  const el = e.target.closest('[data-change="shop-note"], [data-change="shop-price"]');
+  const el = e.target.closest('[data-change="shop-note"], [data-change="shop-price"], [data-change="shop-qty"]');
   const t = currentTrip();
   const item = el && t && (t.shopping || []).find((s) => s.id === el.dataset.id);
   if (!item) return;
   if (el.dataset.change === 'shop-note') item.note = el.value.trim().slice(0, 200);
+  else if (el.dataset.change === 'shop-qty') item.quantity = cleanQty(el.value);
   else item.price = Math.max(0, Number(el.value) || 0);
   commitTrip(t);
   shopNeedsRender = true;
@@ -279,7 +356,15 @@ function openShopDialog(preset, item) {
   if (shopForm.elements.note) shopForm.elements.note.value = (item && item.note) || '';
   shopDialogPhoto = { image: '', removed: false, item: item || null };
   updateShopPhotoPreview();
-  $('#shop-price-label').textContent = t.currency === 'TWD' ? '預估金額（NT$，選填）' : `預估金額（${t.currency}，選填，會換算成台幣）`;
+  if (shopForm.elements.quantity) {
+    shopForm.elements.quantity.value = item ? cleanQty(item.quantity) : 1;
+    const curs = [...new Set(['JPY', 'TWD', t.currency, ...(item && item.priceCurrency ? [item.priceCurrency] : [])])];
+    shopForm.elements.priceCurrency.innerHTML = curs.map((c) => `<option value="${c}">${c === 'JPY' ? '¥ 日幣' : c === 'TWD' ? 'NT$ 台幣' : c}</option>`).join('');
+    shopForm.elements.priceCurrency.value = item ? shopCur(item, t.currency) : lastShopCurrency(t);
+    shopForm.elements.payment.value = item ? payKey(item) : 'unsure';
+    if (typeof fillSplitFields === 'function') fillSplitFields(t, item, shopForm, '#shop-split-fields', '#shop-split-with-list');
+    updateShopPriceHint();
+  }
   shopForm.elements.date.value = date;
   fillShopActivities(date, actDate ? src.activityId : '');
   shopDialog.showModal();
@@ -299,6 +384,14 @@ shopForm?.addEventListener('submit', (e) => {
   const raw = f.get('text').trim();
   const price = Math.max(0, Number(f.get('price')) || 0);
   const note = (f.get('note') || '').trim().slice(0, 200);
+  // 數量、幣別、付款狀態、分帳（瀏覽器還留著舊版表單時沒有這些欄位，沿用原本的）
+  const prevItem = editingShopId ? (t.shopping || []).find((s) => s.id === editingShopId) : null;
+  const extra = shopForm.elements.quantity ? {
+    quantity: cleanQty(f.get('quantity')),
+    priceCurrency: (() => { const c = CURRENCIES.includes(f.get('priceCurrency')) ? f.get('priceCurrency') : ''; return c && c !== t.currency ? c : ''; })(),
+    payment: Object.hasOwn(PAYMENTS, f.get('payment')) ? f.get('payment') : 'unsure',
+    ...(typeof readSplitFields === 'function' ? readSplitFields(t, prevItem, shopForm, '#shop-split-fields') : {}),
+  } : {};
   // 新增時可以用「、」一次加好幾樣；編輯時整段都是同一樣
   const names = editingShopId ? [raw.slice(0, 80)] : [...new Set(raw.split(/[、，,]+/).map((s) => s.trim().slice(0, 80)).filter(Boolean))];
   if (!names.length || !names[0]) return toast('請填寫要買什麼');
@@ -306,13 +399,13 @@ shopForm?.addEventListener('submit', (e) => {
   if (editingShopId) {
     const item = t.shopping.find((s) => s.id === editingShopId);
     if (item) {
-      Object.assign(item, { text: names[0], date, activityId, price, note });
+      Object.assign(item, { text: names[0], date, activityId, price, note, ...extra });
       if (shopDialogPhoto.image) setShopPhoto(item, shopDialogPhoto.image);
       else if (shopDialogPhoto.removed) { delete item.image; item.fileId = ''; }
     }
   } else {
     if (t.shopping.length + names.length > MAX_SHOPPING) return toast(`購物清單最多 ${MAX_SHOPPING} 樣`);
-    const added = names.map((text) => ({ id: uid(), text, date, activityId, price, done: false, note, fileId: '' }));
+    const added = names.map((text) => ({ id: uid(), text, date, activityId, price, done: false, note, fileId: '', quantity: 1, priceCurrency: '', payment: 'unsure', paidBy: '', splitWith: [], ...extra }));
     if (shopDialogPhoto.image) setShopPhoto(added[0], shopDialogPhoto.image); // 照片只放第一樣
     t.shopping.push(...added);
   }
@@ -321,3 +414,36 @@ shopForm?.addEventListener('submit', (e) => {
   toast(editingShopId ? '已更新' : `已加入 ${names.length} 樣要買的東西`);
   renderTrip(t);
 });
+
+/* ---------- 表單：單價的幣別與換算 ---------- */
+function lastShopCurrency(t) {
+  try {
+    return localStorage.getItem('travel-planner:shop-currency') || (['JPY', 'TWD'].includes(t.currency) ? t.currency : 'JPY');
+  } catch {
+    return 'JPY';
+  }
+}
+
+// 單價下方即時顯示「小計 ¥1,500 ≈ NT$330」
+function updateShopPriceHint() {
+  const el = $('#shop-price-hint');
+  if (!el || !shopForm.elements.quantity) return;
+  const price = Number(shopForm.elements.price.value) || 0;
+  const qty = cleanQty(shopForm.elements.quantity.value);
+  const cur = shopForm.elements.priceCurrency.value;
+  const sub = price * qty;
+  const conv = sub && cur !== 'TWD' ? toTWD(sub, cur) : null;
+  el.textContent = sub ? `小計 ${curMoney(sub, cur)}${cur !== 'TWD' ? (conv == null ? `｜${rateNote(cur)}` : ` ≈ ${ntd(conv)}｜${rateNote(cur)}`) : ''}` : '';
+  el.hidden = !el.textContent;
+}
+
+for (const name of ['price', 'quantity']) shopForm?.elements[name]?.addEventListener('input', updateShopPriceHint);
+shopForm?.elements.priceCurrency?.addEventListener('change', () => {
+  try {
+    localStorage.setItem('travel-planner:shop-currency', shopForm.elements.priceCurrency.value);
+  } catch { /* 忽略 */ }
+  updateShopPriceHint();
+});
+
+// 沒登入時存在這台裝置的舊資料：一打開就把備註裡的數量搬好（雲端的資料由後端升級時處理）
+if (!cloudOn()) state.trips.forEach((t) => { try { syncShopping(t); } catch { /* 資料有問題就等下次存檔再整理 */ } });

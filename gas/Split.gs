@@ -4,7 +4,8 @@
 
 /**
  * 分帳結算：每筆有填「誰付的」的花費（行程花費＋車資，換算成台幣），由 splitWith 的人平分（沒選＝所有成員）。
- * 回傳每個人付了多少、應分攤多少，以及最少筆數的轉帳建議。購物清單是每個人自己的，不算在內。
+ * 購物清單（自己的與旅伴的）有填「誰付的」的也算進來（單價 × 數量）；沒填的當作自己買的，不算、也不列為沒填。
+ * 回傳每個人付了多少、應分攤多少，以及最少筆數的轉帳建議。
  */
 function settlement_(trip) {
   const cur = trip.currency;
@@ -28,6 +29,16 @@ function settlement_(trip) {
     if (!who.length) continue;
     total += amount;
     person(a.paidBy).paid += amount;
+    who.forEach((k) => { person(k).share += amount / who.length; });
+  }
+  const shops = (trip.shopping || []).concat(...(trip.othersShopping || []).map((g) => g.items || []));
+  for (const s of shops) {
+    const amount = shopTwd_(s, cur);
+    if (!(amount > 0) || !s.paidBy) continue;
+    const who = s.splitWith && s.splitWith.length ? s.splitWith : everyone;
+    if (!who.length) continue;
+    total += amount;
+    person(s.paidBy).paid += amount;
     who.forEach((k) => { person(k).share += amount / who.length; });
   }
   const rows = [...people.values()].map((p) => Object.assign(p, { net: p.paid - p.share }));
@@ -57,7 +68,7 @@ function settleText_(trip) {
   const name = (p) => `${p.name}${p.me ? '（你）' : ''}`;
   const lines = [`🤝 ${trip.name} 分帳`];
   if (!s.total) {
-    lines.push('', '還沒有填「誰付的」的花費。', '到網站的行程裡，花費下面可以選誰付的、哪些人分攤。');
+    lines.push('', '還沒有填「誰付的」的花費。', '到網站的行程或購物清單裡，可以選誰付的、哪些人分攤。');
   } else {
     lines.push(`已填付款人的花費共 ${ntd_(s.total)}`, '');
     s.rows.forEach((p) => lines.push(`・${name(p)}：付了 ${ntd_(p.paid)}，應分攤 ${ntd_(p.share)}`));

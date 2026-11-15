@@ -119,13 +119,24 @@ const Cloud = {
     });
   },
 
-  /** 購物清單和行程裡還沒上傳的照片（image）先傳到雲端，換成檔案 id 再存檔 */
+  /** 購物清單、行程與地鐵圖裡還沒上傳的照片（image）先傳到雲端，換成檔案 id 再存檔 */
   async uploadShopImages(trip) {
     const shops = () => trip.shopping || [];
     const acts = () => Object.values(trip.days || {}).flat();
-    for (const [kind, list] of [['shop', shops], ['activity', acts]]) {
+    const metro = () => trip.metroMaps || [];
+    for (const [kind, list] of [['shop', shops], ['activity', acts], ['metro', metro]]) {
       for (const s of list().filter((x) => x.image && !x.fileId)) {
-        const { fileId } = await this.call('uploadShopImage', { dataUrl: s.image, kind });
+        let fileId;
+        try {
+          ({ fileId } = await this.call('uploadShopImage', { dataUrl: s.image, kind }));
+        } catch (err) {
+          if (err.status !== 400) throw err; // 連線問題：整個存檔稍後重試
+          // 照片太大或格式不對，重試也不會成功：拿掉這張，旅程的其他修改照樣存
+          if (kind === 'metro') trip.metroMaps = (trip.metroMaps || []).filter((x) => x.id !== s.id);
+          else delete s.image;
+          toast(`有一張${kind === 'metro' ? '地鐵圖' : '照片'}沒辦法上傳（${err.message}），已先拿掉`);
+          continue;
+        }
         if (typeof ShopPhotos !== 'undefined') ShopPhotos.remember(fileId, s.image);
         // 上傳期間資料可能被改過（物件換新的），用 id 和圖片內容找回同一筆
         const cur = list().find((x) => x.id === s.id && x.image === s.image);
@@ -221,6 +232,10 @@ const Cloud = {
 
   addJournal(entry) {
     return this.enqueue(() => this.call('addJournal', { entry }));
+  },
+
+  updateJournal(id, entry) {
+    return this.enqueue(() => this.call('updateJournal', { id, entry }));
   },
 
   deleteJournal(id) {
