@@ -1351,6 +1351,92 @@ check('LINE 新增購物：預設數量 1、不確定', splitTrip().shopping.som
   check('檢視頁：標出產生連結的人（每人花費用）', v.trip.members.filter((m) => m.sharer).length === 1);
 }
 
+/* ---------- 網站的每人花費（js/split.js）：和後端同一份旅程比對 ---------- */
+{
+  const vmF = require('vm');
+  const fsF = require('fs');
+  const pathF = require('path');
+  const jsDir = pathF.join(__dirname, '..', '..', 'js');
+  const appSrc = fsF.readFileSync(pathF.join(jsDir, 'app.js'), 'utf8');
+  // 從 app.js 取出需要的工具函式（整支 app.js 依賴畫面，不能直接載入）
+  const pick = (name) => {
+    const m = appSrc.match(new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n}\\n`));
+    if (!m) throw new Error(`app.js 找不到 ${name}`);
+    return m[0];
+  };
+  const helpers = ['esc', 'parseDate', 'fmtDate', 'dateRange', 'money', 'ntd', 'origMoney', 'toTWD', 'twdOrRaw', 'showMoney', 'fareCurrency', 'costCurrency', 'sumCost', 'allActivities'].map(pick).join('\n');
+  // 常數也從 app.js 取，改了才會一起被測到（var 才會掛在 vm 的全域上）
+  const consts = ['MAX_DAYS', 'CURRENCIES'].map((name) => {
+    const m = appSrc.match(new RegExp(`\nconst ${name} = ([^;]+);`));
+    if (!m) throw new Error(`app.js 找不到 ${name}`);
+    return `var ${name} = ${m[1]};`;
+  }).join('\n');
+  const fctx = {
+    console, document: { addEventListener() {} }, $: () => null, shopForm: null, state: { trips: [] }, cloudOn: () => false,
+    fx: { rates: { JPY: { rate: 0.2, date: 'x', source: 'test' } } }, activityForm: null, currentTrip: () => null,
+  };
+  vmF.createContext(fctx);
+  vmF.runInContext(consts, fctx);
+  vmF.runInContext(helpers, fctx);
+  for (const f of ['shopping.js', 'split.js']) vmF.runInContext(fsF.readFileSync(pathF.join(jsDir, f), 'utf8'), fctx, { filename: f });
+  const ka = 'aaaaaaaaaaaa';
+  const kb = 'bbbbbbbbbbbb';
+  const kg1 = 'gone1gone1gg';
+  const kg2 = 'gone2gone2gg';
+  const ft = {
+    id: 't', startDate: '2026-12-01', endDate: '2026-12-02', currency: 'TWD',
+    members: [{ key: ka, name: 'A', me: true }, { key: kb, name: 'B' }],
+    // 日期故意不照順序，確認前後端累加順序不同時結果一樣
+    days: {
+      '2026-12-02': [{ id: 'x3', cost: 900, travelCost: 100, splitWith: [ka, kb, kg2] }],
+      '2026-11-30': [{ id: 'out', cost: 99999 }], // 日期範圍外，不算
+      '2026-12-01': [{ id: 'x1', cost: 1000, splitWith: [] }, { id: 'x2', cost: 300, costCurrency: 'JPY', splitWith: [kb, kg1] }],
+    },
+    shopping: [
+      { id: 's1', text: '機票', price: 13500, quantity: 2, paidBy: ka, splitWith: [ka, kb], date: '' },
+      { id: 's2', text: '自己的', price: 500, quantity: 1, priceCurrency: 'JPY', date: '2026-12-01' },
+      { id: 's3', text: '掛在行程', price: 200, quantity: 3, activityId: 'x3', date: '' },
+      // 日期在範圍外、掛在範圍外行程上的購物：兩邊都當成不指定日期算進去
+      { id: 's4', text: '範圍外日期', price: 70, quantity: 1, date: '2026-11-30' },
+      { id: 's5', text: '掛在範圍外行程', price: 30, quantity: 1, activityId: 'out', date: '' },
+    ],
+    othersShopping: [{ name: 'B', key: kb, items: [{ id: 'o1', text: 'B 的', price: 333, quantity: 1, date: '2026-12-02' }, { id: 'o2', text: 'B 付', price: 101, quantity: 1, paidBy: kb, splitWith: [], date: '' }] }],
+  };
+  fctx.__t = ft;
+  const dates = ['2026-12-01', '2026-12-02'];
+  const fe = vmF.runInContext(`memberShares(__t, ${JSON.stringify(dates)})`, fctx);
+  const sumBy = (rows, fn) => rows.reduce((s, p) => s + fn(p), 0);
+  const allShop = ft.shopping.concat(ft.othersShopping[0].items);
+  const spentF = vmF.runInContext(`sumCost(allActivities(__t), 'TWD')`, fctx)
+    + vmF.runInContext(`shopCost(${JSON.stringify(allShop)}, 'TWD')`, fctx);
+  check('網站每人花費：每人總計加起來＝全部總計＝預估花費（不含日期範圍外）', Math.abs(sumBy(fe.rows, (p) => p.total) - fe.total) < 0.01 && Math.abs(fe.total - spentF) < 0.01, `${fe.total} ${spentF}`);
+  const idx = vmF.runInContext(`shoppingIndex(__t, ${JSON.stringify(dates)}, ${JSON.stringify(allShop)})`, fctx);
+  fctx.__idx = idx;
+  const dayOk = dates.every((d) => {
+    const all = vmF.runInContext(`sumCost(__t.days['${d}'], 'TWD') + shopCost(shoppingOn(__t, __idx, '${d}'), 'TWD')`, fctx);
+    return Math.abs(sumBy(fe.rows, (p) => p.days[d] || 0) - all) < 0.01;
+  });
+  check('網站每人花費：每天每人加起來＝那天的全部', dayOk);
+  check('網站每人花費：不指定日期的也拆（機票各 13500，B 付的 101 兩人分，範圍外的 70＋30 算 A 的）', Math.abs(sumBy(fe.rows, (p) => p.loose) - (27000 + 101 + 100)) < 0.01 && Math.abs(fe.rows.find((p) => p.key === kb).loose - (13500 + 50.5)) < 0.01);
+  const gone = fe.rows.filter((p) => p.gone);
+  check('網站每人花費：退出的兩個人併成一欄「已退出的旅伴」', gone.length === 1 && gone[0].name === '已退出的旅伴' && Math.abs(gone[0].total - (60 / 2 + 1000 / 3)) < 0.01, JSON.stringify(gone));
+  check('網站每人花費：佔比加起來是 100%', fe.pcts.reduce((s, v) => s + v, 0) === 100 && fe.pcts.length === fe.rows.length, JSON.stringify(fe.pcts));
+  // 後端用同一份旅程（匯率設成一樣）算，結果要一樣
+  ctx.__ft = JSON.parse(JSON.stringify(ft));
+  ctx.__fx = 0.2;
+  run('var __origToTWD = toTWD_; toTWD_ = (n, c) => (!c || c === "TWD" ? Number(n) || 0 : c === "JPY" ? (Number(n) || 0) * __fx : null)');
+  let be;
+  try {
+    be = run('memberShares_(__ft)');
+  } finally {
+    run('toTWD_ = __origToTWD'); // 一定要還原，免得影響後面的測試
+  }
+  const same = fe.rows.length === be.rows.length && fe.rows.every((p) => { const q = be.rows.find((x) => x.key === p.key); return q && Math.abs(q.total - p.total) < 0.01; }) && Math.abs(be.total - fe.total) < 0.01;
+  check('網站與後端的每人花費一樣（含退出合併、外幣、掛在行程的購物）', same && be.pcts.join() === fe.pcts.join(), `${JSON.stringify(fe.rows.map((p) => [p.key, p.total]))} ／ ${JSON.stringify(be.rows.map((p) => [p.key, p.total]))}`);
+  ctx.__vals = [1, 1, 1];
+  check('佔比：三人平分也是 100%（34/33/33）', run('sharePcts_(__vals, 3)').join() === '34,33,33');
+}
+
 /* ---------- 網站版本號 ---------- */
 const fs = require('fs');
 const path = require('path');

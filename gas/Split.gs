@@ -48,7 +48,7 @@ function settlement_(trip) {
 /**
  * 每人花費（LINE「預算」用）：每筆照「分攤的人」平分（沒勾＝全部成員），行程花費有沒有填誰付的都一樣；
  * 購物沒填「誰付的」算在清單主人身上。和網站 js/split.js 的 memberShares 同算法（這裡只算整趟總計）。
- * @return {null | { rows: [{ key, name, me, total }], total }} 不是共用旅程時回傳 null
+ * @return {null | { rows: [{ key, name, me, total }], total, pcts: number[] }} pcts 和 rows 同順序、加起來 100；不是共用旅程時回傳 null
  */
 function memberShares_(trip) {
   const cur = trip.currency;
@@ -58,12 +58,14 @@ function memberShares_(trip) {
   const ownerOfMine = (members.find((m) => m.me) || {}).key || '';
   const people = new Map(members.map((m) => [m.key, { key: m.key, name: m.name, me: !!m.me, total: 0 }]));
   let total = 0;
+  // 已退出的旅伴不管幾個人都併成一列
   const add = (keys, amount) => {
     if (!(amount > 0) || !keys.length) return;
     total += amount;
     keys.forEach((k) => {
-      if (!people.has(k)) people.set(k, { key: k, name: '已退出的旅伴', me: false, total: 0 });
-      people.get(k).total += amount / keys.length;
+      const key = everyone.includes(k) ? k : '__gone';
+      if (!people.has(key)) people.set(key, { key, name: '已退出的旅伴', me: false, total: 0 });
+      people.get(key).total += amount / keys.length;
     });
   };
   const split = (x) => (x.splitWith && x.splitWith.length ? x.splitWith : everyone);
@@ -76,7 +78,20 @@ function memberShares_(trip) {
   for (const g of lists) {
     for (const s of g.items) add(s.paidBy ? split(s) : (g.owner ? [g.owner] : everyone), shopTwd_(s, cur));
   }
-  return { rows: [...people.values()].filter((p) => everyone.includes(p.key) || p.total > 0.005), total };
+  const rows = [...people.values()].filter((p) => everyone.includes(p.key) || p.total > 0.005);
+  return { rows, total, pcts: sharePcts_(rows.map((p) => p.total), total) };
+}
+
+/** 佔比（整數 %）：最大餘數法，加起來一定是 100（和網站 sharePcts 一樣） */
+function sharePcts_(values, total) {
+  if (!(total > 0)) return values.map(() => 0);
+  const raw = values.map((v) => (v / total) * 100);
+  const out = raw.map(Math.floor);
+  let left = 100 - out.reduce((s, v) => s + v, 0);
+  // 餘數先取到固定精度：金額數學上相等時照列的順序，不受浮點誤差影響（前後端結果才會一樣）
+  raw.map((v, i) => ({ i, r: Math.round((v - Math.floor(v)) * 1e6) })).sort((a, b) => b.r - a.r || a.i - b.i)
+    .forEach(({ i }) => { if (left > 0) { out[i]++; left--; } });
+  return out;
 }
 
 /** 欠錢的人依序付給被欠最多的人，筆數最少；不到 1 元的零頭略過 */

@@ -343,7 +343,7 @@ function cmdBudget_(ctx) {
   const shares = memberShares_(trip);
   if (shares && shares.total) {
     lines.push('', '👥 每人花費：');
-    shares.rows.forEach((p) => lines.push(`・${p.name}${p.me ? '（你）' : ''}：${ntd_(p.total)}（${Math.round((p.total / shares.total) * 100)}%）`));
+    shares.rows.forEach((p, i) => lines.push(`・${p.name}${p.me ? '（你）' : ''}：${ntd_(p.total)}（${shares.pcts[i]}%）`));
     lines.push(`全部總計：${ntd_(shares.total)}`);
   }
   const { foreign, missing } = b;
