@@ -3,7 +3,7 @@
 /* ============================================================
  * 旅程手帖：純前端旅遊行程規劃
  * 資料結構（存在 localStorage）：
- *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, notes,
+ *   { trips: [ { id, name, destination, startDate, endDate, budget, currency, budgetTwd, budgetJpy, notes,
  *                days: { 'YYYY-MM-DD': [activity] }, packing: [{ id, text, done }],
  *                shopping: [{ id, text, date, activityId, price, priceCurrency, quantity, payment, paidBy, splitWith, done, note, image | fileId }],
  *                metroMaps: [{ id, name, image | fileId, mine, byName }]（地鐵圖，見 js/metro.js）,
@@ -18,6 +18,8 @@
  *                paidBy, splitWith,                                      // 分帳：誰付的、哪些人分攤（見 js/split.js）
  *                lat, lng, geo, geoKey }                                 // 地圖分頁用的座標（見 js/map.js）
  *   cost 用 costCurrency、travelCost 用 travelCostCurrency（沒填就是旅程幣別）；畫面一律換算成台幣顯示
+ *   預算分台幣帳戶（budgetTwd）與日幣帳戶（budgetJpy），null＝還沒設定（沿用舊的 budget／currency）；
+ *   行程、購物、記帳的 account 是扣哪個帳戶（'TWD'／'JPY'，空＝依幣別：日幣扣日幣帳戶，其他扣台幣帳戶）
  *   照片和購物清單一樣：還沒上傳是 image（data URL），上傳後是 fileId（見 js/shopphoto.js）
  * 用 LINE 登入後改以雲端為準（js/cloud.js），localStorage 只留未登入時的資料與尚未同步的修改
  * ============================================================ */
@@ -270,6 +272,57 @@ function costLabel(amount, cur) {
 
 function fareCurrency(a, currency) {
   return a.travelCostCurrency || currency;
+}
+
+/* ---------- 預算帳戶：台幣帳戶、日幣帳戶 ---------- */
+const ACCOUNTS = { TWD: { label: '台幣帳戶', icon: '💵' }, JPY: { label: '日幣帳戶', icon: '💴' } };
+
+function cleanAccount(v) {
+  return Object.hasOwn(ACCOUNTS, v) ? v : '';
+}
+
+// 這筆扣哪個帳戶：有指定就用指定的，沒有就依幣別（日幣扣日幣帳戶，其他扣台幣帳戶）
+function accountOf(item, cur) {
+  return cleanAccount(item && item.account) || (cur === 'JPY' ? 'JPY' : 'TWD');
+}
+
+// 金額換成帳戶的幣別；查不到匯率回傳 null
+function inAccount(amount, cur, acct) {
+  const n = Number(amount) || 0;
+  if (!n) return 0;
+  if ((cur || 'TWD') === acct) return n;
+  const twd = toTWD(n, cur);
+  if (twd == null) return null;
+  if (acct === 'TWD') return twd;
+  const r = fx.rates[acct];
+  return r && r.rate ? twd / r.rate : null;
+}
+
+// 帳戶預算（原幣）。還沒設定過的舊旅程，從舊的總預算推：日幣旅程放日幣帳戶，其他換成台幣放台幣帳戶
+function accountBudgets(t) {
+  if (t.budgetTwd != null || t.budgetJpy != null) return { TWD: Number(t.budgetTwd) || 0, JPY: Number(t.budgetJpy) || 0 };
+  const b = Number(t.budget) || 0;
+  if (t.currency === 'JPY') return { TWD: 0, JPY: b };
+  return { TWD: b ? Math.round(twdOrRaw(b, t.currency)) : 0, JPY: 0 };
+}
+
+// 帳戶的金額寫法：台幣 NT$、日幣 ¥
+function acctMoney(n, acct) {
+  return acct === 'JPY' ? origMoney(n, 'JPY') : ntd(n);
+}
+
+// 手動指定、而且跟依幣別自動的不一樣時，金額旁邊註明扣哪個帳戶
+function acctTag(item, cur) {
+  const a = cleanAccount(item && item.account);
+  return a && a !== accountOf({}, cur) ? `<span class="acct-tag" title="這筆指定扣${ACCOUNTS[a].label}">扣${a === 'JPY' ? '日幣' : '台幣'}</span>` : '';
+}
+
+// 表單的「扣款帳戶」選單
+function fillAccountSelect(sel, value) {
+  if (!sel) return;
+  sel.innerHTML = '<option value="">自動（日幣扣日幣帳戶，其他扣台幣帳戶）</option>'
+    + Object.entries(ACCOUNTS).map(([k, x]) => `<option value="${k}">${x.icon} ${x.label}</option>`).join('');
+  sel.value = cleanAccount(value);
 }
 
 function fareText(a, currency) {
@@ -628,7 +681,7 @@ function activityItem(a, date, currency, shopItems = [], mark = null) {
         ${shopItems.length ? `<ul class="shop-list shop-inline" aria-label="在這裡要買的東西">${shopItems.map((s) => shopItem(s, currency)).join('')}</ul>` : ''}
       </div>
       <div class="act-side">
-        ${a.cost ? `<span class="act-cost">${costLabel(a.cost, costCurrency(a, currency))}</span>` : ''}
+        ${a.cost ? `<span class="act-cost">${costLabel(a.cost, costCurrency(a, currency))}${acctTag(a, costCurrency(a, currency))}</span>` : ''}
         ${payer}
       </div>
     </li>`;
@@ -653,8 +706,27 @@ function budgetData(t, dates) {
   const dayTotal = (d) => sumCost(t.days[d] || [], t.currency) + shopCost(shoppingOn(t, shop, d), t.currency) + expOn(d);
   const looseTotal = looseShop + expLoose;
   const spent = sumCost(all, t.currency) + shopTotal + expTotal;
-  const budget = twdOrRaw(t.budget, t.currency);
-  const foreign = [...new Set([t.currency, ...all.map((a) => fareCurrency(a, t.currency)), ...all.filter((a) => Number(a.cost)).map((a) => costCurrency(a, t.currency)), ...shopItems.filter((x) => Number(x.price)).map((x) => shopCur(x, t.currency)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || t.currency)])].filter((c) => c && c !== 'TWD');
+  // 兩個帳戶各自的預算與已用（帳戶自己的幣別）；換不了匯率的先用原數字
+  const budgets = accountBudgets(t);
+  const used = { TWD: 0, JPY: 0 };
+  const charge = (item, amount, cur) => {
+    if (!Number(amount)) return;
+    const acct = accountOf(item, cur);
+    const v = inAccount(amount, cur, acct);
+    used[acct] += v == null ? Number(amount) || 0 : v;
+  };
+  for (const a of all) {
+    charge(a, a.cost, costCurrency(a, t.currency));
+    charge(a, a.travelCost, fareCurrency(a, t.currency));
+  }
+  for (const x of shopItems) charge(x, shopSubtotal(x), shopCur(x, t.currency));
+  for (const x of exps) charge(x, x.amount, x.currency || t.currency);
+  const accounts = Object.keys(ACCOUNTS).map((k) => {
+    const remainA = budgets[k] - used[k];
+    return { key: k, ...ACCOUNTS[k], budget: budgets[k], spent: used[k], remain: remainA, over: budgets[k] > 0 && remainA < 0, pct: budgets[k] > 0 ? Math.min(100, (used[k] / budgets[k]) * 100) : 0 };
+  });
+  const budget = budgets.TWD + twdOrRaw(budgets.JPY, 'JPY'); // 兩個帳戶合計（台幣）
+  const foreign = [...new Set([t.currency, ...(budgets.JPY ? ['JPY'] : []), ...all.map((a) => fareCurrency(a, t.currency)), ...all.filter((a) => Number(a.cost)).map((a) => costCurrency(a, t.currency)), ...shopItems.filter((x) => Number(x.price)).map((x) => shopCur(x, t.currency)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || t.currency)])].filter((c) => c && c !== 'TWD');
   const remain = budget - spent;
   const over = budget > 0 && remain < 0;
   const pct = budget > 0 ? Math.min(100, (spent / budget) * 100) : 0;
@@ -673,10 +745,11 @@ function budgetData(t, dates) {
     .sort((a, b) => b.sum - a.sum);
   const maxCat = Math.max(1, ...byCat.map((x) => x.sum));
 
-  const missing = [...new Set(missingRates(all, t.currency, t.budget, shopItems)
+  const missing = [...new Set(missingRates(all, t.currency, 0, shopItems)
+    .concat(budgets.JPY && !(fx.rates.JPY && fx.rates.JPY.rate) ? ['JPY'] : [])
     .concat(exps.filter((x) => Number(x.amount)).map((x) => x.currency || t.currency).filter((c) => c !== 'TWD' && !(fx.rates[c] && fx.rates[c].rate))))];
   const shares = shared && typeof memberShares === 'function' ? memberShares(t, dates) : null;
-  return { shop, shopTotal, looseShop, looseTotal, dayTotal, expTotal, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares };
+  return { shop, shopTotal, looseShop, looseTotal, dayTotal, expTotal, spent, budget, budgets, accounts, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares };
 }
 
 /** 預算頁的「👥 每人花費」：每人的總計、佔比，最後是全部總計（共用旅程才有） */
@@ -697,8 +770,31 @@ function sharesPanel(shares) {
     </section>`;
 }
 
+/** 預算頁的「💳 帳戶」：台幣帳戶、日幣帳戶各自的預算（可直接改）、已用與剩餘 */
+function accountsPanel(accounts) {
+  return `
+    <section class="panel accounts-panel">
+      <h3>💳 帳戶</h3>
+      ${accounts.map((x) => `
+        <div class="acct-row">
+          <div class="acct-head">
+            <span class="acct-name">${x.icon} ${x.label}</span>
+            <label class="acct-budget">預算
+              <span class="acct-input"><span class="muted">${x.key === 'JPY' ? '¥' : 'NT$'}</span><input type="number" min="0" step="any" inputmode="decimal" data-action="account-budget" data-account="${x.key}" value="${x.budget ? Math.round(x.budget * 100) / 100 : ''}" placeholder="0" aria-label="${x.label}預算"></span>
+            </label>
+          </div>
+          <div class="progress ${x.over ? 'over' : ''}"><span style="width:${x.pct}%"></span></div>
+          <div class="acct-nums small">
+            <span>已用 <b>${acctMoney(x.spent, x.key)}</b></span>
+            <span class="${x.over ? 'over' : ''}">${x.budget ? `${x.over ? '超出' : '剩'} <b>${acctMoney(Math.abs(x.remain), x.key)}</b>${x.key === 'JPY' && toTWD(Math.abs(x.remain), 'JPY') != null ? `<small class="muted">（≈${ntd(toTWD(Math.abs(x.remain), 'JPY'))}）</small>` : ''}` : '<span class="muted">還沒設定預算</span>'}</span>
+          </div>
+        </div>`).join('')}
+      <p class="muted hint no-print">每筆花費預設：日幣扣日幣帳戶，其他幣別扣台幣帳戶（換算成台幣）。刷台幣信用卡付日幣這類情況，可以在行程、購物、記帳的表單裡把「扣款帳戶」改成台幣帳戶。</p>
+    </section>`;
+}
+
 function budgetView(t, dates) {
-  const { shopTotal, looseTotal, dayTotal, spent, budget, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares } = budgetData(t, dates);
+  const { shopTotal, looseTotal, dayTotal, spent, budget, budgets, accounts, foreign, remain, over, pct, byCat, maxCat, missing, shared, shares } = budgetData(t, dates);
   const cols = shares ? shares.rows : [];
   // 共用旅程：格子裡只寫數字（標題註明 NT$），手機上才放得下每個人
   const amt = (n) => (cols.length ? Math.round(Number(n) || 0).toLocaleString() : ntd(n));
@@ -709,7 +805,7 @@ function budgetView(t, dates) {
   return `
     ${missing.length ? `<p class="panel rate-warn">⚠️ 還沒取得 ${esc(missing.join('、'))} 的匯率，這些金額暫時直接當成台幣加總，下面的數字不準；匯率載入後會自動更正。</p>` : ''}
     <div class="stats">
-      <div class="stat"><div class="label">總預算</div><div class="value">${budget ? showMoney(t.budget, t.currency) : '未設定'}</div></div>
+      <div class="stat"><div class="label">總預算（兩個帳戶合計）</div><div class="value">${budget ? ntd(budget) : '未設定'}</div>${budgets.TWD && budgets.JPY ? `<div class="small muted">${ntd(budgets.TWD)}＋${origMoney(budgets.JPY, 'JPY')}</div>` : ''}</div>
       <div class="stat"><div class="label">預估花費</div><div class="value">${ntd(spent)}</div></div>
       <div class="stat">
         <div class="label">${over ? '超出預算' : '剩餘'}</div>
@@ -721,6 +817,7 @@ function budgetView(t, dates) {
         <h3>預算使用率 ${Math.round((spent / budget) * 100)}%</h3>
         <div class="progress ${over ? 'over' : ''}"><span style="width:${pct}%"></span></div>
       </section>` : ''}
+    ${accountsPanel(accounts)}
     <section class="panel">
       <h3>分類花費</h3>
       ${byCat.length ? byCat.map((x) => `
@@ -954,9 +1051,12 @@ function openTripDialog(trip, copy = false) {
     name: '', destination: '', startDate: addDays(today, 7), endDate: addDays(today, 9),
     budget: '', currency: 'TWD', notes: '',
   };
-  for (const key of ['name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes']) {
+  for (const key of ['name', 'destination', 'startDate', 'endDate', 'currency', 'notes']) {
     tripForm.elements[key].value = values[key] || (key === 'currency' ? 'TWD' : '');
   }
+  const bs = trip ? accountBudgets(trip) : { TWD: 0, JPY: 0 };
+  tripForm.elements.budgetTwd.value = bs.TWD || '';
+  tripForm.elements.budgetJpy.value = bs.JPY || '';
   tripDialog.showModal();
 }
 
@@ -968,7 +1068,8 @@ tripForm.addEventListener('submit', (e) => {
     destination: f.get('destination').trim(),
     startDate: f.get('startDate'),
     endDate: f.get('endDate'),
-    budget: Math.max(0, Number(f.get('budget')) || 0),
+    budgetTwd: Math.max(0, Number(f.get('budgetTwd')) || 0),
+    budgetJpy: Math.max(0, Number(f.get('budgetJpy')) || 0),
     currency: f.get('currency'),
     notes: f.get('notes').trim(),
   };
@@ -1044,6 +1145,7 @@ function openActivityDialog(date, activity) {
   const curs = [...new Set(['JPY', 'TWD', t.currency])];
   activityForm.elements.costCurrency.innerHTML = curs.map((c) => `<option value="${c}">${c === 'JPY' ? '¥ 日幣' : c === 'TWD' ? 'NT$ 台幣' : c}</option>`).join('');
   activityForm.elements.costCurrency.value = activity ? costCurrency(a, t.currency) : lastCostCurrency(t);
+  fillAccountSelect(activityForm.elements.account, a.account);
   actDialogPhoto = { image: '', removed: false, item: activity || null };
   updateActPhotoPreview();
   activityForm.elements.notes.value = a.notes || '';
@@ -1142,6 +1244,7 @@ activityForm.addEventListener('submit', (e) => {
   // 幣別跟旅程一樣就不另外記
   const cur = CURRENCIES.includes(f.get('costCurrency')) ? f.get('costCurrency') : '';
   activity.costCurrency = cur && cur !== t.currency ? cur : '';
+  activity.account = cleanAccount(f.get('account'));
   // 照片：編輯時沿用原本的，有換或移除才改
   const prev = editingActivity && (t.days[editingActivity.date] || []).find((x) => x.id === editingActivity.id);
   if (typeof readSplitFields === 'function') Object.assign(activity, readSplitFields(t, prev));
@@ -1247,6 +1350,7 @@ function normalizeTrip(raw) {
           mapUrl: cleanUrl(a.mapUrl),
           cost: Math.max(0, Number(a.cost) || 0),
           costCurrency: CURRENCIES.includes(a.costCurrency) ? a.costCurrency : '',
+          account: cleanAccount(a.account),
           fileId: '', // 雲端的照片不沿用
           ...(typeof a.image === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(a.image) && a.image.length < 600000 ? { image: a.image } : {}),
           notes: str(a.notes),
@@ -1268,6 +1372,7 @@ function normalizeTrip(raw) {
       note: str(s.note, 200).trim(),
       ...(s.quantity != null ? { quantity: Math.min(999, Math.max(1, Math.round(Number(s.quantity)) || 1)) } : {}), // 沒有的話 syncShopping 會從備註搬
       priceCurrency: CURRENCIES.includes(s.priceCurrency) ? s.priceCurrency : '',
+      account: cleanAccount(s.account),
       payment: ['pre', 'post', 'unsure'].includes(s.payment) ? s.payment : 'unsure',
       paidBy: '', splitWith: [], // 成員代號是原本那個旅程的，不沿用
       fileId: '', // 雲端的照片是別的帳號或別的旅程的，匯入時不沿用
@@ -1283,6 +1388,8 @@ function normalizeTrip(raw) {
     endDate: raw.endDate,
     budget: Math.max(0, Number(raw.budget) || 0),
     currency: CURRENCIES.includes(raw.currency) ? raw.currency : 'TWD',
+    budgetTwd: raw.budgetTwd == null || raw.budgetTwd === '' ? null : Math.max(0, Number(raw.budgetTwd) || 0),
+    budgetJpy: raw.budgetJpy == null || raw.budgetJpy === '' ? null : Math.max(0, Number(raw.budgetJpy) || 0),
     notes: str(raw.notes),
     days,
     packing,
@@ -1302,7 +1409,7 @@ function normalizeTrip(raw) {
     expenses: Array.isArray(raw.expenses)
       ? raw.expenses.filter((x) => x && typeof x.title === 'string' && x.title.trim()).slice(0, 300).map((x) => ({
         id: uid(), date: DATE_RE.test(x.date) && x.date >= raw.startDate && x.date <= raw.endDate ? x.date : '', title: str(x.title, 40).trim(),
-        amount: Math.max(0, Number(x.amount) || 0), currency: CURRENCIES.includes(x.currency) ? x.currency : '',
+        amount: Math.max(0, Number(x.amount) || 0), currency: CURRENCIES.includes(x.currency) ? x.currency : '', account: cleanAccount(x.account),
         paidBy: '', splitWith: [], settled: !!x.settled, createdAt: Date.now(), // 成員代號是原本那個旅程的，不沿用
       }))
       : [],
@@ -1384,6 +1491,23 @@ function buildSampleTrip() {
 }
 
 /* ---------- 事件委派 ---------- */
+// 預算頁直接改帳戶預算（按 Enter 或離開輸入框就存）
+document.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-action="account-budget"]');
+  const t = el && currentTrip();
+  if (!t || !Object.hasOwn(ACCOUNTS, el.dataset.account)) return;
+  const bs = accountBudgets(t);
+  bs[el.dataset.account] = Math.max(0, Math.round((Number(el.value) || 0) * 100) / 100);
+  t.budgetTwd = bs.TWD;
+  t.budgetJpy = bs.JPY;
+  commitTrip(t);
+  renderTrip(t);
+  toast(`${ACCOUNTS[el.dataset.account].label}預算：${acctMoney(bs[el.dataset.account], el.dataset.account)}`);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches && e.target.matches('[data-action="account-budget"]')) e.target.blur();
+});
+
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-action]');
   if (!el) return;

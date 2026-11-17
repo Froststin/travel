@@ -134,11 +134,13 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
     <section id="budget">
       <h2>💰 預算</h2>
       <div class="stats">
-        <div class="stat"><span class="small muted">總預算</span><b>${b.budget ? showMoney(t.budget, t.currency) : '未設定'}</b></div>
+        <div class="stat"><span class="small muted">總預算（合計）</span><b>${b.budget ? ntd(b.budget) : '未設定'}</b></div>
         <div class="stat"><span class="small muted">預估花費</span><b>${ntd(b.spent)}</b></div>
         <div class="stat"><span class="small muted">${b.over ? '超出預算' : '剩餘'}</span><b${b.over ? ' class="warn"' : ''}>${b.budget ? ntd(Math.abs(b.remain)) : '—'}</b></div>
       </div>
-      ${b.byCat.length ? `<table><thead><tr><th>分類</th><th class="num">花費</th></tr></thead><tbody>
+      ${b.accounts.some((x) => x.budget || x.spent) ? `<table><thead><tr><th>帳戶</th><th class="num">預算</th><th class="num">已用</th><th class="num">剩餘</th></tr></thead><tbody>
+        ${b.accounts.filter((x) => x.budget || x.spent).map((x) => `<tr><td>${x.icon} ${x.label}</td><td class="num">${x.budget ? acctMoney(x.budget, x.key) : '—'}</td><td class="num">${acctMoney(x.spent, x.key)}</td><td class="num${x.over ? ' warn' : ''}">${x.budget ? `${x.over ? '超出 ' : ''}${acctMoney(Math.abs(x.remain), x.key)}` : '—'}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${b.byCat.length ? `<table style="margin-top:12px"><thead><tr><th>分類</th><th class="num">花費</th></tr></thead><tbody>
         ${b.byCat.map((x) => `<tr><td>${x.icon} ${x.label}</td><td class="num">${ntd(x.sum)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">行程項目還沒有填寫花費。</p>'}
       <table style="margin-top:12px"><thead><tr><th>日期</th><th class="num">花費</th></tr></thead><tbody>
         ${dates.map((d, i) => `<tr><td>Day ${i + 1}・${prettyDate(d)}</td><td class="num">${ntd(b.dayTotal(d))}</td></tr>`).join('')}

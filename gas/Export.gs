@@ -9,6 +9,34 @@ function escHtml_(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
+/* ---------- 預算帳戶：台幣帳戶、日幣帳戶 ---------- */
+const ACCOUNT_INFO = { TWD: { label: '台幣帳戶' }, JPY: { label: '日幣帳戶' } };
+
+/** 這筆扣哪個帳戶：有指定就用指定的，沒有就依幣別（日幣扣日幣帳戶，其他扣台幣帳戶） */
+function accountOf_(item, cur) {
+  return cleanAccount_(item && item.account) || (cur === 'JPY' ? 'JPY' : 'TWD');
+}
+
+/** 金額換成帳戶的幣別；查不到匯率回傳 null */
+function inAccount_(amount, cur, acct) {
+  const n = Number(amount) || 0;
+  if (!n) return 0;
+  if ((cur || 'TWD') === acct) return n;
+  const twd = toTWD_(n, cur);
+  if (twd == null) return null;
+  if (acct === 'TWD') return twd;
+  const r = rateFor_(acct);
+  return r && r.rate ? twd / r.rate : null;
+}
+
+/** 帳戶預算（原幣）。還沒設定過的舊旅程，從舊的總預算推：日幣旅程放日幣帳戶，其他換成台幣放台幣帳戶 */
+function accountBudgets_(trip) {
+  if (trip.budgetTwd != null || trip.budgetJpy != null) return { TWD: Number(trip.budgetTwd) || 0, JPY: Number(trip.budgetJpy) || 0 };
+  const b = Number(trip.budget) || 0;
+  if (trip.currency === 'JPY') return { TWD: 0, JPY: b };
+  return { TWD: b ? twdOrRaw_(b, trip.currency) : 0, JPY: 0 };
+}
+
 /**
  * 預算摘要（全部換算成台幣）；購物清單的金額歸在「購物」
  * withOthers：共用旅程時把旅伴的購物也算進來（整趟的總花費，LINE「預算」與 PDF 用）
@@ -26,14 +54,40 @@ function budgetSummary_(trip, withOthers = true) {
     byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, a.costCurrency || cur);
     byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
   });
-  const foreign = [...new Set([cur, ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency), ...shops.filter((x) => Number(x.price)).map((x) => shopCur_(x, cur)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || cur)])].filter((c) => c && c !== 'TWD');
+  // 各帳戶已用（帳戶自己的幣別）；換不了匯率的先用原數字
+  const used = { TWD: 0, JPY: 0 };
+  const charge = (item, amount, c) => {
+    if (!Number(amount)) return;
+    const acct = accountOf_(item, c);
+    const v = inAccount_(amount, c, acct);
+    used[acct] += v == null ? Number(amount) || 0 : v;
+  };
+  all.forEach((a) => {
+    charge(a, a.cost, a.costCurrency || cur);
+    charge(a, a.travelCost, fareCurrency_(a, cur));
+  });
+  shops.forEach((x) => charge(x, shopSubtotal_(x), shopCur_(x, cur)));
+  exps.forEach((x) => charge(x, x.amount, x.currency || cur));
+  const budgets = accountBudgets_(trip);
+  const accounts = ['TWD', 'JPY'].map((k) => ({ key: k, label: ACCOUNT_INFO[k].label, budget: budgets[k], spent: used[k] }));
+  const foreign = [...new Set([cur, ...(budgets.JPY ? ['JPY'] : []), ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency), ...shops.filter((x) => Number(x.price)).map((x) => shopCur_(x, cur)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || cur)])].filter((c) => c && c !== 'TWD');
   return {
     spent: Object.values(byCat).reduce((s, v) => s + v, 0),
-    budget: trip.budget ? twdOrRaw_(trip.budget, cur) : 0,
+    budget: budgets.TWD + twdOrRaw_(budgets.JPY, 'JPY'), // 兩個帳戶合計（台幣）
+    accounts,
     cats: Object.entries(byCat).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]),
     foreign,
     missing: foreign.filter((c) => !rateFor_(c)),
   };
+}
+
+/** 例如「預算 ¥80,000｜已用 ¥32,500｜剩 ¥47,500」 */
+function accountText_(x) {
+  const m = (n) => fmtMoney_(n, x.key);
+  const remain = x.budget - x.spent;
+  return x.budget
+    ? `預算 ${m(x.budget)}｜已用 ${m(x.spent)}｜${remain >= 0 ? `剩 ${m(remain)}` : `超出 ${m(-remain)}`}`
+    : `已用 ${m(x.spent)}（未設預算）`;
 }
 
 /** 整趟旅程的靜態網頁（不含 emoji，轉 PDF 時比較不會缺字） */
@@ -84,9 +138,10 @@ function exportHtml_(trip, exportedAt, web) {
   const budget = `
     <h2>預算</h2>
     <table>
-      ${trip.budget ? `<tr><td>總預算</td><td class="money">${e(showMoney_(trip.budget, trip.currency))}</td></tr>` : ''}
+      ${b.accounts.filter((x) => x.budget || x.spent).map((x) => `<tr><td>${e(x.label)}</td><td class="money">${e(accountText_(x))}</td></tr>`).join('')}
+      ${b.budget ? `<tr><td>總預算（合計）</td><td class="money">${e(ntd_(b.budget))}</td></tr>` : ''}
       <tr><td>預估花費</td><td class="money">${e(ntd_(b.spent))}</td></tr>
-      ${trip.budget ? `<tr><td>${b.budget - b.spent >= 0 ? '剩餘' : '超出預算'}</td><td class="money">${e(ntd_(Math.abs(b.budget - b.spent)))}</td></tr>` : ''}
+      ${b.budget ? `<tr><td>${b.budget - b.spent >= 0 ? '剩餘' : '超出預算'}</td><td class="money">${e(ntd_(Math.abs(b.budget - b.spent)))}</td></tr>` : ''}
       ${b.cats.map(([k, v]) => `<tr class="transit"><td>　${e(catInfo_(k).label)}</td><td class="money">${e(ntd_(v))}</td></tr>`).join('')}
     </table>
     ${b.foreign.length ? `<p class="sub">金額皆換算成台幣：${e(b.foreign.map(rateText_).join('；'))}</p>` : ''}

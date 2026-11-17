@@ -370,6 +370,17 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
 .stat .label { font-size: .85rem; color: var(--muted); }
 .stat .value { font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .stat .value.over { color: var(--danger); }
+/* 預算頁的帳戶（台幣帳戶、日幣帳戶） */
+.accounts-panel .acct-row { padding: 10px 0; border-top: 1px solid var(--border); }
+.accounts-panel .acct-row:first-of-type { border-top: 0; padding-top: 4px; }
+.acct-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.acct-name { font-weight: 700; }
+.acct-budget { display: flex; align-items: center; gap: 8px; font-size: .85rem; color: var(--muted); }
+.acct-input { display: inline-flex; align-items: center; gap: 4px; }
+.acct-input input { width: 9.5em; text-align: right; font-variant-numeric: tabular-nums; }
+.acct-nums { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.acct-nums .over { color: var(--danger); }
+.acct-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px; font-size: .7rem; font-weight: 600; color: var(--muted); border: 1px solid var(--border); vertical-align: middle; }
 .panel + .panel { margin-top: 16px; }
 .panel h3 { font-size: 1rem; margin-bottom: 12px; }
 
