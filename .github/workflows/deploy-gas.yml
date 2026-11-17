@@ -1,0 +1,79 @@
+# 後端（Google Apps Script）自動部署：gas/ 有變動並合併進 main 時，先跑後端測試，通過才用 clasp 推送並更新同一個部署。
+# 需要在 repo 的 Settings → Secrets and variables → Actions 設定：
+#   Secrets：CLASPRC_JSON（Mac 上 ~/.clasprc.json 的內容）、CLASP_SCRIPT_ID（.clasp.json 裡的 scriptId）
+#   Variables：CLASP_VERSION（Mac 上 `clasp --version` 顯示的版本，登入檔格式要和版本相符）
+# 部署 ID 取自 js/config.js 的 apiUrl，並檢查和 gas/Config.gs 的 API_URL 一致。
+name: 部署後端（Google Apps Script）
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gas/**'
+      - '.github/workflows/deploy-gas.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-gas
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 後端測試
+        run: node gas/test/run.cjs
+
+      - name: 檢查設定
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_SCRIPT_ID: ${{ secrets.CLASP_SCRIPT_ID }}
+          CLASP_VERSION: ${{ vars.CLASP_VERSION }}
+        run: |
+          missing=""
+          [ -n "$CLASPRC_JSON" ] || missing="$missing CLASPRC_JSON（secret）"
+          [ -n "$CLASP_SCRIPT_ID" ] || missing="$missing CLASP_SCRIPT_ID（secret）"
+          [ -n "$CLASP_VERSION" ] || missing="$missing CLASP_VERSION（variable）"
+          if [ -n "$missing" ]; then
+            echo "::error::還沒設定：$missing。見這個檔案開頭的說明。"
+            exit 1
+          fi
+          site=$(sed -n "s#.*apiUrl: *'https://script.google.com/macros/s/\([A-Za-z0-9_-]*\)/exec'.*#\1#p" js/config.js | head -1)
+          gas=$(sed -n "s#.*API_URL = 'https://script.google.com/macros/s/\([A-Za-z0-9_-]*\)/exec'.*#\1#p" gas/Config.gs | head -1)
+          if [ -z "$site" ] || [ "$site" != "$gas" ]; then
+            echo "::error::js/config.js 的 apiUrl 和 gas/Config.gs 的 API_URL 不一致（或找不到），不部署"
+            exit 1
+          fi
+          echo "DEPLOY_ID=$site" >> "$GITHUB_ENV"
+
+      - name: 安裝 clasp
+        run: npm install -g "@google/clasp@${{ vars.CLASP_VERSION }}"
+
+      - name: 寫入登入檔與專案設定
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          CLASP_SCRIPT_ID: ${{ secrets.CLASP_SCRIPT_ID }}
+        run: |
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          printf '{"scriptId":"%s","rootDir":"gas"}\n' "$CLASP_SCRIPT_ID" > .clasp.json
+
+      - name: 推送並更新部署
+        run: |
+          clasp push -f
+          desc="${GITHUB_SHA::7} $(git log -1 --format=%s | cut -c1-80)"
+          clasp deploy -i "$DEPLOY_ID" -d "$desc"
+
+      - name: 清除登入檔
+        if: always()
+        run: rm -f "$HOME/.clasprc.json" .clasp.json
