@@ -22,5 +22,6 @@
 ## 部署（測試通過後直接做，不用再問）
 
 - 前端：commit、push 後 GitHub Pages 約 1 分鐘更新
-- 後端：`clasp push -f && clasp deploy -i <部署 ID> -d "說明"`，一定要帶 `-i` 更新同一個部署（部署 ID 見 `js/config.js` 的 apiUrl）
+- 後端：合併進 main 且 `gas/` 有變動時，GitHub Actions（`.github/workflows/deploy-gas.yml`）會先跑後端測試，通過才自動 `clasp push -f` 並 `clasp deploy -i <部署 ID>` 更新同一個部署；部署結果看 Actions 頁面。前端與後端因此會一起上線
+- 手動部署（Actions 失敗或還沒設定時）：`clasp push -f && clasp deploy -i <部署 ID> -d "說明"`，一定要帶 `-i` 更新同一個部署（部署 ID 見 `js/config.js` 的 apiUrl）
 - 詳細設定（LINE、指令碼屬性、匯率）見 `~/Coding/claude/Output/MD/旅程手帖/travel-project.md`
