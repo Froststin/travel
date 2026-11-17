@@ -340,13 +340,17 @@ function cmdTrips_(ctx) {
 function cmdBudget_(ctx) {
   if (!ctx.trips.length) return say_(ctx, textMsg_('還沒有旅程喔。'));
   const trip = activeTrip_(ctx.trips, ctx.today);
-  const cur = trip.currency;
   const b = budgetSummary_(trip); // 全部換算成台幣，含購物清單
   const spent = b.spent;
   const lines = [`💰 ${trip.name} 預算`];
-  if (trip.budget) {
-    const remain = twdOrRaw_(trip.budget, cur) - spent;
-    lines.push(`總預算：${showMoney_(trip.budget, cur)}`, `預估花費：${ntd_(spent)}`,
+  const accts = b.accounts.filter((x) => x.budget || x.spent);
+  if (b.budget && accts.length) {
+    accts.forEach((x) => lines.push(`${x.key === 'JPY' ? '💴' : '💵'} ${x.label}：${accountText_(x)}`));
+    lines.push('');
+  }
+  if (b.budget) {
+    const remain = b.budget - spent;
+    lines.push(`總預算（合計）：${ntd_(b.budget)}`, `預估花費：${ntd_(spent)}`,
       remain >= 0 ? `剩餘：${ntd_(remain)}` : `⚠️ 超出預算：${ntd_(-remain)}`);
   } else {
     lines.push(`預估花費：${ntd_(spent)}（尚未設定總預算）`);

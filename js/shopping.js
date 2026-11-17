@@ -43,6 +43,7 @@ function syncShopping(t) {
       id: s.id, text: s.text, date: d || s.date || '', activityId: d ? s.activityId : '', price: Math.max(0, Number(s.price) || 0), done: !!s.done,
       note: fromNote ? '' : (s.note || ''), fileId: s.fileId || '',
       quantity: fromNote || cleanQty(s.quantity), priceCurrency: CURRENCIES.includes(s.priceCurrency) ? s.priceCurrency : '', payment: payKey(s),
+      account: cleanAccount(s.account),
       paidBy: s.paidBy || '', splitWith: Array.isArray(s.splitWith) ? s.splitWith : [],
     };
     if (s.image) out.image = s.image; // 還沒上傳到雲端的照片
@@ -74,7 +75,7 @@ function shopMoneyHtml(s, currency) {
   const q = cleanQty(s.quantity);
   if (!Number(s.price)) return q > 1 ? `<span class="shop-qty">×${q}</span>` : '';
   const cur = shopCur(s, currency);
-  return `${showMoney(shopSubtotal(s), cur)}${q > 1 ? `<small class="shop-unit">${esc(curMoney(s.price, cur))} × ${q}</small>` : ''}`;
+  return `${showMoney(shopSubtotal(s), cur)}${acctTag(s, cur)}${q > 1 ? `<small class="shop-unit">${esc(curMoney(s.price, cur))} × ${q}</small>` : ''}`;
 }
 
 function payChip(s) {
@@ -362,6 +363,7 @@ function openShopDialog(preset, item) {
     shopForm.elements.priceCurrency.innerHTML = curs.map((c) => `<option value="${c}">${c === 'JPY' ? '¥ 日幣' : c === 'TWD' ? 'NT$ 台幣' : c}</option>`).join('');
     shopForm.elements.priceCurrency.value = item ? shopCur(item, t.currency) : lastShopCurrency(t);
     shopForm.elements.payment.value = item ? payKey(item) : 'unsure';
+    fillAccountSelect(shopForm.elements.account, item && item.account);
     if (typeof fillSplitFields === 'function') {
       // 分攤的人：照這一樣原本的設定；新的（或舊資料沒設定過的）預設只勾自己＝自己買的
       const me = (splitMembers(t).find((m) => m.me) || {}).key;
@@ -395,6 +397,7 @@ shopForm?.addEventListener('submit', (e) => {
     quantity: cleanQty(f.get('quantity')),
     priceCurrency: (() => { const c = CURRENCIES.includes(f.get('priceCurrency')) ? f.get('priceCurrency') : ''; return c && c !== t.currency ? c : ''; })(),
     payment: Object.hasOwn(PAYMENTS, f.get('payment')) ? f.get('payment') : 'unsure',
+    ...(shopForm.elements.account ? { account: cleanAccount(f.get('account')) } : {}),
     ...(typeof readSplitFields === 'function' ? readSplitFields(t, prevItem, shopForm, '#shop-split-fields', true) : {}),
   } : {};
   // 新增時可以用「、」一次加好幾樣；編輯時整段都是同一樣

@@ -7,21 +7,25 @@
  * 購物清單每個人各一份：Shopping 每一列記 tripId＋userId，只能改自己的；同旅程的成員看得到彼此的（唯讀）。
  * 地鐵圖（Trips.metroMaps）整個旅程共用：成員都能新增，只有上傳的人或主人能刪除。
  * 記帳（Trips.expenses）整個旅程共用：成員都能新增、修改、刪除；算進預算與分帳（結清的不算分帳）。
+ * 預算分台幣帳戶（Trips.budgetTwd）與日幣帳戶（Trips.budgetJpy），空字串＝還沒設定（沿用舊的 budget／currency）；
+ * 行程、購物、記帳的 account 是扣哪個帳戶（空＝依幣別自動）。
  * ============================================================ */
 
 const TABLES = {
-  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places', 'bookings', 'metroMaps', 'expenses'],
-  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency', 'costCurrency', 'fileId', 'paidBy', 'splitWith', 'lat', 'lng', 'geo', 'geoKey'],
+  Trips: ['id', 'userId', 'name', 'destination', 'startDate', 'endDate', 'budget', 'currency', 'notes', 'packing', 'createdAt', 'updatedAt', 'inviteCode', 'shopping', 'places', 'bookings', 'metroMaps', 'expenses', 'budgetTwd', 'budgetJpy'],
+  Activities: ['id', 'tripId', 'userId', 'date', 'time', 'title', 'category', 'location', 'cost', 'notes', 'mapUrl', 'endTime', 'travelMin', 'travelMode', 'travelCost', 'travelCostCurrency', 'costCurrency', 'fileId', 'paidBy', 'splitWith', 'lat', 'lng', 'geo', 'geoKey', 'account'],
   Journal: ['id', 'userId', 'date', 'time', 'type', 'text', 'fileId', 'createdAt', 'tripId'],
   Members: ['tripId', 'userId', 'role', 'joinedAt'],
   Users: ['userId', 'name', 'updatedAt', 'sessionsFrom'], // sessionsFrom：這個時間以前發的網站登入憑證一律失效（登出）
   // price 是單價（priceCurrency，空＝旅程幣別），小計＝單價 × quantity；payment：pre 先付／post 後付／unsure 不確定
-  Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done', 'note', 'fileId', 'payment', 'quantity', 'priceCurrency', 'paidBy', 'splitWith'],
+  Shopping: ['id', 'tripId', 'userId', 'text', 'date', 'activityId', 'price', 'done', 'note', 'fileId', 'payment', 'quantity', 'priceCurrency', 'paidBy', 'splitWith', 'account'],
   Views: ['token', 'tripId', 'userId', 'createdAt'], // 免登入的線上檢視連結
   Packing: ['id', 'tripId', 'userId', 'text', 'done'], // 個人的行李清單（共用的那份在 Trips.packing）
 };
-const SCHEMA_VERSION = '14';
+const SCHEMA_VERSION = '15';
 const CURRENCY_CODES = ['TWD', 'JPY', 'KRW', 'USD', 'EUR', 'GBP', 'CNY', 'HKD', 'THB', 'SGD'];
+// 預算帳戶：台幣帳戶與日幣帳戶。每筆花費的 account 空＝依幣別自動（日幣扣日幣帳戶，其他扣台幣帳戶）
+const ACCOUNT_CODES = ['TWD', 'JPY'];
 const INVITE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // 去掉容易看錯的 0/O、1/I/L
 
 const MAX_SHOPPING = 200; // 每個旅程的購物清單上限
@@ -242,6 +246,17 @@ function cleanId_(v) {
   return typeof v === 'string' && /^[\w-]{1,64}$/.test(v) ? v : '';
 }
 
+/** 扣款帳戶：'TWD'／'JPY'，空＝依幣別自動 */
+function cleanAccount_(v) {
+  return ACCOUNT_CODES.includes(v) ? v : '';
+}
+
+/** 帳戶預算：沒送（舊版網頁）或空字串回傳 null＝沿用原本的；有送就是 0 以上的數字 */
+function accountBudget_(v) {
+  if (v == null || v === '') return null;
+  return Math.max(0, Math.round((Number(v) || 0) * 100) / 100);
+}
+
 function sanitizeActivity_(a) {
   if (!a || typeof a.title !== 'string' || !a.title.trim()) return null;
   return {
@@ -260,6 +275,7 @@ function sanitizeActivity_(a) {
     costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '', // 空＝旅程的幣別
     fileId: cleanFileId_(a.fileId), // 行程的照片；能不能用，存檔時（saveTrip_）才檢查
     notes: str_(a.notes),
+    ...('account' in a ? { account: cleanAccount_(a.account) } : {}), // 舊版網頁沒送：存檔時沿用原本的
     ...splitFields_(a),
     ...geoFields_(a),
   };
@@ -301,6 +317,7 @@ function shopExtra_(s) {
     payment: PAYMENTS.includes(s.payment) ? s.payment : 'unsure',
     quantity: cleanQty_(s.quantity),
     priceCurrency: CURRENCY_CODES.includes(s.priceCurrency) ? s.priceCurrency : '',
+    account: cleanAccount_(s.account),
     ...splitFields_(s),
   };
 }
@@ -375,6 +392,7 @@ function sanitizeTrip_(raw) {
         ...shopExtra_(s),
         // 舊版網頁送來的項目沒有這些欄位：存檔時沿用試算表原本的值，不要被重設成預設值
         legacyFields: !['payment', 'quantity', 'priceCurrency', 'paidBy', 'splitWith'].some((k) => k in s),
+        legacyAccount: !('account' in s), // 還沒有扣款帳戶的網頁：沿用原本的
       }))
     : [];
   const places = sanitizePlaces_(raw.places, actIds);
@@ -398,6 +416,8 @@ function sanitizeTrip_(raw) {
     endDate: raw.endDate,
     budget: Math.max(0, Number(raw.budget) || 0),
     currency: CURRENCY_CODES.includes(raw.currency) ? raw.currency : 'TWD',
+    budgetTwd: accountBudget_(raw.budgetTwd), // null＝舊版網頁沒送，存檔時沿用原本的
+    budgetJpy: accountBudget_(raw.budgetJpy),
     notes: str_(raw.notes),
     days,
     packing,
@@ -438,10 +458,17 @@ function sanitizeExpenses_(list, valid) {
       title: str_(x.title, 40).trim(),
       amount: Math.max(0, Math.round((Number(x.amount) || 0) * 100) / 100),
       currency: CURRENCY_CODES.includes(x.currency) ? x.currency : '',
+      ...('account' in x ? { account: cleanAccount_(x.account) } : {}), // 舊版網頁沒送：存檔時沿用原本的
       ...splitFields_(x),
       settled: !!x.settled,
       createdAt: Number(x.createdAt) || Date.now(),
     }));
+}
+
+/** 記帳沒帶扣款帳戶（舊版網頁送來的）：沿用原本那筆的 */
+function withOldAccounts_(list, oldList) {
+  const old = new Map((oldList || []).map((x) => [x.id, x.account || '']));
+  return list.map((x) => ('account' in x ? x : Object.assign({}, x, { account: old.get(x.id) || '' })));
 }
 
 function expensesOf_(row) {
@@ -490,6 +517,7 @@ function shopRow_(tripId, userId, s) {
     activityId: cleanId_(s.activityId), price: Math.max(0, Number(s.price) || 0), done: s.done ? '1' : '',
     note: str_(s.note, 200).trim(), fileId: cleanFileId_(s.fileId),
     payment: x.payment, quantity: String(x.quantity), priceCurrency: x.priceCurrency, paidBy: x.paidBy, splitWith: x.splitWith.join(','),
+    account: x.account,
   };
 }
 
@@ -765,7 +793,7 @@ function rowToTrip_(row, acts, viewerId) {
     (days[a.date] = days[a.date] || []).push({
       id: a.id, time: a.time, endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0, travelMode: travelModeKey_(a.travelMode), travelCost: Number(a.travelCost) || 0,
       travelCostCurrency: a.travelCostCurrency || '', title: a.title, category: catKey_(a.category), location: a.location, mapUrl: cleanUrl_(a.mapUrl), cost: Number(a.cost) || 0, notes: a.notes,
-      costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '', fileId: a.fileId || '',
+      costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '', fileId: a.fileId || '', account: cleanAccount_(a.account),
       ...splitFields_(a), ...geoFields_(a),
     });
   }
@@ -806,6 +834,8 @@ function rowToTrip_(row, acts, viewerId) {
     endDate: row.endDate,
     budget: Number(row.budget) || 0,
     currency: row.currency || 'TWD',
+    budgetTwd: accountBudget_(row.budgetTwd),
+    budgetJpy: accountBudget_(row.budgetJpy),
     notes: row.notes,
     days,
     packing,
@@ -858,6 +888,9 @@ function saveTrip_(userId, trip) {
     endDate: trip.endDate,
     budget: trip.budget,
     currency: trip.currency,
+    // 帳戶預算：網站（新版）或 LINE 機器人送來的才換；沒送（舊版網頁）沿用原本的
+    budgetTwd: trip.budgetTwd != null ? String(accountBudget_(trip.budgetTwd)) : (existing ? existing.budgetTwd || '' : ''),
+    budgetJpy: trip.budgetJpy != null ? String(accountBudget_(trip.budgetJpy)) : (existing ? existing.budgetJpy || '' : ''),
     notes: trip.notes,
     packing: JSON.stringify(trip.packing || []),
     createdAt: existing ? existing.createdAt : String(trip.createdAt || now),
@@ -868,7 +901,7 @@ function saveTrip_(userId, trip) {
     bookings: JSON.stringify(sanitizeBookings_(trip.bookings)),
     // 記帳：網站（sanitizeTrip_ 後是陣列）或 LINE 機器人（loadTrips_ 讀出來的）送來的才換；沒送（舊版網頁）沿用原本的
     expenses: Array.isArray(trip.expenses)
-      ? JSON.stringify(sanitizeExpenses_(trip.expenses, new Set(dateRange_(trip.startDate, trip.endDate))))
+      ? JSON.stringify(withOldAccounts_(sanitizeExpenses_(trip.expenses, new Set(dateRange_(trip.startDate, trip.endDate))), expensesOf_(existing)))
       : (existing ? existing.expenses || '' : '[]'),
   };
   // 網站送來的才有 metroMaps；LINE 機器人存檔時（沒有這個欄位）沿用原本的
@@ -882,9 +915,12 @@ function saveTrip_(userId, trip) {
   const before = readTable_('Shopping').filter((s) => s.tripId === trip.id && s.userId === userId && s.fileId).map((s) => s.fileId);
   const oldShop = new Map(readTable_('Shopping').filter((s) => s.tripId === trip.id && s.userId === userId).map((s) => [s.id, s]));
   const legacy = new Set((trip.shopping || []).filter((s) => s.legacyFields).map((s) => s.id));
+  const legacyAcct = new Set((trip.shopping || []).filter((s) => s.legacyAccount).map((s) => s.id));
   const shopRows = syncShopping_(trip).map((s) => {
     const old = legacy.has(s.id) && oldShop.get(s.id);
     if (old) Object.assign(s, { payment: old.payment, quantity: old.quantity, priceCurrency: old.priceCurrency, paidBy: old.paidBy, splitWith: old.splitWith });
+    const oldAcct = legacyAcct.has(s.id) && oldShop.get(s.id);
+    if (oldAcct) s.account = oldAcct.account;
     const r = shopRow_(trip.id, userId, s);
     if (!ownsShopFile_(userId, r.fileId, mineFiles)) r.fileId = '';
     return r;
@@ -900,6 +936,7 @@ function saveTrip_(userId, trip) {
   // 行程的照片：原本就掛在同一個行程上的，或是存檔的人剛上傳的，才收；被換掉或跟著行程刪掉的丟到垃圾桶
   const prevActs = readTable_('Activities').filter((a) => a.tripId === trip.id);
   const prevFile = new Map(prevActs.map((a) => [a.id, a.fileId]));
+  const prevAcct = new Map(prevActs.map((a) => [a.id, a.account || '']));
   const uploadedBy = (id) => CacheService.getScriptCache().get(`up_${id}`) === userId;
   const acts = [];
   for (const [date, list] of Object.entries(trip.days || {})) {
@@ -910,6 +947,8 @@ function saveTrip_(userId, trip) {
       acts.push({
         lat: geo.lat, lng: geo.lng, geo: geo.geo, geoKey: geo.geoKey,
         costCurrency: CURRENCY_CODES.includes(a.costCurrency) ? a.costCurrency : '',
+        // 扣款帳戶：沒送這個欄位（舊版網頁）就沿用原本的
+        account: 'account' in a ? cleanAccount_(a.account) : prevAcct.get(a.id) || '',
         fileId: fileId && (prevFile.get(a.id) === fileId || uploadedBy(fileId) || restoreFile_(fileId, `a:${trip.id}`)) ? fileId : '',
         paidBy: split.paidBy, splitWith: split.splitWith.join(','),
         id: a.id, tripId: trip.id, userId: ownerId, date, time: a.time || '', endTime: a.endTime || '', travelMin: Number(a.travelMin) || 0,

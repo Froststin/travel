@@ -295,6 +295,43 @@ const stale = api('saveTrip', { trip, baseUpdatedAt: trip.updatedAt });
 check('API 舊版本 → 409', stale.status === 409, JSON.stringify(stale));
 check('API 別人的旅程 → 403', api('saveTrip', { trip, baseUpdatedAt: res.updatedAt }, 'good:U2').status === 403);
 
+/* ---------- 預算：台幣帳戶、日幣帳戶，每筆可指定扣哪個帳戶 ---------- */
+{
+  let t1 = api('list', {}).trips.find((x) => x.id === trip.id);
+  check('帳戶預算：還沒設定過是 null（沿用舊的總預算）', t1.budgetTwd === null && t1.budgetJpy === null, JSON.stringify([t1.budgetTwd, t1.budgetJpy]));
+  const d0 = Object.keys(t1.days).find((d) => t1.days[d].length);
+  const a0 = t1.days[d0][0];
+  t1.budgetTwd = 20000;
+  t1.budgetJpy = 50000;
+  a0.account = 'TWD';
+  t1.shopping = (t1.shopping || []).concat([{ id: 'acct-s1', text: '帳戶測試', price: 100, priceCurrency: 'TWD', quantity: 1, payment: 'pre', paidBy: '', splitWith: [], account: 'JPY' }]);
+  t1.expenses = (t1.expenses || []).concat([{ id: 'acct-e1', title: '帳戶測試', amount: 1000, currency: 'JPY', paidBy: '', splitWith: [], settled: false, account: 'TWD' }]);
+  res = api('saveTrip', { trip: t1, baseUpdatedAt: t1.updatedAt });
+  t1 = api('list', {}).trips.find((x) => x.id === trip.id);
+  check('帳戶預算與扣款帳戶存得起來', res.ok && t1.budgetTwd === 20000 && t1.budgetJpy === 50000 && t1.days[d0].find((x) => x.id === a0.id).account === 'TWD'
+    && t1.shopping.find((x) => x.id === 'acct-s1').account === 'JPY' && t1.expenses.find((x) => x.id === 'acct-e1').account === 'TWD',
+    JSON.stringify([t1.budgetTwd, t1.budgetJpy, t1.days[d0].find((x) => x.id === a0.id).account]));
+  // 舊版網頁沒有這些欄位：存檔時不能被清掉
+  const old = JSON.parse(JSON.stringify(t1));
+  delete old.budgetTwd;
+  delete old.budgetJpy;
+  Object.values(old.days).flat().forEach((x) => { delete x.account; });
+  old.shopping.forEach((x) => { delete x.account; delete x.payment; delete x.quantity; delete x.priceCurrency; delete x.paidBy; delete x.splitWith; });
+  old.expenses.forEach((x) => { delete x.account; });
+  old.notes = '舊版網頁存檔';
+  res = api('saveTrip', { trip: old, baseUpdatedAt: t1.updatedAt });
+  t1 = api('list', {}).trips.find((x) => x.id === trip.id);
+  check('舊版網頁存檔：帳戶預算與扣款帳戶沿用原本的', res.ok && t1.notes === '舊版網頁存檔' && t1.budgetTwd === 20000 && t1.budgetJpy === 50000 && t1.days[d0].find((x) => x.id === a0.id).account === 'TWD'
+    && t1.shopping.find((x) => x.id === 'acct-s1').account === 'JPY' && t1.expenses.find((x) => x.id === 'acct-e1').account === 'TWD');
+  // 測試用的購物與記帳拿掉，不影響後面的預算測試
+  t1.shopping = t1.shopping.filter((x) => x.id !== 'acct-s1');
+  t1.expenses = t1.expenses.filter((x) => x.id !== 'acct-e1');
+  res = api('saveTrip', { trip: t1, baseUpdatedAt: t1.updatedAt });
+  check('扣款帳戶只收 TWD／JPY', P('cleanAccount_("USD")') === '' && P('cleanAccount_("JPY")') === 'JPY');
+  r = say('預算');
+  check('LINE 預算：列出台幣帳戶與日幣帳戶', /台幣帳戶：預算 NT\$20,000｜已用 NT\$[\d,]+/.test(r.text) && /日幣帳戶：預算 ¥50,000｜已用 ¥[\d,]+｜剩 ¥[\d,]+/.test(r.text) && r.text.includes('總預算（合計）：NT$'), r.text);
+}
+
 res = api('addJournal', { entry: { date: '2026-10-29', text: '網站寫的日誌' } });
 check('API addJournal', res.ok && res.entry.id && res.entry.tripId);
 check('API deleteJournal', api('deleteJournal', { id: res.entry.id }).ok);
@@ -312,7 +349,7 @@ props.ALLOWED_USERS = '';
 
 
 /* ---------- 旅伴（共用旅程） ---------- */
-check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && H.sheets.Activities.data[0].includes('paidBy') && H.sheets.Trips.data[0].includes('bookings') && H.sheets.Users.data[0].includes('sessionsFrom') && props.SCHEMA_VERSION === '14');
+check('資料表已自動升級', ['Members', 'Users'].every((n) => H.sheets[n]) && H.sheets.Trips.data[0].includes('inviteCode') && H.sheets.Trips.data[0].includes('shopping') && H.sheets.Trips.data[0].includes('places') && H.sheets.Shopping && H.sheets.Views && H.sheets.Activities.data[0].includes('costCurrency') && H.sheets.Activities.data[0].includes('paidBy') && H.sheets.Trips.data[0].includes('bookings') && H.sheets.Users.data[0].includes('sessionsFrom') && H.sheets.Trips.data[0].includes('budgetJpy') && H.sheets.Activities.data[0].includes('account') && H.sheets.Shopping.data[0].includes('account') && props.SCHEMA_VERSION === '15');
 check('第一次互動就記下 LINE 名稱', rows('Users').some((u) => u.userId === 'U1' && u.name === 'Name-U1'));
 r = say('邀請');
 const code = (r.text.match(/加入 ([A-Z0-9]{6})/) || [])[1];
@@ -485,7 +522,7 @@ const tripRowNo = H.sheets.Trips.data.findIndex((row) => row[0] === kyoto.id);
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西', date: '2026-10-29', activityId: '', price: 70, done: true }]);
 props.SCHEMA_VERSION = '6';
 check('舊版購物清單升級後歸給旅程主人', tripOf('U1').shopping.some((s) => s.id === 'old-1' && s.text === '舊版的東西' && s.price === 70 && s.done) && !tripOf('U2').shopping.some((s) => s.id === 'old-1')
-  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '14');
+  && H.sheets.Trips.data[tripRowNo][col] === '' && props.SCHEMA_VERSION === '15');
 props.SCHEMA_VERSION = '6';
 H.sheets.Trips.data[tripRowNo][col] = JSON.stringify([{ id: 'old-1', text: '舊版的東西' }]);
 check('重複升級不會產生重複的項目', tripOf('U1').shopping.filter((s) => s.id === 'old-1').length === 1);
@@ -1132,7 +1169,7 @@ check('數量：不是純數量的不搬', qty('紅色 2 個') === 0 && qty('M �
   const m2 = mine.find((x) => x.id === 'mig-2');
   check('升級：純數量備註搬到數量、備註清空', m1 && m1.quantity === 3 && m1.note === '' && m1.price === 500 && m1.payment === 'unsure', JSON.stringify(m1));
   check('升級：其他備註保留、數量 1', m2 && m2.quantity === 1 && m2.note === '紅色 2 個', JSON.stringify(m2));
-  check('升級：搬之前先備份 Shopping 工作表', !!H.sheets.Shopping_backup_v13 && H.sheets.Shopping_backup_v13.data.some((r) => r[0] === 'mig-1' && r.includes('3盒')) && props.SCHEMA_VERSION === '14');
+  check('升級：搬之前先備份 Shopping 工作表', !!H.sheets.Shopping_backup_v13 && H.sheets.Shopping_backup_v13.data.some((r) => r[0] === 'mig-1' && r.includes('3盒')) && props.SCHEMA_VERSION === '15');
 }
 
 // 購物欄位：付款狀態、數量、幣別、分帳
@@ -1169,6 +1206,24 @@ check('購物：旅伴看得到我的數量與付款狀態', splitTrip('U8').oth
 }
 r = say('購物清單', 'U7');
 check('LINE 購物清單：顯示數量', r.text.includes('×2'), r.text);
+{
+  // 帳戶：日幣 3,000 指定扣台幣帳戶、台幣 500 自動扣台幣帳戶、日幣記帳 1,700 自動扣日幣帳戶、台幣購物指定扣日幣帳戶
+  ctx.__t = {
+    startDate: '2026-12-01', endDate: '2026-12-02', currency: 'JPY', budget: 0, budgetTwd: 10000, budgetJpy: 40000,
+    days: { '2026-12-01': [{ id: 'x1', title: '拉麵', category: 'food', cost: 3000, costCurrency: '', account: 'TWD' }, { id: 'x2', title: '機場巴士', category: 'transport', cost: 500, costCurrency: 'TWD' }] },
+    shopping: [{ id: 's1', text: '伴手禮', price: 204.4, quantity: 1, priceCurrency: 'TWD', account: 'JPY' }],
+    expenses: [{ id: 'e1', title: '晚餐', amount: 1700, currency: '' }],
+  };
+  const b = run('budgetSummary_(__t)');
+  const tw = b.accounts.find((x) => x.key === 'TWD');
+  const jp = b.accounts.find((x) => x.key === 'JPY');
+  const near2 = (x, y) => Math.abs(x - y) < 0.5;
+  check('帳戶：指定的帳戶優先，沒指定依幣別；金額換成帳戶的幣別', near2(tw.spent, 3000 * 0.2044 + 500) && near2(jp.spent, 1700 + 1000) && tw.budget === 10000 && jp.budget === 40000,
+    JSON.stringify(b.accounts));
+  check('帳戶：總預算是兩個帳戶的合計（台幣）', near2(b.budget, 10000 + 40000 * 0.2044), String(b.budget));
+  ctx.__t.budgetTwd = null; ctx.__t.budgetJpy = null; ctx.__t.budget = 30000;
+  check('帳戶：舊旅程沒設定帳戶，日幣旅程的總預算算在日幣帳戶', run('budgetSummary_(__t)').accounts.find((x) => x.key === 'JPY').budget === 30000);
+}
 check('預算：購物用小計', (() => { ctx.__t = splitTrip(); const b = run('budgetSummary_(__t)'); return b.cats.some(([k, v]) => k === 'shopping' && Math.abs(v - (amount2() )) < 0.01); })());
 function amount2() { ctx.__t = splitTrip(); return run('__t.shopping.reduce((s, x) => s + shopTwd_(x, __t.currency), 0)'); }
 r = say('買 毛巾', 'U7');

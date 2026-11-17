@@ -2,7 +2,7 @@
 
 /* ============================================================
  * 記帳（預算頁的「🧾 記帳」）：整趟旅程共用的帳，可以在 LINE 打「晚餐 1700 我付」記，也可以在這裡新增
- *   expense = { id, date（空＝不指定）, title, amount, currency（空＝旅程幣別）, paidBy, splitWith（空＝所有成員）, settled, createdAt }
+ *   expense = { id, date（空＝不指定）, title, amount, currency（空＝旅程幣別）, account（扣款帳戶，空＝依幣別）, paidBy, splitWith（空＝所有成員）, settled, createdAt }
  * 算進預算（預估花費、分類、每日、每人花費）；待分帳的算進分帳，結清的不算（跟購物「已買」一樣）
  * ============================================================ */
 
@@ -32,7 +32,7 @@ function expensesPanel(t, dates) {
           <span class="expense-title">${esc(x.title)}</span>
           <span class="muted small">${day >= 0 ? `Day ${day + 1}・${prettyDate(x.date)}` : '不指定日期'}${ms.length && x.paidBy ? `・👤 ${esc(name(x.paidBy))}付${self ? '・🙋 不分帳' : n > 1 ? `・${n} 人分` : ''}` : ''}</span>
         </div>
-        <span class="expense-amount">${costLabel(x.amount, expenseCur(x, t))}</span>
+        <span class="expense-amount">${costLabel(x.amount, expenseCur(x, t))}${acctTag(x, expenseCur(x, t))}</span>
         <span class="expense-actions no-print">
           ${ms.length && !self ? `<button class="btn btn-sm${x.settled ? '' : ' btn-primary'}" data-action="settle-expense" data-id="${esc(x.id)}" title="${x.settled ? '改回待分帳' : '已經付清了，不列入分帳'}">${x.settled ? '✅ 已結清' : '⏳ 待分帳'}</button>` : ''}
           <button class="icon-btn" data-action="edit-expense" data-id="${esc(x.id)}" title="修改" aria-label="修改">✎</button>
@@ -68,6 +68,7 @@ function openExpenseDialog(x) {
   const curs = [...new Set(['JPY', 'TWD', t.currency, ...(x && x.currency ? [x.currency] : [])])];
   expenseForm.elements.currency.innerHTML = curs.map((c) => `<option value="${c}">${c === 'JPY' ? '¥ 日幣' : c === 'TWD' ? 'NT$ 台幣' : c}</option>`).join('');
   expenseForm.elements.currency.value = x ? expenseCur(x, t) : t.currency; // 新的預設旅程幣別（跟 LINE 沒寫單位時一樣）
+  fillAccountSelect(expenseForm.elements.account, x && x.account);
   // 誰付的、分攤：新的預設「我付、大家平分」
   const me = (splitMembers(t).find((m) => m.me) || {}).key;
   fillSplitFields(t, x || { paidBy: me || '', splitWith: [] }, expenseForm, '#expense-split-fields', '#expense-split-with-list');
@@ -89,6 +90,7 @@ expenseForm?.addEventListener('submit', (e) => {
   const prev = editingExpenseId ? t.expenses.find((x) => x.id === editingExpenseId) : null;
   const data = {
     date: f.get('date') || '', title, amount, currency: cur && cur !== t.currency ? cur : '',
+    ...(expenseForm.elements.account ? { account: cleanAccount(f.get('account')) } : {}),
     ...readSplitFields(t, prev, expenseForm, '#expense-split-fields'),
   };
   if (prev) Object.assign(prev, data);
