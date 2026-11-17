@@ -380,6 +380,9 @@ h1, h2, h3 { line-height: 1.3; margin: 0; }
 .acct-input input { width: 9.5em; text-align: right; font-variant-numeric: tabular-nums; }
 .acct-nums { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 6px; font-variant-numeric: tabular-nums; }
 .acct-nums .over { color: var(--danger); }
+.acct-others-title { margin: 14px 0 6px; font-size: .9rem; }
+.acct-table td.num, .acct-table th.num { white-space: nowrap; }
+.acct-table small.over, .acct-nums .over { color: var(--danger); }
 .acct-tag { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px; font-size: .7rem; font-weight: 600; color: var(--muted); border: 1px solid var(--border); vertical-align: middle; }
 .panel + .panel { margin-top: 16px; }
 .panel h3 { font-size: 1rem; margin-bottom: 12px; }

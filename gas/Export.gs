@@ -29,12 +29,57 @@ function inAccount_(amount, cur, acct) {
   return r && r.rate ? twd / r.rate : null;
 }
 
-/** 帳戶預算（原幣）。還沒設定過的舊旅程，從舊的總預算推：日幣旅程放日幣帳戶，其他換成台幣放台幣帳戶 */
-function accountBudgets_(trip) {
-  if (trip.budgetTwd != null || trip.budgetJpy != null) return { TWD: Number(trip.budgetTwd) || 0, JPY: Number(trip.budgetJpy) || 0 };
+/** 舊的總預算（還沒有人設定帳戶時算給旅程主人）：日幣旅程放日幣帳戶，其他換成台幣放台幣帳戶 */
+function legacyBudgets_(trip) {
   const b = Number(trip.budget) || 0;
   if (trip.currency === 'JPY') return { TWD: 0, JPY: b };
   return { TWD: b ? twdOrRaw_(b, trip.currency) : 0, JPY: 0 };
+}
+
+/**
+ * 每個人的帳戶（以人為單位）：預算是各自設的，已用是每筆照「分攤的人」平分後、扣在各自指定的帳戶（帳戶的幣別）
+ * 分攤規則和每人花費（memberShares_）一樣；不是共用旅程時全部算自己的
+ * @return [{ key, name, me, budget: {TWD, JPY}, used: {TWD, JPY} }]（成員順序；已退出的旅伴有花費才併成一列）
+ */
+function accountRows_(trip, withOthers = true) {
+  const cur = trip.currency;
+  const members = (trip.members || []).filter((m) => m.key);
+  const shared = members.length > 1;
+  const meKey = (members.find((m) => m.me) || members[0] || {}).key || 'me';
+  const ownerKey = (members.find((m) => m.role === 'owner') || {}).key || meKey;
+  const everyone = shared ? members.map((m) => m.key) : [meKey];
+  const set = trip.accounts && typeof trip.accounts === 'object' ? trip.accounts : {};
+  const anySet = Object.keys(set).length > 0;
+  const rows = new Map();
+  const add = (k, name, me) => rows.set(k, {
+    key: k, name, me,
+    budget: set[k] ? { TWD: Number(set[k].TWD) || 0, JPY: Number(set[k].JPY) || 0 } : (!anySet && k === ownerKey ? legacyBudgets_(trip) : { TWD: 0, JPY: 0 }),
+    used: { TWD: 0, JPY: 0 },
+  });
+  if (shared) members.forEach((m) => add(m.key, m.name, !!m.me));
+  else add(meKey, (members[0] || {}).name || '我', true);
+  const rowOf = (k) => {
+    const key = rows.has(k) ? k : '__gone';
+    if (!rows.has(key)) rows.set(key, { key, name: '已退出的旅伴', me: false, budget: { TWD: 0, JPY: 0 }, used: { TWD: 0, JPY: 0 }, gone: true });
+    return rows.get(key);
+  };
+  const charge = (keys, item, amount, c) => {
+    if (!Number(amount) || !keys.length) return;
+    const acct = accountOf_(item, c);
+    const v = inAccount_(amount, c, acct);
+    const n = v == null ? Number(amount) || 0 : v;
+    keys.forEach((k) => { rowOf(k).used[acct] += n / keys.length; });
+  };
+  const split = (x) => (shared && x.splitWith && x.splitWith.length ? x.splitWith : everyone);
+  dateRange_(trip.startDate, trip.endDate).flatMap((d) => trip.days[d] || []).forEach((a) => {
+    charge(split(a), a, a.cost, a.costCurrency || cur);
+    charge(split(a), a, a.travelCost, fareCurrency_(a, cur));
+  });
+  const lists = [{ owner: meKey, items: trip.shopping || [] }]
+    .concat(withOthers && shared ? (trip.othersShopping || []).map((g) => ({ owner: g.key, items: g.items || [] })) : []);
+  lists.forEach((g) => g.items.forEach((x) => charge(shared ? shopSharers_(x, g.owner, everyone) : everyone, x, shopSubtotal_(x), shopCur_(x, cur))));
+  (trip.expenses || []).forEach((x) => charge(split(x), x, x.amount, x.currency || cur));
+  return [...rows.values()].filter((r) => !r.gone || r.used.TWD + r.used.JPY > 0.005);
 }
 
 /**
@@ -54,40 +99,35 @@ function budgetSummary_(trip, withOthers = true) {
     byCat[catKey_(a.category)] = (byCat[catKey_(a.category)] || 0) + twdOrRaw_(a.cost, a.costCurrency || cur);
     byCat.transport = (byCat.transport || 0) + twdOrRaw_(a.travelCost, fareCurrency_(a, cur)); // 車資算交通
   });
-  // 各帳戶已用（帳戶自己的幣別）；換不了匯率的先用原數字
-  const used = { TWD: 0, JPY: 0 };
-  const charge = (item, amount, c) => {
-    if (!Number(amount)) return;
-    const acct = accountOf_(item, c);
-    const v = inAccount_(amount, c, acct);
-    used[acct] += v == null ? Number(amount) || 0 : v;
-  };
-  all.forEach((a) => {
-    charge(a, a.cost, a.costCurrency || cur);
-    charge(a, a.travelCost, fareCurrency_(a, cur));
-  });
-  shops.forEach((x) => charge(x, shopSubtotal_(x), shopCur_(x, cur)));
-  exps.forEach((x) => charge(x, x.amount, x.currency || cur));
-  const budgets = accountBudgets_(trip);
-  const accounts = ['TWD', 'JPY'].map((k) => ({ key: k, label: ACCOUNT_INFO[k].label, budget: budgets[k], spent: used[k] }));
-  const foreign = [...new Set([cur, ...(budgets.JPY ? ['JPY'] : []), ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency), ...shops.filter((x) => Number(x.price)).map((x) => shopCur_(x, cur)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || cur)])].filter((c) => c && c !== 'TWD');
+  // 每個人的台幣、日幣帳戶
+  const people = accountRows_(trip, withOthers);
+  const budgetTwd = people.reduce((sum, p) => sum + p.budget.TWD + twdOrRaw_(p.budget.JPY, 'JPY'), 0);
+  const anyJpy = people.some((p) => p.budget.JPY);
+  const foreign = [...new Set([cur, ...(anyJpy ? ['JPY'] : []), ...all.filter((a) => Number(a.travelCost)).map((a) => fareCurrency_(a, cur)), ...all.filter((a) => Number(a.cost) && a.costCurrency).map((a) => a.costCurrency), ...shops.filter((x) => Number(x.price)).map((x) => shopCur_(x, cur)), ...exps.filter((x) => Number(x.amount)).map((x) => x.currency || cur)])].filter((c) => c && c !== 'TWD');
   return {
     spent: Object.values(byCat).reduce((s, v) => s + v, 0),
-    budget: budgets.TWD + twdOrRaw_(budgets.JPY, 'JPY'), // 兩個帳戶合計（台幣）
-    accounts,
+    budget: budgetTwd, // 所有人的帳戶合計（台幣）
+    people,
     cats: Object.entries(byCat).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]),
     foreign,
     missing: foreign.filter((c) => !rateFor_(c)),
   };
 }
 
-/** 例如「預算 ¥80,000｜已用 ¥32,500｜剩 ¥47,500」 */
-function accountText_(x) {
-  const m = (n) => fmtMoney_(n, x.key);
-  const remain = x.budget - x.spent;
-  return x.budget
-    ? `預算 ${m(x.budget)}｜已用 ${m(x.spent)}｜${remain >= 0 ? `剩 ${m(remain)}` : `超出 ${m(-remain)}`}`
-    : `已用 ${m(x.spent)}（未設預算）`;
+/** 一個人一個帳戶，例如「預算 ¥80,000｜已用 ¥32,500｜剩 ¥47,500」；acct：'TWD'／'JPY' */
+function accountText_(p, acct) {
+  const m = (n) => fmtMoney_(n, acct);
+  const budget = p.budget[acct];
+  const used = p.used[acct];
+  const remain = budget - used;
+  return budget
+    ? `預算 ${m(budget)}｜已用 ${m(used)}｜${remain >= 0 ? `剩 ${m(remain)}` : `超出 ${m(-remain)}`}`
+    : `已用 ${m(used)}（未設預算）`;
+}
+
+/** 這個人有沒有東西可以列（設了預算或有花費） */
+function accountUsed_(p, acct) {
+  return !!(p.budget[acct] || p.used[acct] > 0.005);
 }
 
 /** 整趟旅程的靜態網頁（不含 emoji，轉 PDF 時比較不會缺字） */
@@ -138,7 +178,7 @@ function exportHtml_(trip, exportedAt, web) {
   const budget = `
     <h2>預算</h2>
     <table>
-      ${b.accounts.filter((x) => x.budget || x.spent).map((x) => `<tr><td>${e(x.label)}</td><td class="money">${e(accountText_(x))}</td></tr>`).join('')}
+      ${b.people.flatMap((p) => ['TWD', 'JPY'].filter((k) => accountUsed_(p, k)).map((k) => `<tr><td>${b.people.length > 1 ? `${e(p.name)}・` : ''}${e(ACCOUNT_INFO[k].label)}</td><td class="money">${e(accountText_(p, k))}</td></tr>`)).join('')}
       ${b.budget ? `<tr><td>總預算（合計）</td><td class="money">${e(ntd_(b.budget))}</td></tr>` : ''}
       <tr><td>預估花費</td><td class="money">${e(ntd_(b.spent))}</td></tr>
       ${b.budget ? `<tr><td>${b.budget - b.spent >= 0 ? '剩餘' : '超出預算'}</td><td class="money">${e(ntd_(Math.abs(b.budget - b.spent)))}</td></tr>` : ''}

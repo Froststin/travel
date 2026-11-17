@@ -138,8 +138,14 @@ function buildStaticHtml(t, photos = new Map(), online = false, metro = new Map(
         <div class="stat"><span class="small muted">預估花費</span><b>${ntd(b.spent)}</b></div>
         <div class="stat"><span class="small muted">${b.over ? '超出預算' : '剩餘'}</span><b${b.over ? ' class="warn"' : ''}>${b.budget ? ntd(Math.abs(b.remain)) : '—'}</b></div>
       </div>
-      ${b.accounts.some((x) => x.budget || x.spent) ? `<table><thead><tr><th>帳戶</th><th class="num">預算</th><th class="num">已用</th><th class="num">剩餘</th></tr></thead><tbody>
-        ${b.accounts.filter((x) => x.budget || x.spent).map((x) => `<tr><td>${x.icon} ${x.label}</td><td class="num">${x.budget ? acctMoney(x.budget, x.key) : '—'}</td><td class="num">${acctMoney(x.spent, x.key)}</td><td class="num${x.over ? ' warn' : ''}">${x.budget ? `${x.over ? '超出 ' : ''}${acctMoney(Math.abs(x.remain), x.key)}` : '—'}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${(() => {
+        // 帳戶以人為單位：每個人的台幣、日幣帳戶（有設預算或有花費的才列）
+        const lines = b.people.flatMap((p) => Object.keys(ACCOUNTS).map((k) => ({ p, x: accountLine(p, k) }))).filter(({ x }) => x.budget || x.spent > 0.005);
+        if (!lines.length) return '';
+        const many = b.people.length > 1;
+        return `<table><thead><tr>${many ? '<th>誰</th>' : ''}<th>帳戶</th><th class="num">預算</th><th class="num">已用</th><th class="num">剩餘</th></tr></thead><tbody>
+          ${lines.map(({ p, x }) => `<tr>${many ? `<td>${esc(p.name)}</td>` : ''}<td>${x.icon} ${x.label}</td><td class="num">${x.budget ? acctMoney(x.budget, x.key) : '—'}</td><td class="num">${acctMoney(x.spent, x.key)}</td><td class="num${x.over ? ' warn' : ''}">${x.budget ? `${x.over ? '超出 ' : ''}${acctMoney(Math.abs(x.remain), x.key)}` : '—'}</td></tr>`).join('')}</tbody></table>`;
+      })()}
       ${b.byCat.length ? `<table style="margin-top:12px"><thead><tr><th>分類</th><th class="num">花費</th></tr></thead><tbody>
         ${b.byCat.map((x) => `<tr><td>${x.icon} ${x.label}</td><td class="num">${ntd(x.sum)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">行程項目還沒有填寫花費。</p>'}
       <table style="margin-top:12px"><thead><tr><th>日期</th><th class="num">花費</th></tr></thead><tbody>

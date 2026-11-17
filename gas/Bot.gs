@@ -343,9 +343,16 @@ function cmdBudget_(ctx) {
   const b = budgetSummary_(trip); // 全部換算成台幣，含購物清單
   const spent = b.spent;
   const lines = [`💰 ${trip.name} 預算`];
-  const accts = b.accounts.filter((x) => x.budget || x.spent);
-  if (b.budget && accts.length) {
-    accts.forEach((x) => lines.push(`${x.key === 'JPY' ? '💴' : '💵'} ${x.label}：${accountText_(x)}`));
+  // 帳戶以人為單位：先列自己的，共用旅程再列旅伴的
+  const mine = b.people.find((p) => p.me) || b.people[0];
+  const acctLines = (p) => ['TWD', 'JPY'].filter((k) => accountUsed_(p, k)).map((k) => `${k === 'JPY' ? '💴' : '💵'} ${ACCOUNT_INFO[k].label}：${accountText_(p, k)}`);
+  if (b.budget) {
+    const others = b.people.filter((p) => p !== mine && acctLines(p).length);
+    if (mine && acctLines(mine).length) {
+      if (b.people.length > 1) lines.push('你的帳戶：');
+      lines.push(...acctLines(mine));
+    }
+    others.forEach((p) => lines.push('', `${p.name}的帳戶：`, ...acctLines(p)));
     lines.push('');
   }
   if (b.budget) {
