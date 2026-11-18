@@ -920,8 +920,102 @@ function budgetView(t, dates) {
       ${shopTotal ? `<p class="muted hint">※ 含${shared ? '所有旅伴的' : ''}購物清單 ${ntd(shopTotal)}（歸在「購物」）</p>` : ''}
       ${foreign.length ? `<p class="muted hint">※ 金額皆換算成台幣：${foreign.map((c) => esc(rateNote(c))).join('；')}</p>` : ''}
     </section>
+    ${ledgerPanel(t, dates)}
     ${typeof expensesPanel === 'function' ? expensesPanel(t, dates) : ''}
     ${typeof settleView === 'function' ? settleView(t) : ''}`;
+}
+
+/* ---------- 記帳表：每天一個小計，底下列出當天每一筆（行程花費、車資、購物、記帳），可選看誰的 ---------- */
+let ledgerWho = null; // { tripId, who }：選過才有；who ''＝整趟全部、成員代號＝那個人分攤到的。換旅程就回到預設（看自己的）
+
+/**
+ * 記帳表的資料。who：''＝整趟全部（每筆全額）；成員代號＝這個人分攤到的（沒分到的不列）
+ * 分攤規則和每人花費、帳戶一樣：行程沒勾＝大家平分、購物照 shopSharers、記帳照分攤的人
+ * @return { days: [{ date, label, items, total }], loose: { items, total }, total }，金額都是台幣
+ */
+function ledgerData(t, dates, who) {
+  const members = typeof splitMembers === 'function' ? splitMembers(t) : [];
+  const shared = members.length > 1;
+  const meKey = myAccountKey(t);
+  const everyone = shared ? members.map((m) => m.key) : [meKey];
+  const split = (x) => (shared && Array.isArray(x.splitWith) && x.splitWith.length ? x.splitWith : everyone);
+  const entry = (name, amount, cur, keys) => {
+    const n = Number(amount) || 0;
+    if (!n) return null;
+    if (who && !keys.includes(who)) return null;
+    const part = who ? 1 / keys.length : 1;
+    return { name, amount: n * part, cur, twd: twdOrRaw(n, cur) * part, n: who ? keys.length : 1 };
+  };
+  // 購物清單：自己的＋旅伴的（共用旅程），記住每樣是誰的清單
+  const owner = new Map();
+  const shopItems = [];
+  [{ owner: meKey, items: t.shopping || [] }].concat(shared ? (t.othersShopping || []).map((g) => ({ owner: g.key, items: g.items || [] })) : [])
+    .forEach((g) => g.items.forEach((x) => { owner.set(x, g.owner); shopItems.push(x); }));
+  const shop = shoppingIndex(t, dates, shopItems);
+  const shopEntry = (x) => entry(x.text || '（未命名）', shopSubtotal(x), shopCur(x, t.currency), shared ? shopSharers(x, owner.get(x), everyone) : everyone);
+  const exps = t.expenses || [];
+  const expEntry = (x) => entry(x.title || '（未命名）', x.amount, x.currency || t.currency, split(x));
+  const sum = (items) => items.reduce((n, x) => n + x.twd, 0);
+  const days = dates.map((d, i) => {
+    const items = [];
+    for (const a of t.days[d] || []) {
+      const mode = travelMode(a);
+      items.push(entry(`${mode ? `${mode.icon} ${mode.label}` : '交通'}（往${a.title || '下一站'}）`, a.travelCost, fareCurrency(a, t.currency), split(a)));
+      items.push(entry(a.title || '（未命名）', a.cost, costCurrency(a, t.currency), split(a)));
+      for (const x of shop.byAct.get(a.id) || []) items.push(shopEntry(x));
+    }
+    for (const x of shop.byDay.get(d) || []) items.push(shopEntry(x));
+    for (const x of exps.filter((e) => e.date === d)) items.push(expEntry(x));
+    const list = items.filter(Boolean);
+    return { date: d, label: `Day ${i + 1}`, items: list, total: sum(list) };
+  });
+  const looseItems = shop.loose.map(shopEntry).concat(exps.filter((e) => !dates.includes(e.date)).map(expEntry)).filter(Boolean);
+  const loose = { items: looseItems, total: sum(looseItems) };
+  return { days, loose, total: days.reduce((n, d) => n + d.total, 0) + loose.total };
+}
+
+/** 預算頁的「記帳表」：上面選看誰（共用旅程），每天一個可收合的區塊：小計＋每一筆 */
+function ledgerPanel(t, dates) {
+  const members = typeof splitMembers === 'function' ? splitMembers(t) : [];
+  const shared = members.length > 1;
+  const isMember = (k) => members.some((m) => m.key === k);
+  const meKey = isMember(myAccountKey(t)) ? myAccountKey(t) : (members[0] || {}).key || '';
+  // 共用旅程預設看自己的；這個旅程選過「整趟全部」或某個旅伴就照選的
+  const picked = ledgerWho && ledgerWho.tripId === t.id ? ledgerWho.who : null;
+  const who = !shared ? '' : picked === '' ? '' : isMember(picked) ? picked : meKey;
+  const L = ledgerData(t, dates, who);
+  const whoName = who ? (members.find((m) => m.key === who) || {}).name || '' : '';
+  const line = (x) => `
+    <li class="ledger-item">
+      <span class="ledger-name">${esc(x.name)}${x.n > 1 ? `<small class="muted">（${x.n} 人分）</small>` : ''}</span>
+      <span class="ledger-amt">${ntd(x.twd)}${x.cur && x.cur !== 'TWD' ? `<small class="muted">${esc(origMoney(x.amount, x.cur))}</small>` : ''}</span>
+    </li>`;
+  const block = (title, sub, items, total) => `
+    <details class="ledger-day"${items.length ? ' open' : ''}>
+      <summary><span class="ledger-day-title">${title}${sub ? `<small class="muted">${sub}</small>` : ''}</span><b class="ledger-sum">${items.length ? ntd(total) : '—'}</b></summary>
+      ${items.length ? `<ul class="ledger-list">${items.map(line).join('')}</ul>` : '<p class="muted small ledger-empty">這天沒有花費</p>'}
+    </details>`;
+  return `
+    <section class="panel ledger-panel">
+      <div class="ledger-head">
+        <h3>📒 記帳表</h3>
+        ${shared ? `<label class="ledger-who">看
+          <select data-action="ledger-who" aria-label="記帳表要看誰的花費">
+            ${members.map((m) => `<option value="${esc(m.key)}"${m.key === who ? ' selected' : ''}>${esc(m.name)}${m.key === meKey ? '（我）' : ''}</option>`).join('')}
+            <option value=""${who === '' ? ' selected' : ''}>整趟全部</option>
+          </select></label>` : ''}
+      </div>
+      <p class="ledger-total">${shared ? (who ? `${esc(whoName)}的花費` : '整趟全部的花費') : '合計'}：<b>${ntd(L.total)}</b></p>
+      ${(() => {
+        // 分給已退出旅伴的金額不在任何一個人的清單裡，整趟時註明差額
+        if (!shared || who) return '';
+        const gone = L.total - members.reduce((n, m) => n + ledgerData(t, dates, m.key).total, 0);
+        return gone > 0.5 ? `<p class="muted small">其中 ${ntd(gone)} 分給已退出的旅伴，不在任何一個人的清單裡</p>` : '';
+      })()}
+      ${L.days.map((d) => block(d.label, `・${prettyDate(d.date)}`, d.items, d.total)).join('')}
+      ${L.loose.items.length ? block('不指定日期', '（購物、記帳）', L.loose.items, L.loose.total) : ''}
+      <p class="muted hint">金額換算成台幣；外幣的原價寫在旁邊。${who ? '多人分攤的那筆列的是這個人分到的金額。' : ''}</p>
+    </section>`;
 }
 
 /* ---------- 行李：共用（t.packing，成員都能改）＋我的（t.myPacking，雲端共用旅程才有）＋旅伴的（只能看） ---------- */
@@ -1572,6 +1666,17 @@ function buildSampleTrip() {
 }
 
 /* ---------- 事件委派 ---------- */
+// 記帳表：切換看誰的花費（只換畫面，不存檔）
+document.addEventListener('change', (e) => {
+  const el = e.target.closest && e.target.closest('[data-action="ledger-who"]');
+  const t = el && currentTrip();
+  if (!t) return;
+  ledgerWho = { tripId: t.id, who: el.value };
+  renderTrip(t);
+  const sel = document.querySelector('[data-action="ledger-who"]');
+  if (sel) sel.focus({ preventScroll: true });
+});
+
 // 預算頁直接改帳戶預算（按 Enter 或離開輸入框就存）
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-action="account-budget"]');
